@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>你的商店</title>
+<meta name="description" content="你的商店 — 這是商店的簡短介紹，請換成自己的文字。">
+<meta name="theme-color" content="#fafafa">
+
+<!-- og:url 與 og:image 必須是絕對網址：相對路徑在 LINE / Facebook 的抓取器常失效。
+     換網域時這兩行要一起改（scripts/new-merchant.mjs 的 --site-url 會寫入）。
+     og-cover.png 是專用的 1200x630 分享卡片。 -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://shop.example.com/">
+<meta property="og:title" content="你的商店">
+<meta property="og:description" content="這是商店的簡短介紹，請換成自己的文字。">
+<meta property="og:image" content="https://shop.example.com/assets/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="你的商店">
+<meta property="og:locale" content="zh_TW">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c1c1e'/%3E%3Crect x='9' y='9' width='14' height='14' rx='3' fill='%23fafafa'/%3E%3C/svg%3E">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app"></div>
+<!-- Layers (see CLAUDE.md):
+     config.js + commerce/**  = LOCKED commerce layer (never edited for design work)
+     content.js + app.js + styles.css = design layer -->
+<script src="config.js"></script>
+<script>
+  /* Optional, gitignored local override. Only requested on localhost so the
+     deployed site never asks for a file that does not exist there. */
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    document.write('<script src="config.local.js"><\/script>');
+  }
+</script>
+<script src="commerce/api.js"></script>
+<script src="commerce/cart.js"></script>
+<script src="commerce/checkout.js"></script>
+<script src="content.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

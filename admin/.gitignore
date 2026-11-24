@@ -1,0 +1,8 @@
+# local API base override for localhost testing (see README)
+config.local.js
+# Windows download markers
+*:Zone.Identifier
+# test output
+e2e/out/
+e2e/.state.json
+node_modules/

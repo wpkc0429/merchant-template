@@ -1,0 +1,3 @@
+/* design/theme.css: free-form extra CSS, loaded LAST (after tokens.css and the core stylesheet).
+   Empty by default. This is the main restyling surface: anything you write here overrides the defaults.
+   Rules: no remote @import / url(), no `expression`, no behaviour hacks (see docs/DESIGN-LAYER.md). */

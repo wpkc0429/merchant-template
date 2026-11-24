@@ -1,0 +1,19 @@
+{
+  // Cloudflare Workers static assets. Zero build: public/ is uploaded as-is.
+  //
+  // assets.directory IS the publish boundary: only what lives under public/
+  // reaches the public internet. CLAUDE.md / README.md / admin/ / catalog/ sit
+  // outside it and are never uploaded. Do NOT point it at the repo root or at
+  // anything that contains admin/ (the admin is served separately, behind
+  // Cloudflare Access; see admin/README.md "部署").
+  //
+  // Pure static assets: no `main`, no Worker script, no KV. The storefront
+  // calls the platform's public API directly from the browser.
+  //
+  // MERCHANT-OWNED: scripts/new-merchant.mjs sets "name" to the merchant slug.
+  "name": "merchant-template",
+  "compatibility_date": "2026-07-31",
+  "assets": {
+    "directory": "./public"
+  }
+}

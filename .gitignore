@@ -1,0 +1,24 @@
+# Windows download markers
+*:Zone.Identifier
+
+# wrangler dev local state
+.wrangler/
+
+# local-only notes
+CLAUDE.local.md
+
+# local test overrides (apiBase / publishableKey): never committed, never deployed
+public/config.local.js
+admin/config.local.js
+
+# test output, credentials, dependencies
+admin/e2e/out/
+admin/e2e/.state.json
+admin/node_modules/
+node_modules/
+admin/.env
+admin/.env.*
+.env
+.env.*
+!.env.example
+*.log

@@ -1,0 +1,18 @@
+{
+  "_comment": "The ONLY surface the design layer (public/app.js, public/content.js, ...) may use from the locked commerce layer. Checked by scripts/check-layers.mjs. Changing this file is a commerce-layer change.",
+  "ShopCommerce": [
+    "loadCatalog",
+    "money",
+    "describeApiError",
+    "isSkuSellable"
+  ],
+  "ShopCommerce.cart": [
+    "lines", "count", "subtotal", "isEmpty",
+    "add", "inc", "dec", "remove", "clear", "reconcile"
+  ],
+  "ShopCommerce.checkout": [
+    "newKey", "getOrderToken", "placeOrder",
+    "startPayment", "redirectToPayment", "loadOrderStatus"
+  ],
+  "config": ["showPrices", "featuredCategory"]
+}
