@@ -1,0 +1,10 @@
+/* Copy this file to public/config.local.js (gitignored) for LOCAL testing only.
+   It is loaded by index.html after config.js, and only on localhost / 127.0.0.1,
+   so it never reaches a deployed site and never needs a tracked file to change.
+
+     cp public/config.local.js.example public/config.local.js
+*/
+Object.assign(window.SHOP_CONFIG, {
+  apiBase: 'http://127.0.0.1:8180',            // a throwaway platform API (or `make openapi-mock`: http://localhost:4010)
+  publishableKey: 'pk_REPLACE_WITH_LOCAL_TEST_KEY'
+});

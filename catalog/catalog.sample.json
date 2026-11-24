@@ -1,0 +1,344 @@
+{
+  "_comment": "SAMPLE DATA for scripts/import-catalog.mjs. Names, prices (whole TWD), stock, shipping fees and descriptions are PLACEHOLDERS, not real figures. Copy this file to catalog/catalog.json, replace everything, then run: node scripts/import-catalog.mjs catalog/catalog.json --dry-run. Product titles use the form \"name｜model\" (the admin e2e suite recognises sample products by the full-width bar). Image paths are relative to this file.",
+  "shipping_methods": [
+    {
+      "name": "宅配到府",
+      "carrier": "範例物流",
+      "flat_rate": 150,
+      "is_active": true
+    },
+    {
+      "name": "門市自取",
+      "carrier": "自取",
+      "flat_rate": 0,
+      "is_active": true
+    }
+  ],
+  "categories": [
+    {
+      "slug": "apparel",
+      "name": "服飾",
+      "position": 0
+    },
+    {
+      "slug": "accessories",
+      "name": "配件",
+      "position": 1
+    },
+    {
+      "slug": "home",
+      "name": "居家",
+      "position": 2
+    },
+    {
+      "slug": "stationery",
+      "name": "文具",
+      "position": 3
+    },
+    {
+      "slug": "new-arrivals",
+      "name": "本季新品",
+      "position": 4
+    }
+  ],
+  "products": [
+    {
+      "slug": "minimal-tote",
+      "title": "簡約｜帆布提袋",
+      "subtitle": "MINIMAL TOTE",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "accessories"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-minimal-tote-S",
+          "size": "S",
+          "price_amount": 900,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-minimal-tote-M",
+          "size": "M",
+          "price_amount": 1200,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-minimal-tote-L",
+          "size": "L",
+          "price_amount": 1500,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-01.png"
+      ]
+    },
+    {
+      "slug": "daily-mug",
+      "title": "日常｜陶瓷杯",
+      "subtitle": "DAILY MUG",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "home",
+        "new-arrivals"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-daily-mug-S",
+          "size": "S",
+          "price_amount": 480,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-daily-mug-M",
+          "size": "M",
+          "price_amount": 680,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-daily-mug-L",
+          "size": "L",
+          "price_amount": 880,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-02.png"
+      ]
+    },
+    {
+      "slug": "pure-candle",
+      "title": "純淨｜香氛蠟燭",
+      "subtitle": "PURE CANDLE",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "home"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-pure-candle-S",
+          "size": "S",
+          "price_amount": 520,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-pure-candle-M",
+          "size": "M",
+          "price_amount": 780,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-pure-candle-L",
+          "size": "L",
+          "price_amount": 1080,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-03.png"
+      ]
+    },
+    {
+      "slug": "light-notebook",
+      "title": "輕量｜筆記本",
+      "subtitle": "LIGHT NOTEBOOK",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "stationery",
+        "new-arrivals"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-light-notebook-S",
+          "size": "S",
+          "price_amount": 220,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-light-notebook-M",
+          "size": "M",
+          "price_amount": 320,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-light-notebook-L",
+          "size": "L",
+          "price_amount": 420,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-04.png"
+      ]
+    },
+    {
+      "slug": "basic-tee",
+      "title": "基本｜棉質上衣",
+      "subtitle": "BASIC TEE",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "apparel"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-basic-tee-S",
+          "size": "S",
+          "price_amount": 790,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-basic-tee-M",
+          "size": "M",
+          "price_amount": 890,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-basic-tee-L",
+          "size": "L",
+          "price_amount": 990,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-05.png"
+      ]
+    },
+    {
+      "slug": "slow-bottle",
+      "title": "緩慢｜隨行瓶",
+      "subtitle": "SLOW BOTTLE",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "home",
+        "new-arrivals"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-slow-bottle-S",
+          "size": "S",
+          "price_amount": 650,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-slow-bottle-M",
+          "size": "M",
+          "price_amount": 850,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-slow-bottle-L",
+          "size": "L",
+          "price_amount": 1050,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-06.png"
+      ]
+    },
+    {
+      "slug": "quiet-pouch",
+      "title": "安靜｜收納包",
+      "subtitle": "QUIET POUCH",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "accessories"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-quiet-pouch-S",
+          "size": "S",
+          "price_amount": 380,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-quiet-pouch-M",
+          "size": "M",
+          "price_amount": 520,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-quiet-pouch-L",
+          "size": "L",
+          "price_amount": 680,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-07.png"
+      ]
+    },
+    {
+      "slug": "plain-cap",
+      "title": "素面｜棒球帽",
+      "subtitle": "PLAIN CAP",
+      "description": "範例資料：這是佔位用的商品說明，請以實際內容取代。",
+      "status": 1,
+      "categories": [
+        "apparel"
+      ],
+      "skus": [
+        {
+          "sku_code": "SAMPLE-plain-cap-S",
+          "size": "S",
+          "price_amount": 560,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-plain-cap-M",
+          "size": "M",
+          "price_amount": 680,
+          "stock_qty": 20,
+          "is_active": true
+        },
+        {
+          "sku_code": "SAMPLE-plain-cap-L",
+          "size": "L",
+          "price_amount": 780,
+          "stock_qty": 20,
+          "is_active": true
+        }
+      ],
+      "images": [
+        "images/product-08.png"
+      ]
+    }
+  ],
+  "category_orders": {
+    "new-arrivals": [
+      "slow-bottle",
+      "daily-mug",
+      "light-notebook"
+    ]
+  }
+}

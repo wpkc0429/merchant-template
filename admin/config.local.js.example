@@ -1,0 +1,8 @@
+/* Copy this file to admin/config.local.js (gitignored) for LOCAL testing only.
+   config-loader.js loads it on localhost / 127.0.0.1 only; elsewhere the API base is always location.origin.
+
+     cp admin/config.local.js.example admin/config.local.js
+
+   Cross-origin (API on another port):  apiBase = "http://localhost:8080"
+   Same-origin through the dev proxy:   node scripts/serve.mjs --proxy http://127.0.0.1:8080  and  apiBase = location.origin */
+window.ADMIN_CONFIG.apiBase = location.origin;
