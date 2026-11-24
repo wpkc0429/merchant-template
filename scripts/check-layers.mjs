@@ -26,7 +26,8 @@
         gitignored config.local.js). In a MERCHANT repo ("isTemplate": false)
         config.js holds the real apiBase / publishableKey, is protected only by
         its hash in the manifest, and leftover placeholders are just a warning.
-     5. Prints a sha256 manifest of public/commerce/ and public/config.js.
+     5. Strict CSP: public/_headers must exist and carry a strict Content-Security-Policy (script-src 'self' only, object-src/base-uri/frame-ancestors locked down); an inline <script>/on*= in index.html is an error in the template, a warning in a merchant repo.
+     6. Prints a sha256 manifest of public/commerce/, public/config.js and public/_headers.
    ============================================================ */
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -156,9 +157,44 @@ for (const f of designFiles) {
   }
 }
 
-/* ---------- 5: hash manifest ---------- */
+/* ---------- 5: strict CSP is a deployment requirement (public/_headers) ---------- */
 
-const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js')].sort();
+/** Pure check of a Cloudflare `_headers` text and of index.html; returns {errors, warnings}. */
+function checkCsp(headersText, indexHtml, tpl = true) {
+  const errors = [], warnings = [];
+  if (headersText == null) {
+    errors.push('public/_headers is missing: a strict Content-Security-Policy is a deployment requirement (see docs/DECISIONS.md); restore the template file');
+  } else {
+    const m = /^[ \t]+Content-Security-Policy:[ \t]*(.+)$/im.exec(headersText.replace(/\r\n/g, '\n'));
+    if (!m) errors.push('public/_headers has no Content-Security-Policy line');
+    else {
+      const dirs = new Map();
+      for (const part of m[1].split(';')) { const [n, ...v] = part.trim().split(/\s+/); if (n) dirs.set(n.toLowerCase(), v); }
+      const need = (n, ok, msg) => { if (!dirs.has(n)) errors.push(`CSP lacks ${n}`); else if (!ok(dirs.get(n))) errors.push(`CSP ${n} ${msg}`); };
+      const script = dirs.get('script-src') || dirs.get('default-src') || [];
+      if (!dirs.has('script-src') && !dirs.has('default-src')) errors.push('CSP lacks script-src');
+      if (script.some((v) => /^'unsafe-(inline|eval)'$|^\*$|^https?:$|^data:$|^blob:$|^'strict-dynamic'$/i.test(v)) || script.some((v) => /^https?:\/\//i.test(v))) errors.push(`CSP script-src must be 'self' only (found: ${script.join(' ')})`);
+      if (dirs.has('style-src') && (dirs.get('style-src') || []).some((v) => /^'unsafe-inline'$|^\*$/.test(v))) errors.push("CSP style-src must not allow 'unsafe-inline' (only style-src-attr may)");
+      need('object-src', (v) => v.join(' ') === "'none'", "must be 'none'");
+      need('base-uri', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
+      need('frame-ancestors', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
+      if (!dirs.has('default-src')) errors.push('CSP lacks default-src');
+    }
+  }
+  const html = String(indexHtml || '').replace(/<!--[\s\S]*?-->/g, '');
+  const inline = /<script(?![^>]*\bsrc\s*=)[^>]*>/i.test(html) || /\son[a-z]+\s*=\s*["']/i.test(html);
+  if (inline) (tpl ? errors : warnings).push('public/index.html has an inline <script> or an on*= handler: the strict CSP in public/_headers blocks it. Use an external file (see commerce/local-config.js); a merchant repo made from v0.1.0 must replace its inline localhost-override script with <script src="commerce/local-config.js"></script>');
+  return { errors, warnings };
+}
+{
+  const hp = path.join(PUB, '_headers'), ip = path.join(PUB, 'index.html');
+  const r = checkCsp(existsSync(hp) ? readFileSync(hp, 'utf8') : null, existsSync(ip) ? readFileSync(ip, 'utf8') : '', isTemplate);
+  r.errors.forEach(fail); warnings.push(...r.warnings);
+}
+
+/* ---------- 6: hash manifest ---------- */
+
+const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js'), ...(existsSync(path.join(PUB, '_headers')) ? [path.join(PUB, '_headers')] : [])].sort();
 const manifest = {};
 for (const f of locked) {
   // normalise line endings so CRLF checkouts hash the same as LF

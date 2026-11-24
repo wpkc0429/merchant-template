@@ -30,13 +30,9 @@
      config.js + commerce/**  = LOCKED commerce layer (never edited for design work)
      content.js + app.js + styles.css = design layer -->
 <script src="config.js"></script>
-<script>
-  /* Optional, gitignored local override. Only requested on localhost so the
-     deployed site never asks for a file that does not exist there. */
-  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
-    document.write('<script src="config.local.js"><\/script>');
-  }
-</script>
+<!-- Optional gitignored config.local.js, requested on localhost only. An external file, because the strict CSP
+     (public/_headers) forbids inline scripts: do NOT add inline <script> blocks or on*= attributes to this page. -->
+<script src="commerce/local-config.js"></script>
 <script src="commerce/api.js"></script>
 <script src="commerce/cart.js"></script>
 <script src="commerce/checkout.js"></script>

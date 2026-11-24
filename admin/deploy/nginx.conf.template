@@ -15,6 +15,10 @@
 #   ADMIN_UPLOAD_ORIGIN  the R2 / S3 origin the browser PUTs image uploads to (direct upload),
 #                        e.g. https://<account-id>.r2.cloudflarestorage.com  (media-r2-setup.md)
 #
+# THE CSP BELOW IS REQUIRED, NOT OPTIONAL (decided 2026-11-25, docs/DECISIONS.md): production and every AI-edit preview
+# environment must serve it. Do not delete, comment out, loosen (unsafe-inline / unsafe-eval / wildcards) or make it
+# conditional; scripts/check-design.mjs (step "deploy") fails when it is missing or weakened. To allow another origin
+# (image host, upload host) change the environment variables, not the policy.
 # The CSP below is the strict one from admin/README.md and admin/docs/AI-EDIT-SERVICE-NOTES.md, adapted to
 # the template (no third-party fonts: style-src and font-src are 'self' only). The core has no inline
 # scripts or styles, so no 'unsafe-inline'. `worker-src blob:` is for the vendored HEIC converter's worker.

@@ -26,6 +26,13 @@ const check = (name, cond, extra = '') => { if (cond) console.log(`  ok  ${name}
 const section = (t) => console.log(`\n${t}`);
 const taipeiDate = (days = 1) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Taipei' }).format(new Date(Date.now() + days * 86400000));
 
+section('0. The storefront is served with the strict CSP from public/_headers (violations show up as console errors below)');
+{
+  const r = await fetch(SITE + '/');
+  const csp = r.headers.get('content-security-policy') || '';
+  check("CSP header present: script-src 'self' and no unsafe-eval", /script-src 'self';/.test(csp) && !/unsafe-eval/.test(csp), csp.slice(0, 120));
+}
+
 const browser = await chromium.launch();
 async function open(width, height) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });

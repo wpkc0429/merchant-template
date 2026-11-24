@@ -1,7 +1,9 @@
 {
+  "public/_headers": "b1fc4ba055df22ac5e482035cf77c2fc4bbb109946e7adab2431e053ace9872b",
   "public/commerce/api.js": "a60b0e4ccbe50fd9e8fb26797b4c108213d16b3c67727cc53f2657cf64bccc8c",
   "public/commerce/cart.js": "aa5ab43a491146bdd0d5c1479f47df61989745182bd3795bd1da6748823835b2",
   "public/commerce/checkout.js": "8c532e0e0daef344353dab9c433dadc119dbc065304235c8afb319b33a2cce94",
+  "public/commerce/local-config.js": "d248837ecb68d3e9156609e479868971fe9a63a40640afbf805007e4191904a5",
   "public/commerce/public-api.json": "dcf33cbb9711adaf6aa918c81fcc8eb285a09dd2f742262d9b1e2507a4740dde",
   "public/config.js": "108165659b2539663ed89e188b3d1077a5475404429d682348b806eff4e7915d"
 }

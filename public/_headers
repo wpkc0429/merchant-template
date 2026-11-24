@@ -1,0 +1,29 @@
+# LOCKED (template.json lockedPaths, hash-protected, synced by sync-core). Cloudflare Workers static assets / Pages read this
+# file from the assets directory (public/) and send these headers with every response. The file itself is not served.
+#
+# A STRICT CONTENT-SECURITY-POLICY IS A DEPLOYMENT REQUIREMENT for production and for every AI-edit preview of the
+# storefront (decided by the user, 2026-11-25; docs/DECISIONS.md). scripts/check-layers.mjs fails when this file is
+# missing, has no CSP, or weakens it (unsafe-inline / unsafe-eval / wildcard in script-src, no object-src 'none',
+# no base-uri, no frame-ancestors). Design sessions must not edit it; a change is a human-reviewed core change
+# (.claude/skills/core-change).
+#
+# Why each directive (the storefront is build-less, so the policy is simple):
+#   script-src 'self'           only same-origin files run: no inline scripts, no eval, no third-party scripts.
+#                               (index.html has no inline <script>; the optional localhost override is loaded from
+#                               commerce/local-config.js.)
+#   style-src 'self'            stylesheets from public/ only.
+#   style-src-attr 'unsafe-inline'  the design layer sets product photos as inline style="background-image:..." attributes
+#                               (imgCss in app.js). Style ATTRIBUTES cannot run code; style elements stay blocked.
+#   img-src 'self' data: https: product photos come from the platform's public image host (origin differs per platform
+#                               deployment) and the favicon is a data: URI.
+#   connect-src 'self' https:   the platform API (apiBase). Known limitation: not pinned to one origin because this
+#                               file is identical in every repo; pinning it per merchant is a possible follow-up.
+#   frame-ancestors 'none', object-src 'none', base-uri 'none', form-action 'self': no framing, plugins, <base> hijack.
+#
+# An AI-edit PREVIEW environment must serve the same policy (it may add its own preview/API origins to connect-src and
+# img-src, never 'unsafe-inline' or 'unsafe-eval' for scripts).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY

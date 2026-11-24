@@ -6,6 +6,9 @@
 #     -e ADMIN_IMG_ORIGIN=https://img.example.com \
 #     -e ADMIN_UPLOAD_ORIGIN=https://<account-id>.r2.cloudflarestorage.com merchant-admin
 #
+# The CSP in deploy/nginx.conf.template is ON BY DEFAULT and REQUIRED, NOT OPTIONAL (decided 2026-11-25): there is no switch to turn it
+# off, and this image must not be changed to drop it (scripts/check-design.mjs checks both files). The same policy must be served by any
+# AI-edit preview environment.
 # 127.0.0.1:3001 is where the tunnel ingress example expects the admin (deploy/cloudflared-ingress.example.yml).
 # Only the published files are copied (README "部署"): never config.local.js, scripts/, e2e/ or docs/.
 FROM nginx:1.27-alpine
