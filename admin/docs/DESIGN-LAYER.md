@@ -73,8 +73,16 @@ export default {
   `login.*` / `pw.*` / `invite.*`, `status.*` / `payment.*` / `fulfillment.*` (labels), `err.*` / `v.*` (error and
   validation wording), `confirm.*` (wording of irreversible-action confirmations), `common.*`, `state.*`, `pager.*`.
   Search the file (`grep '今日配送' design/copy.js`) to find the key for a sentence.
-* Wording of a confirmation (`confirm.cancelOrder.title`, `.message`, `.yes`) is yours; the confirm step is the core's.
-  Keep a confirmation's warning honest: do not remove "無法復原" from a message about something that cannot be undone.
+* Wording of a confirmation is yours: `confirm.<id>.title`, `confirm.<id>.text` (a lead-in sentence; the default is empty for most
+  confirmations, so you may leave it empty or add one) and the button labels `.yes` / `.no`. **The confirm step AND its warning
+  are the core's.** For every irreversible action (`cancelOrder`, `shipDelivered`, `shipReturned`, `deleteProduct`, `deleteImage`,
+  `deleteCategory`, `disableMember`, `revokeInvite`) the dialog always shows a FIXED warning ("...無法復原", "庫存會歸還", the points
+  claw-back, ...) that lives in `core/warnings.js`, has no copy key, and cannot be defined, reworded, shortened or removed by you:
+  a `confirm.<id>.warning` key (or any `confirm.*.*warn*` key) fails the guard (`schema/copy`, "FIXED by the core"), and CSS that
+  hides, shrinks or disables the dialog or the warning (`.dlg__warning`, `[data-testid=confirm-warning]`) fails `css/hides-dialog`.
+  You may style it (colour, weight). The v0.1.0 key `confirm.<id>.message` no longer exists for these ids: it is ignored (the guard
+  prints a "retired" note); move any lead-in wording to `.text` and drop the warning part, because the core shows the warning anyway.
+  Needing a different warning is a core change (a human edits `core/warnings.js`), not a design change.
 
 ### `design/routes.js`
 
@@ -104,7 +112,7 @@ only to files under `design/assets/` (or a `data:image/...` URI), no `expression
 `woff2` in `design/assets/` and declare `@font-face { src: url(assets/x.woff2) }`.
 
 The core's CSS classes (`.btn`, `.card`, `.field`, `.tile`, `.ocard`, `.rt`, `.dlg`, ...) are in `styles.css`. Reuse them or
-override them in `theme.css`; read `styles.css` to see them (do not edit it).
+override them in `theme.css`; read `styles.css` to see them. **`styles.css` is LOCKED and stays locked** (decided 2026-11-25): you customise the admin only through `design/tokens.css` and `design/theme.css`; if that is not enough, say so and escalate.
 
 ## 3. Writing a view
 

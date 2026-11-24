@@ -22,22 +22,21 @@ curl -s "${auth[@]}" "$API/api/v1/admin/me"          # shows platform_permission
 
 ## 2. Provision the shop [provisionShop]
 
-Needs platform `shop.create` + `account.manage`; `domain` also needs `shop.manage_domains`; `storefront_origins` also needs `shop.manage_client_origins`. One transaction: shop (with an automatic home page), theme, optional domain binding, owner, origins. Any failure rolls everything back (409 on a conflict).
+Needs platform `shop.create` + `account.manage`; `storefront_origins` also needs `shop.manage_client_origins`. One transaction: shop, owner, origins (headless; the former `theme_id`, `domain` and `path_prefix` inputs were removed with the hosted storefront). Any failure rolls everything back (409 on a conflict).
 
 ```bash
 curl -s -X POST "${auth[@]}" "$API/api/v1/admin/shop-provisioning" -d '{
   "name": "<Shop Name>",
   "owner_email": "owner@example.com",
-  "theme_id": 1,
   "status": 1,
   "storefront_origins": ["https://shop.example.com"]
 }'
 ```
 
-- `theme_id`, `status`, `domain`, `path_prefix`, `storefront_origins` are optional. `status`: 0 disabled (storefront 503), 1 active, 2 under review (storefront 404). Use `status: 2` while the shop is being built if you do not want it reachable, then set 1 at go-live.
-- `domain` (+ optional `path_prefix`) is only for a platform-hosted (Next.js `web/`) storefront. A headless storefront (the merchant template) does not need it; it identifies itself with a publishable key.
+- `status` and `storefront_origins` are optional. `status`: 0 disabled (storefront 503), 1 active, 2 under review (storefront 404). Use `status: 2` while the shop is being built if you do not want it reachable, then set 1 at go-live.
+- There is no theme, domain or path-prefix input any more (the platform-hosted storefront was removed). A headless storefront (the merchant template) identifies itself with a publishable key; the API resolves a shop by that key only, never by Host.
 - A new owner email creates a password-less account and returns `owner.setup_url` and `owner.expires_at` (`delivery:"manual"`). An existing email is added as `merchant_owner` and its password is left alone (`owner.created:false`, no link).
-- Response also has `shop.id` (use as `$SHOP`), `binding`, `storefront_origins`. The `setup_url` is shown once: hand it to the operator without logging it.
+- Response also has `shop.id` (use as `$SHOP`), `storefront_origins`. The `setup_url` is shown once: hand it to the operator without logging it.
 - Origins registered here are `purpose: storefront`. Register the admin origin separately (step 5).
 
 ## 3. Setup-status checklist [getShopSetupStatus]
@@ -46,7 +45,20 @@ curl -s -X POST "${auth[@]}" "$API/api/v1/admin/shop-provisioning" -d '{
 curl -s "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/setup-status"
 ```
 
-Returns booleans derived from live data (nothing stored): `theme_applied, domain_bound, owner_assigned, owner_password_set, home_published, shipping_method_active, payment_credentials_set, publishable_key_active`. A headless shop will not need `domain_bound` or a published CMS home; the others are the real onboarding gates. Re-read after every step.
+Returns booleans derived from live data (nothing stored): `owner_assigned, owner_password_set, home_published, shipping_method_active, payment_credentials_set, publishable_key_active`. `home_published` reflects the CMS home page: it can only be true once a content schema is registered (section 3a) and the home page is saved and published. The other five are the real onboarding gates. Re-read after every step.
+
+## 3a. Register the content schema (HUMAN ONLY) [registerContentSchema]
+
+Needs `content.manage` (merchant owner or platform super_admin). **Do not run this from CI, an unattended script, or with a token an agent keeps: a human reads the dry-run report and confirms.** Reference (platform repo): `docs/content-schema.md`; the template's helper `node scripts/check-content-schema.mjs` does step 1 below with `CONTENT_*` environment variables; starter: `docs/content-schema/starter.content.schema.json`.
+
+```bash
+SCHEMA=public/content.schema.json     # the merchant repo's own file (template: public/content.schema.json); the platform starter is docs/content-schema/starter.content.schema.json
+curl -s -X PUT "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/content/schema?dry_run=true" --data-binary @"$SCHEMA"   # 1. report, writes nothing
+curl -s -X PUT "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/content/schema" --data-binary @"$SCHEMA"                  # 2. register (409 = confirm removals first: add ?confirm_removals=true)
+curl -s "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/content/schema"                                                   # 3. active version
+```
+
+After this a page can be created (`POST .../pages` with a `type_key` of the schema) and published; without it the API answers 422 `shop has no content schema: register one first with PUT ...`.
 
 ## 4. Owner password link
 
@@ -64,14 +76,14 @@ Find `$OWNER_USER_ID` from `owner.user_id` in the step 2 response (or `GET /api/
 Platform `shop.manage_client_origins`. Origin = `scheme://host[:port]`, no path, no wildcard, globally unique across shops, and one origin has exactly one purpose.
 
 ```bash
-# storefront (CORS for /api/v1/shop/*, /api/v1/render/*; none for /api/v1/admin/*)
+# storefront (CORS for /api/v1/shop/*; none for /api/v1/admin/*)
 curl -s -X POST "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/allowed-origins" -d '{"origin":"https://shop.example.com","purpose":"storefront"}'
 # the merchant's own admin site (binds that host to this shop server-side; invitation/password links point at it)
 curl -s -X POST "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/allowed-origins" -d '{"origin":"https://admin.shop.example.com","purpose":"admin"}'
 curl -s "${auth[@]}" "$API/api/v1/admin/shops/$SHOP/allowed-origins"        # list to confirm
 ```
 
-Do not register the shared merchant admin domain (`ADMIN_PUBLIC_URL`) or the platform admin domain under any shop. Fixed preview domains need their own entry; random-hash preview domains cannot be covered. For local admin testing over http also register `https://localhost:3001` (see `admin/README.md` in the example-shop repo).
+Do not register the shared merchant admin domain (`ADMIN_PUBLIC_URL`) or the platform admin domain under any shop. Fixed preview domains need their own entry; random-hash preview domains cannot be covered. For local admin testing over http also register `https://localhost:3001` (see `admin/README.md` in the merchant template).
 
 ## 6. Publishable key [createPublishableKey]
 

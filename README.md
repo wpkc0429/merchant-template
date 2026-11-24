@@ -8,9 +8,13 @@ inside a fenced "design layer".
 
 * `CLAUDE.md`: rules for design sessions (AI) and, separately, for the human maintainers of the locked core.
 * `docs/TEMPLATE-NOTES.md`: naming map, every locked-code change, known limitations, open decisions.
-* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline); `template.json` holds the version.
-* `.claude/skills/`: `storefront-design`, `admin-design` (operating manuals for design sessions) and
-  `merchant-onboarding` (the platform operator's playbook this template instantiates).
+* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline, `v0.2.0` = the 2026-11-25 decisions); `template.json` holds the version.
+* `docs/DECISIONS.md`: the standing decisions (strict CSP is a deployment requirement, `admin/styles.css` stays locked, fixed
+  warnings in irreversible confirmations, locked-core changes are human-reviewed, merchant repos come from `new-merchant.mjs` and
+  syncs from a tag only, the content schema is registered by a human only).
+* `.claude/skills/`: `storefront-design`, `admin-design` (operating manuals for design sessions), `merchant-onboarding` (the
+  platform operator's playbook this template instantiates), `core-change` (the human-reviewed process for changing the locked
+  core or the `ctx` surface) and `template-release-and-sync` (releasing a version, syncing it into a merchant).
 
 ## Create a merchant
 
@@ -20,12 +24,33 @@ node scripts/new-merchant.mjs ../my-shop --name "My Shop" --slug my-shop \
   [--site-url https://shop.example.com] [--admin-origin https://admin.shop.example.com]
 ```
 
-Run by a human. It refuses a non-empty target, copies the template (no `.git`, no template-only files), sets the brand
+This is the only way to create a merchant repo (GitHub's "Use this template" button is just for finding the template). Run by a
+human. It refuses a non-empty target, copies the template (no `.git`, no template-only files), sets the brand
 name in the storefront metadata and copy and in the admin copy, writes the real `public/config.js` values if given
 (otherwise leaves the `REPLACE_WITH_*` placeholders, which `check-layers` then reports as a warning), sets
 `isTemplate: false`, records the version in `.template-version` and `template.json`, re-locks both hash manifests,
-runs `git init` and makes the initial commit. It creates no GitHub repo and pushes nothing. The platform side
-(shop, owner, origins, publishable key, R2, Cloudflare) is `.claude/skills/merchant-onboarding`.
+runs `git init` and makes the initial commit (provenance, including the tag and commit, goes into the `.template-version` history).
+It creates no GitHub repo and pushes nothing. At the end it prints the next steps, including the **human-only content schema
+registration** (below). The platform side (shop, owner, origins, publishable key, R2, Cloudflare) is
+`.claude/skills/merchant-onboarding`.
+
+### Content schema (human registration only)
+
+`public/content.schema.json` describes the shop's editable content (brand, store info, hero, story, FAQ, product info) for the
+platform's per-shop content schema; it matches `public/content.js` field for field (a test checks it) and is a storefront
+**design-layer** file. **Editing it registers nothing, and registration is a human step**: never CI, the AI edit service, a deploy
+hook or an unattended script. A human who holds `content.manage` (the shop owner or a platform admin):
+
+```bash
+node scripts/check-content-schema.mjs --lint                      # offline sanity check, no credentials
+CONTENT_API_BASE=https://api.example.com CONTENT_SHOP_ID=12 CONTENT_ADMIN_EMAIL=... CONTENT_ADMIN_PASSWORD=... \
+  node scripts/check-content-schema.mjs                            # 1. dry run on the platform: writes nothing, prints the report
+# 2. register for real (platform docs/content-schema.md, merchant-onboarding skill step 11a): PUT .../content/schema
+# 3. only if the platform answers 409 removals_require_confirmation: review the removals, then repeat with ?confirm_removals=true
+```
+
+The storefront still reads `public/content.js`; the platform's public `/shop/content` endpoint is not built, so the template has no
+content fetching yet (roadmap: `docs/TEMPLATE-NOTES.md`).
 
 Then load the catalogue (credentials only from the environment):
 
@@ -57,7 +82,8 @@ For a throwaway API and the end-to-end suites see `admin/README.md` ("測試"); 
 public/            storefront (the only directory Cloudflare publishes)
   commerce/        LOCKED: API client, cart, checkout, public-api.json
   config.js        LOCKED + hash-protected, merchant-owned: apiBase, publishableKey, showPrices, featuredCategory
-  app.js content.js styles.css index.html assets/    DESIGN LAYER (storefront)
+  _headers         LOCKED + hash-protected: the strict Content-Security-Policy (a deployment requirement)
+  app.js content.js content.schema.json styles.css index.html assets/    DESIGN LAYER (storefront)
 scripts/           check-layers (storefront guard), check-scope, check-locked, import-catalog, sync-core,
                    lib/, new-merchant + gen-placeholders (template only), commerce.manifest.json
 admin/             merchant back office (build-less ES modules)
@@ -77,7 +103,7 @@ design layer of one site per session:
 
 | Site | Design layer (editable) | Locked (never from a design session) | Guard |
 | --- | --- | --- | --- |
-| storefront | `public/app.js content.js styles.css index.html assets/**` | `public/commerce/**`, `public/config.js`, everything else | `node scripts/check-scope.mjs storefront --base <ref>` (scope + `check-layers --check`) |
+| storefront | `public/app.js content.js content.schema.json styles.css index.html assets/**` | `public/commerce/**`, `public/config.js`, everything else | `node scripts/check-scope.mjs storefront --base <ref>` (scope + `check-layers --check`) |
 | admin | `admin/design/**` | all other files under `admin/` | `node scripts/check-scope.mjs admin --base <ref>` (scope + `admin/scripts/check-design.mjs`) |
 
 The design layer reaches the core only through `window.ShopCommerce` (storefront) and `ctx` (admin), restricted to the
@@ -94,7 +120,10 @@ configure that.
 
 ## Sync core updates into a merchant repo
 
-The template is tagged (`v0.1.0`, ...). In a merchant repo, **by a human, never an AI session**:
+The template is tagged with annotated tags (`v0.1.0`, `v0.2.0`, ...). **The sync source is a tag only**: `sync-core` refuses a
+template checkout whose HEAD is not exactly at the annotated tag `v<version>` of its `template.json` (or whose tree is dirty),
+unless a human passes the loud `--allow-untagged` override (printed in the output and appended to the `.template-version`
+history). Core syncs are run per merchant, **by a human, never an AI session** (`.claude/skills/template-release-and-sync`):
 
 ```bash
 git -C <template checkout> checkout v0.2.0
@@ -112,6 +141,7 @@ function, a new config key, a removal), it stops with a "design-layer action nee
 ## Tests
 
 ```bash
-node tests/run.mjs        # new-merchant, sync-core (refusals, preservation, rollback), import-catalog, workflow logic
+node tests/run.mjs        # new-merchant, sync-core (tag-only source, refusals, preservation, rollback), import-catalog, workflow logic,
+                          # decisions (content schema, CSP guards, fixed confirmation warnings)
 node scripts/check-layers.mjs --check && node admin/scripts/check-design.mjs && node admin/scripts/test-guard.mjs
 ```

@@ -6,7 +6,7 @@ the things it must do. The agent's own instructions are `docs/DESIGN-LAYER.md` (
 
 ## What this repo guarantees
 
-* Everything the agent may change is under `design/`. Everything else is locked and hash-manifested
+* Everything the agent may change is under `design/` (admin sessions) or the storefront design paths (storefront sessions, never in the same session). Everything else is locked and hash-manifested
   (`scripts/core.manifest.json`).
 * `node scripts/check-design.mjs --base <ref>` is the single gate. Exit `0` ok, `1` violations (report on stderr, or
   `--json` for a machine-readable report), `2` usage/environment error. No dependencies, Node 18+, runs in seconds.
@@ -40,7 +40,9 @@ the things it must do. The agent's own instructions are `docs/DESIGN-LAYER.md` (
 6. **Audit.** Store per request: merchant, prompt, base and head SHAs, the diff, the guard report, the preview URL, who
    approved and when.
 
-## Strict CSP for every environment that serves the admin
+## Strict CSP for every environment that serves the admin: REQUIRED, NOT OPTIONAL
+
+**Decided by the user on 2026-11-25 (`../../docs/DECISIONS.md` D1): the strict CSP below is a deployment requirement for production AND for every AI-edit preview environment.** A preview that is served without it must not be shown to a merchant, and the service must not publish a preview it has not served under the CSP. `deploy/nginx.conf.template` has it on by default (no switch), `deploy/Dockerfile` installs it, and `scripts/check-design.mjs` fails when either is missing it. The storefront equivalent is `public/_headers`. A preview host that is not built from `deploy/` must reproduce the policy exactly (it may add its own preview and API origins to `connect-src` / `img-src`, never `unsafe-inline` / `unsafe-eval` for scripts).
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self';
@@ -64,7 +66,9 @@ the core, so no `'unsafe-inline'` is needed for scripts.
 
 * Run the agent with a token that can reach other repos, the platform API, or production hosting.
 * Publish when the gate fails, when the diff touches anything outside `design/`, or without the merchant's approval.
-* Run `check-design.mjs --update` (it rewrites the core manifest). Only a human, in a reviewed core change, does that.
+* Run `check-design.mjs --update` (it rewrites the core manifest). Only a human, in a reviewed core change (`.claude/skills/core-change`), does that. The same goes for adding anything to `ctx`: that is a human-reviewed core change.
+* Serve a preview without the strict CSP, or let the agent change `deploy/`, `public/_headers`, `core/warnings.js` or `styles.css`.
+* Register the storefront's content schema (`public/content.schema.json`) on the platform, or hold credentials that could: registration is a human step.
 * Trust the scan as a sandbox: it is defence in depth (see "Known limits" in `docs/DESIGN-LAYER.md`). Human approval of the
   preview and the CSP are part of the design.
 

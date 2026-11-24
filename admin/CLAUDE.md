@@ -23,7 +23,10 @@ node e2e/parity.mjs capture <dir> | compare <a> <b>      # 390／1280 逐頁截�
 - **核心**：`lib/`（API／驗證／權限／設計層載入器 `design.js`／`design-schema.js`／`public-api.json`）、`core/`（ctx、動作、查詢、auth、路由表、host）、`ui/`（安全 DOM 建構器與對話框等原件）、`app.js`、`index.html`、`config*.js`、`styles.css`、`vendor/`、`design-defaults/`（原廠備份畫面）。
 - **設計層** `design/`：`tokens.css`、`theme.css`、`copy.js`（所有文案）、`routes.js`（路由 id → 畫面檔）、`views/`（所有畫面，含登入／設定密碼／接受邀請／導覽外框）、`parts/`、`assets/`。畫面只透過 `ctx`（`lib/public-api.json`）做事，不得 import 核心、不得出現 fetch／storage／eval／document／innerHTML 等。
 - **安全相關一律在核心的動作裡**（`core/actions.js`），不可搬進畫面：權限檢查、狀態規則（`shipBlocker`、可取消條件）、驗證（密碼長度、slug、金額整數…）、商品 SKU 保護與過期寫入保護、上傳上限與 HEIC、**不可逆動作的確認對話框**（設計層只提供 `confirm.*` 文案）。資料函式（`ctx.data`）在核心先檢查權限、綁定目前的 shop。
-- 新增 `ctx` 的函式 = 核心變更：改 `core/`、更新 `lib/public-api.json`、`--update`、更新 `docs/DESIGN-LAYER.md`。**不要**讓設計層繞過去。新增文案 key = 同時加進 `design/copy.js` 與 `design-defaults/copy.js`。
+- **`styles.css` 是鎖定的**（2026-11-25 決定）：AI 只能用 `design/tokens.css` 與 `design/theme.css` 調外觀，做不到就升級給人類，不要鬆綁 `styles.css`。
+- **不可逆動作的確認：警告文字固定在核心**（`core/warnings.js`，id 清單在 `lib/design-schema.js` 的 `WARNED_CONFIRM_IDS`）。對話框 = 設計層的 `confirm.<id>.title`／`.text`（前導，可為空）／按鈕字樣 + 核心的固定警告（永遠顯示，`data-testid="confirm-warning"`）。`validateCopy` 與守門員拒絕任何 `confirm.*.*warn*` 鍵；`css/hides-dialog` 擋下隱藏它的 CSS。新增不可逆動作時：走 `ask()`、把 id 加進 `WARNED_CONFIRM_IDS`、在 `core/warnings.js` 加警告（兩邊不一致時模組載入就會丟錯）、兩份 copy 加 `.title`／`.text`／`.yes`。
+- **嚴格 CSP 是部署要求**：`deploy/nginx.conf.template` 預設帶，`check-design.mjs` 的 "deploy" 步驟會檢查；不要為了方便把它拿掉。
+- 新增 `ctx` 的函式 = 核心變更（人類審查，流程見 `../.claude/skills/core-change`；**只有人類能跑 `--update`**）：改 `core/`、更新 `lib/public-api.json`、`--update`、更新 `docs/DESIGN-LAYER.md`。**不要**讓設計層繞過去。新增文案 key = 同時加進 `design/copy.js` 與 `design-defaults/copy.js`。
 - 改了預設畫面後，要把 `design/views|parts` 同步到 `design-defaults/`（`cp`），再 `--update`；`check-design` 會掃描兩邊。
 - `lib/` 不得 import `ui/`、`core/`、`design/`、`app.js`，不建 DOM；`ui/`、`core/`、`app.js` 不得 `fetch`／XHR／碰 token 或 storage／寫 `/api/v1`（`scripts/check-layers.mjs`）。
 

@@ -57,6 +57,30 @@ Behaviour of the locked code is unchanged except for the items marked **(behavio
 10. New locked files: `scripts/{check-locked,sync-core,import-catalog}.mjs`, `scripts/lib/template.mjs`,
     `admin/deploy/**`, `.github/workflows/guards.yml`, `docs/CORE-CHANGELOG.md`, `*.example` config files.
 
+### v0.2.0 (2026-11-25, decisions in docs/DECISIONS.md)
+
+11. **(behaviour)** `public/_headers` (new, locked, hash-protected, synced): the strict storefront CSP. `scripts/check-layers.mjs`
+    verifies it and flags inline scripts in `public/index.html`. `public/commerce/local-config.js` (new, locked) replaces the inline
+    localhost-override script of `index.html`. Why `style-src-attr 'unsafe-inline'`: `app.js` builds product photos with inline
+    `style="background-image:..."` attributes (about 40 sites). Why `connect-src`/`img-src` allow `https:`: one file for every
+    merchant; pinning per merchant needs a merchant-owned file (follow-up, see "Open decisions").
+12. **(behaviour)** `admin/core/warnings.js` (new), `admin/core/actions.js` (`ask()` composes title + editable `text` + fixed warning),
+    `admin/ui/kit.js` (`confirmDialog({warning})`), `admin/lib/design-schema.js` (`WARNED_CONFIRM_IDS`, `fixedWarningViolation`,
+    `defaultsProblems`; `validateCopy` rejects warning keys and the retired `.message` keys), `admin/design{,-defaults}/copy.js`
+    (`confirm.<id>.message` -> `.text`, lead-in only; the old keys are ignored with a note, not rejected, so a v0.1.0 merchant can sync first and rename afterwards). Default wording is unchanged except that deleting a category now also says
+    "刪除後無法復原。" (the old dialog only reassured that products stay). `lib/public-api.json` (the `ctx` surface) did not change.
+13. `admin/scripts/check-design.mjs`: new `deployChecks` step (CSP in `admin/deploy/`), and the copy-defaults check. Guard tests and
+    the design e2e (section D7b) extended.
+14. `scripts/sync-core.mjs` (tag-only source, `--allow-untagged`, history in `.template-version`), `scripts/lib/template.mjs`
+    (`sourceInfo`, `withHistory`), `scripts/new-merchant.mjs` (provenance, human registration steps), new
+    `scripts/check-content-schema.mjs`, `.github/workflows/guards.yml` (content schema lint).
+15. Storefront design layer (template only, never synced): `public/content.schema.json` (new, from the platform's starter),
+    `content.js`/`app.js` (title fields: `titleHtml` with `<br>` became plain `title` with `\n`, rendered by `lines()`), `index.html`.
+    The platform's starter schema declared the title fields as `textarea`; making the template match (instead of modelling raw HTML as
+    `richtext`) also removes the only place where content was inserted as HTML.
+16. Skills: `merchant-onboarding` re-synced from the platform (headless only, content schema step, known gaps); new `core-change` and
+    `template-release-and-sync`; `storefront-design` and `admin-design` updated.
+
 ## 3. Known limitations
 
 * **The variant option key is `size` (S / M / L).** The storefront reads `sku.options.size`; `S`, `M`, `L` are listed
@@ -86,6 +110,8 @@ Behaviour of the locked code is unchanged except for the items marked **(behavio
 
 ## 4. Open decisions
 
+Items 1 to 3 were decided on 2026-11-25 (docs/DECISIONS.md D5): merchants are created with `new-merchant.mjs`, `sync-core` is run by a human per merchant, and the sync source is an annotated tag only (`--allow-untagged` is the recorded emergency override).
+
 1. **How merchant repos are created in production**: `scripts/new-merchant.mjs` (one command, sets the brand and the
    config, re-locks manifests) versus GitHub's "Use this template" button (copies files without history, no
    customisation). Recommended: mark this repo as a GitHub template for discoverability but create merchants with the
@@ -103,6 +129,22 @@ Behaviour of the locked code is unchanged except for the items marked **(behavio
    Decide whether to also run the throwaway-stack e2e in CI (needs the platform repo and Docker).
 8. **Admin logo / branding**: the platform's `admin_branding` hook can override accent and primary colour at runtime;
    the template's default logo is a placeholder in `admin/design/assets/logo.svg`.
+
+9. **Pin `connect-src` / `img-src` of the storefront CSP per merchant** (needs the API and image origins in a merchant-owned
+   copy of `public/_headers`, written by `new-merchant.mjs`; sync would then have to leave the file alone, so CSP upgrades would
+   need a manual merge). Today the policy allows any `https:` origin for those two directives.
+10. **Content store roadmap (not built, do not build content fetching yet).** The platform has per-shop content schema registration
+    (built, human only). Still to come on the platform: content documents by key, revisions, the public `GET /shop/content*` read and
+    preview endpoints, the publish hook. Then, in the template: a locked `ShopCommerce.content` loader (read with the publishable
+    key, cache, fall back to `content.js` defaults), the design layer reading it instead of `content.js`, the admin core's content
+    form functions (edit, preview, publish against the registered schema; new `ctx` functions, so a human-reviewed core change per
+    `.claude/skills/core-change`), and a `content_schema_registered` check in onboarding. Until then `content.js` is the source and
+    `public/content.schema.json` is the contract it will move to (a test keeps them aligned).
+11. **GitHub**: create the repo, protect `main`, require the `guards` check and a code owner for `.github/**` and the locked paths;
+    push the tags (`git push origin v0.2.0`). Nothing in this repo creates a remote.
+12. **Re-creating the original merchant site (example-shop) from the template**: apply its design layer over the template's with
+    `scripts/new-merchant.mjs`, mind the v0.2.0 design-layer actions (copy key rename, index.html inline script, content schema file,
+    `titleHtml`).
 
 ## 5. Running the browser tests on a throwaway stack
 

@@ -7,8 +7,8 @@
 ## A. 設計工作階段（AI 或做設計的人）：只改設計層，改完停下來等核可
 
 1. **只能改設計層**：
-   - 店面：`public/app.js`、`public/content.js`、`public/styles.css`、`public/index.html`、`public/assets/**`
-   - 後台：`admin/design/**`
+   - 店面：`public/app.js`、`public/content.js`、`public/content.schema.json`、`public/styles.css`、`public/index.html`、`public/assets/**`
+   - 後台：`admin/design/**`（只有 `tokens.css`、`theme.css` 等設計層檔案；`admin/styles.css` 是**鎖定**的，要改外觀請用 tokens／theme，做不到就升級給人類）
    一個工作階段只動**一個站**，不得碰另一個站、鎖定的商務層／核心層、`public/config.js`、`wrangler.jsonc`、`template.json`、`.template-version`、雜湊清單（`scripts/commerce.manifest.json`、`admin/scripts/core.manifest.json`）、`scripts/**`、`.github/**`、`.claude/**`、repo 根的檔案。要改這些＝**升級（escalate）**：說明需求、列出涉及的鎖定檔案、提出給人類審查的最小方案，然後停下，不要繞過。
 2. **分支**：從目前的 `HEAD` 開 `design/storefront-<名稱>` 或 `design/admin-<名稱>`（分支前綴決定 CI 跑哪一種範圍檢查）。不要在 `main` 上工作。
 3. **跑守門員**（每次有意義的修改後、交付前一定要跑）：
@@ -17,7 +17,10 @@
    node scripts/check-scope.mjs storefront --base "$BASE"   # 店面：範圍 + scripts/check-layers.mjs --check
    node scripts/check-scope.mjs admin --base "$BASE"        # 後台：範圍 + admin/scripts/check-design.mjs --base
    ```
-   0 通過／1 違規（照訊息修正再跑）／2 用法或環境錯誤（什麼都沒判斷）。**絕不執行任何 `--update`**（那會重寫雜湊清單，只有人類在「核心變更」時才能做），**絕不執行 `scripts/sync-core.mjs`、`scripts/new-merchant.mjs`**。
+   0 通過／1 違規（照訊息修正再跑）／2 用法或環境錯誤（什麼都沒判斷）。**絕不執行任何 `--update`**（那會重寫雜湊清單，只有人類在「核心變更」時才能做；AI 不論理由都不做），**絕不執行 `scripts/sync-core.mjs`、`scripts/new-merchant.mjs`**。
+   **內容 schema（`public/content.schema.json`）：註冊是「只有人類」的步驟。** 改這個檔案不會註冊任何東西；AI、CI、部署 hook、無人值守的腳本**絕不**呼叫平台的註冊端點（`PUT /api/v1/admin/shops/{id}/content/schema`），也不持有、不要求 `content.manage` 的帳密。AI 最多改檔、跑 `node scripts/check-content-schema.mjs --lint`（離線），再交給人類做 dry run 與註冊（`.claude/skills/merchant-onboarding`）。schema 的每個字串要有 `default` 與 `maxLength`、每個陣列要有 `maxItems`、每個物件 `additionalProperties:false`；欄位要與 `content.js` 對得上。
+   **嚴格 CSP 是部署的硬性要求**（`public/_headers`、`admin/deploy/`，皆鎖定）：設計層不得需要內嵌 `<script>`、`on*=` 屬性、`eval` 或第三方腳本／字型；`index.html` 不可加行內 script。
+   **不可逆動作的確認對話框，其警告文字固定在核心**（`admin/core/warnings.js`），後台設計層只能改標題、前導文字與按鈕字樣（`confirm.<id>.title/.text/.yes`），不能定義、改寫或隱藏警告；任何想這麼做的需求都是升級事項。
 4. **不推送、不部署、不合併、不開 PR**：推上 `main` 會自動部署店面。完成後**停在商家核可這一步**：回報變更檔案、白話摘要、守門員輸出、預覽方式與做不到的部分，等人核可。
 5. 不要把帳密、`config.local.js`、截圖、`node_modules` 放進 git。暫存檔放 scratchpad，**不要放進 `public/`**（整個目錄會被公開發布）。
 6. 操作手冊：`.claude/skills/storefront-design`（店面）、`.claude/skills/admin-design`（後台，另見 `admin/docs/DESIGN-LAYER.md`）。
@@ -27,10 +30,12 @@
 鎖定核心 = `template.json` 的 `lockedPaths`（店面 `public/commerce/**`、`public/config.js`、守門員腳本；後台 `admin/` 的 `lib/ core/ ui/ vendor/ design-defaults/ scripts/` 與外殼檔案；`.github/`、`.claude/`、本檔）。只有範本 repo 的維護者改它，之後經版本與 `scripts/sync-core.mjs` 送到各商家 repo：
 
 1. 在範本 repo 的分支上改核心。**不要為商家客製**：核心對所有商家一致，客製放設計層或 `config.js`。
+   **新增或改動設計層 `ctx` 的函式／動作（或任何其他鎖定核心的變更）一律是「人類審查的核心變更」**，流程寫在 `.claude/skills/core-change`；AI 工作階段不得做，只能提出方案後停下。**只有人類能跑雜湊清單的 `--update`。**
 2. 新增核心能力（新的 `ShopCommerce` 函式、`SHOP_CONFIG` 鍵、後台 `ctx` 函式或文案鍵）：同步更新 `public/commerce/public-api.json` 或 `admin/lib/public-api.json`、相關文件與技能、預設設計層（新文案鍵要同時加進 `admin/design/copy.js` 與 `admin/design-defaults/copy.js`；改了預設畫面要把 `admin/design/views|parts` 同步（`cp`）到 `admin/design-defaults/`）。
 3. 重鎖雜湊：`node scripts/check-layers.mjs --update`（店面）、`node admin/scripts/check-design.mjs --update`（後台）。不要用 `--update` 去「讓守門員過關」而不看它擋下了什麼。
 4. 在 `docs/CORE-CHANGELOG.md` 新增版本段落。若這個版本要求商家設計層跟進（新 ctx 函式、新設定鍵、移除或改名），加一行 `Design-layer action: ...`，`sync-core` 會把它變成「需要設計層動作」的阻擋通知。
-5. 提升 `template.json` 的 `version`，跑全部測試（見下），提交，**打 tag `vX.Y.Z`**。商家 repo 由人類（或平台）用 `node scripts/sync-core.mjs --from <範本 checkout> --dry-run` 預覽，再 `--yes` 套用。
+5. 提升 `template.json` 的 `version`，跑全部測試（見下），提交，**打 annotated tag `vX.Y.Z`**（`git tag -a`；流程見 `.claude/skills/template-release-and-sync`）。商家 repo 一律用 `scripts/new-merchant.mjs` 建立（GitHub 的「Use this template」按鈕只用來找到範本）；核心同步由人類逐一商家執行：`node scripts/sync-core.mjs --from <範本 checkout，HEAD 正好在該 tag> --dry-run` 預覽，再 `--yes` 套用。**同步來源只能是 tag**：HEAD 不在 annotated `vX.Y.Z`（或工作樹不乾淨）時 `sync-core` 拒絕，除非人類明確加 `--allow-untagged`（輸出會大聲標示，並記錄在商家 repo 的 `.template-version` 歷史）。
+   決策紀錄在 `docs/DECISIONS.md`（嚴格 CSP、`admin/styles.css` 鎖定、固定警告、tag-only 同步、內容 schema 只由人類註冊）。
 6. `public/config.js` 在範本裡**必須保持 `REPLACE_WITH_*` 佔位值**（`template.json` 的 `isTemplate: true` 啟用這項檢查）。商家 repo 的真實值由 `scripts/new-merchant.mjs` 或人類編輯寫入，再由人類 `--update`；`sync-core` 永遠不覆寫它。
 
 ## 指令（都在 repo 根目錄執行；後台指令見 `admin/README.md`、`admin/CLAUDE.md`）
@@ -45,12 +50,13 @@ node admin/scripts/test-guard.mjs                         # 後台守門員自�
 node scripts/check-scope.mjs <storefront|admin> --base <ref>
 node scripts/check-locked.mjs --base <ref> [--head <ref>] # design/* 分支不得動鎖定路徑
 node scripts/import-catalog.mjs catalog/catalog.json --dry-run   # 通用冪等目錄匯入（憑證只從環境變數）
+node scripts/check-content-schema.mjs --lint              # 內容 schema 離線檢查（AI 可跑）；不加 --lint 會對平台做 dry run，需要人類的 CONTENT_* 環境變數，且永遠不註冊
 
 # 僅範本 repo（templateOnlyPaths，不會複製到商家 repo）
 node scripts/new-merchant.mjs <dir> --name "<店名>" --slug <slug> [--api-base ...] [--publishable-key ...]
 node tests/run.mjs                                        # new-merchant / sync-core / import-catalog 的測試
 # 僅商家 repo
-node scripts/sync-core.mjs --from <範本 checkout> [--dry-run] [--yes]   # 人類執行，AI 絕不執行
+node scripts/sync-core.mjs --from <範本 checkout，HEAD 在 annotated vX.Y.Z tag> [--dry-run] [--yes]   # 人類執行，AI 絕不執行；來源只能是 tag
 ```
 
 沒有測試框架、沒有 linter、沒有 build、沒有 `package.json`。店面的驗證方式是在瀏覽器實際操作（含結帳三步驟與送出訂單、搜尋輸入時的游標保留、窄視窗下的版型切換）；`scripts/*.mjs` 與 `tests/*.mjs` 是不依賴任何套件的開發工具，不被部署。
@@ -74,15 +80,15 @@ catalog/   目錄資料（import-catalog.mjs 的輸入；範本附佔位範例�
 
 | 層 | 檔案 | 誰可以改 |
 | --- | --- | --- |
-| **鎖定的商務層** | `public/commerce/**`（`api.js` API client 與目錄載入、`cart.js` 購物袋、`checkout.js` 結帳／付款導向／訂單狀態、`public-api.json` 公開面清單）、`public/config.js`（`apiBase`、`publishableKey`、`showPrices`、`featuredCategory`） | **AI agent 與做設計的人都不得修改**；只有人類的「核心變更」（B）才能動，並需 `--update` 重鎖雜湊 |
-| **設計層** | `public/app.js`（畫面、狀態、路由）、`public/content.js`（靜態文案與設計常數）、`public/styles.css`、`public/index.html`、`public/assets/` | 可自由修改 |
+| **鎖定的商務層** | `public/commerce/**`（`api.js` API client 與目錄載入、`cart.js` 購物袋、`checkout.js` 結帳／付款導向／訂單狀態、`local-config.js` localhost 才載入的本機覆寫、`public-api.json` 公開面清單）、`public/config.js`（`apiBase`、`publishableKey`、`showPrices`、`featuredCategory`）、`public/_headers`（嚴格 CSP） | **AI agent 與做設計的人都不得修改**；只有人類的「核心變更」（B）才能動，並需 `--update` 重鎖雜湊 |
+| **設計層** | `public/app.js`（畫面、狀態、路由）、`public/content.js`（靜態文案與設計常數）、`public/content.schema.json`（內容欄位 schema，平台註冊只能由人類做）、`public/styles.css`、`public/index.html`、`public/assets/` | 可自由修改 |
 
 規則（由 `scripts/check-layers.mjs` 強制，改完設計檔請跑它）：
 
 - 設計層**只能**透過 `window.ShopCommerce` 使用 `commerce/public-api.json` 列出的函式（`loadCatalog`、`money`、`describeApiError`、`isSkuSellable`、`cart.*`、`checkout.*`），只能讀 `SHOP_CONFIG.showPrices` / `featuredCategory`。不得出現 `fetch`、`localStorage`/`sessionStorage`、`/api/v1`、`apiBase`、`publishableKey`、`_internal`、`shopcommerce:` 開頭的儲存鍵、`import`。
 - 商務層不知道任何畫面：它回傳純資料（`{kind:'created'|'error', …}`），文案與欄位錯誤對應留在設計層。需要新的商務能力是**商務變更**（B），不要從設計層繞過去。
 - 購物袋（`shopcommerce:cart:<shop hash>`）依 publishable key 分店存放；載入目錄後 `cart.reconcile()` 丟掉不屬於這個目錄的 SKU 行。購物袋行是快照，庫存為 0 的 SKU 加不進去、`reconcile` 也會移除。
-- 靜態文案（FAQ、門市資訊、品牌故事、promo、`pinfo`）集中在 `content.js`，**不要**把文案散回 `app.js`。商品／價格／圖片／副標／分類／精選一律來自 API，不要寫死在任何一層。
+- 靜態文案（FAQ、門市資訊、品牌故事、promo、`pinfo`）集中在 `content.js`，**不要**把文案散回 `app.js`。標題欄位（`hero.title`、`storyTeaser.title`、`story.title`）是**純文字**，換行 `\n` 由 `app.js` 的 `lines()` 轉成 `<br>`（先 `esc()`，不收 HTML）。`public/content.schema.json` 是同一份內容的欄位 schema（`content.js` 的預設值要和 schema 的 `default` 一致，範本的測試會檢查）；店面**目前仍只讀 `content.js`**，平台的公開 `/shop/content` 端點還沒建，不要在設計層加任何內容抓取。商品／價格／圖片／副標／分類／精選一律來自 API，不要寫死在任何一層。
 - **`config.js` 的注入**：範本裡是佔位值（`isTemplate: true` 時 `check-layers` 強制）；商家 repo 裡是真實值，只靠雜湊清單保護（`isTemplate: false`，佔位值殘留只是警告）。它對 AI 鎖定、對核心同步（`sync-core`）也是商家自有、不覆寫。
 
 ## 架構約束

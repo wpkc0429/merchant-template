@@ -22,7 +22,9 @@ Everything else under `admin/` (`app.js`, `index.html`, `config*.js`, `styles.cs
 - Use only `ctx` (names listed in `admin/lib/public-api.json`; semantics in DESIGN-LAYER.md section 4): `ctx.ui` to build DOM (`h(tag, attrs, ...children)` escapes text), `ctx.data` for reads, `ctx.actions` for writes, `ctx.t` / `ctx.can` / `ctx.format` / `ctx.logic` / `ctx.enums` / `ctx.auth` / `ctx.nav`.
 - Import only other files under `design/` by relative path. No `fetch`, storage, `window`/`document`, `innerHTML`, `eval`, external URLs (full list in section 6).
 - After an `await`, check `ctx.alive()`. Show errors with `ctx.ui.toast(ctx.errorMessage(e, {...}), "error")`.
-- Irreversible actions already show the core's confirmation; never build a replacement confirmation, and never hide dialogs with CSS.
+- Irreversible actions already show the core's confirmation, and its **warning text is FIXED in the core** (`core/warnings.js`): a dialog is your editable `confirm.<id>.title`, `confirm.<id>.text` (a lead-in, may be empty) and button labels, plus the core's warning that is always rendered (`data-testid="confirm-warning"`). You cannot define, reword or remove the warning: `confirm.*.warning` keys and the old `confirm.*.message` keys of irreversible confirms are ignored (the guard prints a rename note), and CSS that hides or shrinks the dialog or the warning fails with `css/hides-dialog`. Styling it (colour, weight) is fine. Never build a replacement confirmation. Wanting a different warning is an escalation (a human core change).
+- **`admin/styles.css` is LOCKED.** Customise only through `design/tokens.css` (variables) and `design/theme.css` (free CSS loaded last). If the look you need cannot be done with those, escalate; do not look for another way to change `styles.css`.
+- **Strict CSP** (a deployment requirement: nginx sends `script-src 'self'; style-src 'self'; ...`): no inline scripts or styles, no external fonts/images/scripts, no `eval`. Fonts only as woff2 files under `design/assets/`.
 - Wording: change entries in `design/copy.js` (known keys only; fewer placeholders allowed, never new ones; max 600 chars). A new wording key is a core change.
 - Permissions: a screen you cannot reach for a person is the core's decision; `ctx.can` only decides what to offer.
 - Required form fields stay required because the core action validates them. Hiding a required field makes the form unsaveable; do not remove title, slug or SKU fields.
@@ -46,6 +48,7 @@ Worked examples (colour change, rename a label, hide a field, reorder nav, resty
 
 ## Escalate (say so and stop; never work around)
 
+- Adding a function or action to `ctx`, a new copy key, or any other locked-core change: that is a human-reviewed core change (`.claude/skills/core-change`). Only a human runs `check-design.mjs --update`; you never do.
 - A new data field, a new action or any behaviour change (a new button that does something new, a different state rule, different validation, new permission logic): needs a new `ctx` function, which is a core change for a human (`core/`, `lib/public-api.json`, `check-design.mjs --update`, DESIGN-LAYER.md).
 - Anything outside `admin/design/**`, a new route or URL, a new dependency or build step, an external script/font/image URL, tracking.
 - Showing data the person lacks permission for.
@@ -59,4 +62,4 @@ Reply: what is needed, why it is core, the smallest proposal for a developer, an
 - `references/guard-failures.md` - real guard messages and the fix for each
 - `references/examples.md` - extra worked examples and escalation cases beyond DESIGN-LAYER.md
 
-Single sources of truth, read them rather than relying on memory: `admin/docs/DESIGN-LAYER.md`, `admin/lib/public-api.json`, `admin/CLAUDE.md`, `admin/README.md`, `admin/docs/AI-EDIT-SERVICE-NOTES.md`, `admin/scripts/check-design.mjs` (header documents flags and exit codes).
+Single sources of truth, read them rather than relying on memory: `admin/docs/DESIGN-LAYER.md`, `admin/lib/public-api.json`, `admin/CLAUDE.md`, `admin/README.md`, `admin/docs/AI-EDIT-SERVICE-NOTES.md`, `docs/DECISIONS.md`, `admin/scripts/check-design.mjs` (header documents flags and exit codes).

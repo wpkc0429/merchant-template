@@ -67,7 +67,9 @@ node scripts/test-guard.mjs                  # 守門員自己的測試（每條
 node scripts/check-layers.mjs                # 分層檢查
 ```
 
-### 建議的 CSP（伺服器標頭；核心沒有行內 script，不需要 unsafe-inline）
+### 必要的 CSP（伺服器標頭；核心沒有行內 script，不需要 unsafe-inline）
+
+**嚴格 CSP 是部署的硬性要求（2026-11-25 使用者決定，見 `../docs/DECISIONS.md`）：正式環境與每一個 AI 改版預覽環境都必須帶上它，不是建議、不可關閉。** `deploy/nginx.conf.template` 預設就帶（沒有任何開關可以關掉），`deploy/Dockerfile` 會安裝它；`node scripts/check-design.mjs`（步驟 "deploy"）在 `deploy/` 缺少 CSP、放寬 `script-src`（`unsafe-inline`／`unsafe-eval`／萬用字元）、少了 `object-src`／`base-uri`／`frame-ancestors 'none'`、沒有 `always`，或 Dockerfile 沒安裝／刪掉它時會失敗。repo 外的自訂主機設定不在守門員範圍內，必須由人類照樣帶上。
 
 範本不載入任何第三方字型（`index.html` 已移除 Google Fonts），所以 `style-src` 與 `font-src` 只有 `'self'`：
 
@@ -134,7 +136,7 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
 
 只需發佈：`index.html app.js styles.css config.js config-loader.js lib/ core/ ui/ design/ design-defaults/ vendor/`。`config.local.js` 不要部署（非 localhost 也不會載入）。`deploy/` 備有可直接使用的檔案（本 repo 不會替你部署任何東西）：
 
-- `deploy/nginx.conf.template`：靜態檔 + 嚴格 CSP + 安全標頭，網域由環境變數帶入；
+- `deploy/nginx.conf.template`：靜態檔 + **必要的**嚴格 CSP + 安全標頭，網域由環境變數帶入；
 - `deploy/Dockerfile`：只複製要發布的檔案（從 `admin/` 目錄建置：`docker build -f deploy/Dockerfile -t merchant-admin .`）；
 - `deploy/cloudflared-ingress.example.yml`：tunnel ingress 範例（手動合併進你的 tunnel 設定）。
 
@@ -149,7 +151,7 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
    ```
    （或在平台後台「前端接入」頁選「後台」。）登記後，登入前的 `GET /admin/branding` 才認得這個網域、邀請與設定密碼連結才會指向這裡、並啟用主機綁定。
 4. 圖片上傳：bucket 的 CORS 要加入這個 origin（平台 `docs/media-r2-setup.md` 第 4 步），否則瀏覽器直傳會失敗。
-5. 靜態伺服器要帶上面「建議的 CSP」（`deploy/nginx.conf.template` 已帶）。
+5. 靜態伺服器**必須**帶上面「必要的 CSP」（`deploy/nginx.conf.template` 已帶，不可移除；上線後用 `curl -sI https://admin.<shop-domain>/ | grep -i content-security-policy` 確認）。店面的 CSP 是 `../public/_headers`（Cloudflare 從 `public/` 讀取）。
 
 ## 授權
 

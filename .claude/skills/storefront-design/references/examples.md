@@ -4,7 +4,7 @@ File and key names below were checked against the template (`public/content.js`,
 
 ## 1. "Change the hero wording" (content only)
 
-Edit `SHOP_CONTENT.hero` in `public/content.js` (`eyebrow`, `titleHtml`, `lede`). `titleHtml` is inserted as raw HTML (the template uses `<br>` for line breaks): keep it plain static text plus `<br>`, never data from the API or the visitor. `eyebrow` and `lede` are escaped by `app.js`. Hero text appears in both the desktop and mobile trees and both read `CONTENT.hero`, so one edit covers both. Run both guards, preview both widths.
+Edit `SHOP_CONTENT.hero` in `public/content.js` (`eyebrow`, `title`, `lede`). `title` is plain text: a `\n` in it becomes a line break (`lines()` in `app.js` escapes it first), so never put HTML in it. All three are escaped by `app.js`. If you change the default wording, change the same `default` in `public/content.schema.json` (`types.home...hero`) and run `node scripts/check-content-schema.mjs --lint`; a human registers the schema later. Hero text appears in both the desktop and mobile trees and both read `CONTENT.hero`, so one edit covers both. Run both guards, preview both widths.
 
 ## 2. "Store hours, address, phone changed"
 

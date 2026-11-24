@@ -1,6 +1,6 @@
 {
   "name": "merchant-template",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "isTemplate": true,
   "description": "Default merchant template: storefront (repo root) + admin (admin/). See README.md and docs/TEMPLATE-NOTES.md.",
   "sites": {
@@ -9,6 +9,7 @@
       "designPaths": [
         "public/app.js",
         "public/content.js",
+        "public/content.schema.json",
         "public/styles.css",
         "public/index.html",
         "public/assets/"
@@ -24,11 +25,13 @@
   "lockedPaths": [
     "public/commerce/",
     "public/config.js",
+    "public/_headers",
     "scripts/check-layers.mjs",
     "scripts/check-scope.mjs",
     "scripts/check-locked.mjs",
     "scripts/sync-core.mjs",
     "scripts/import-catalog.mjs",
+    "scripts/check-content-schema.mjs",
     "scripts/lib/",
     "admin/app.js",
     "admin/index.html",
@@ -52,7 +55,8 @@
     "CLAUDE.md",
     ".github/",
     ".claude/",
-    "docs/CORE-CHANGELOG.md"
+    "docs/CORE-CHANGELOG.md",
+    "docs/DECISIONS.md"
   ],
   "merchantOwnedPaths": [
     "public/config.js",
@@ -77,7 +81,10 @@
     "copy": "every file under lockedPaths, except merchantOwnedPaths",
     "never": "designPaths, merchantOwnedPaths, .gitignore, template.json (only its version and path lists are updated)",
     "changelog": "docs/CORE-CHANGELOG.md",
-    "versionFiles": [".template-version", "template.json"],
+    "versionFiles": [
+      ".template-version",
+      "template.json"
+    ],
     "requires": "clean git working tree; incoming version strictly newer; hash manifests verify afterwards"
   }
 }

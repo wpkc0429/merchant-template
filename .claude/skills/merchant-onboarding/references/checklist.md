@@ -4,7 +4,7 @@ Tick items in a run log (a scratch file outside the repos, no secrets). Mark eac
 
 ## Intake (step 0)
 
-- [ ] Shop display name; owner email (kept out of files); storefront kind: headless storefront from the merchant template, or platform-hosted theme (`web/`, needs `theme_id` and a `domain`).
+- [ ] Shop display name; owner email (kept out of files); the storefront is always headless, created from the merchant template (ADR 0001: there is no platform-hosted option; planned intake from the platform website application form is not built yet).
 - [ ] Hostnames decided: storefront (`shop.example.com`), the merchant's admin (`admin.shop.example.com`), whether images share the platform image domain.
 - [ ] ECPay: merchant has an account; stage credentials first; who enters them (the owner).
 - [ ] Target API: local throwaway, staging or production; who holds the platform token and through which route (platform admin domain behind Access).
@@ -30,14 +30,24 @@ Agent: the admin ships inside the same repo (`admin/`), static, no build.
 - [ ] Local run: `cd admin && node scripts/serve.mjs --proxy http://127.0.0.1:8080` and gitignored `admin/config.local.js` (copy `admin/config.local.js.example`: `window.ADMIN_CONFIG.apiBase = location.origin;`).
 - [ ] Guards from `admin/`: `node scripts/check-design.mjs --base <ref>`, `node scripts/check-layers.mjs`, `node scripts/test-guard.mjs`; from the repo root `node scripts/check-scope.mjs admin --base <ref>`.
 - [ ] H: static hosting on the local port the tunnel points at (`admin/deploy/`: nginx config with the strict CSP, Dockerfile, ingress example); tunnel, Access, DNS (`cloudflare-steps.md`); admin origin registered `purpose:"admin"` (cookbook 5) and added to R2 CORS.
+- [ ] **Strict CSP is a deployment requirement (decided 2026-11-25), not optional**: admin = `admin/deploy/nginx.conf.template` (on by default; set `ADMIN_IMG_ORIGIN` and `ADMIN_UPLOAD_ORIGIN`); storefront = `public/_headers` (Cloudflare reads it from `public/`, already in the merchant repo, locked; confirm the response header `content-security-policy` on the live storefront and admin with `curl -sI`). An AI-edit preview environment must serve the same policy.
 - [ ] The admin must handle `#/set-password/{token}` and `#/accept-invite/{token}` at its root (the template does).
 
 ## Verification (step 15)
 
+Content store. **BUILT (first slice): schema registration and page creation.** Reference: `docs/content-schema.md`.
+
+- [ ] The schema to register: the shop's own `public/content.schema.json` (the template ships one aligned with `public/content.js`; run `node scripts/check-content-schema.mjs --lint` after any edit). The platform's starter `docs/content-schema/starter.content.schema.json` is the same content. Registration stays a human step.
+- [ ] H (shop owner or platform admin, node `content.manage`) runs `PUT /api/v1/admin/shops/{id}/content/schema?dry_run=true`, reads the report (`ok` / `needs_attention` / `orphaned`, `removed_paths`), then the same call without `dry_run`. If it answers 409 `removals_require_confirmation`, review the paths and repeat with `confirm_removals=true` only if intended. 422 details name the offending JSON Pointer.
+- [ ] `GET /api/v1/admin/shops/{id}/content/schema` returns version 1; `.../versions` lists it. (There is no `content_schema_registered` setup-status flag.)
+- [ ] The auto-created `home` page holds an empty placeholder: if the schema has a `home` type it shows `needs_attention`; save it once with real content (`PUT /pages/{id}`), then publish. Create other pages with `POST /pages` (`type_key` from the schema, not `global`), `PUT`, `POST /pages/{id}/publish`; verify with `GET /api/v1/render/page?path=/<slug>` and the publishable key.
+- [ ] Staff roles get no `content.*` permissions by default and editors get view and edit only (never publish or manage); grant publish deliberately.
+- [ ] **PLANNED, not built (skip):** key-based content documents and `GET /api/v1/shop/content`, revisions and restore, the preview token endpoint, the publish hook (deploy-hook URL on an allowlisted host), and the template's `ShopCommerce.content` / admin content screens. Until then the merchant's copy is still read from `public/content.js` by the storefront.
+
 Platform side (agent, against local/throwaway stack unless the operator authorises production reads):
 
 - [ ] `make openapi` (contract checks; no infra) and `make test` pass if the platform code was touched (it should not be).
-- [ ] `GET .../setup-status`: `owner_assigned`, `owner_password_set`, `shipping_method_active`, `payment_credentials_set`, `publishable_key_active` all true (plus `theme_applied`, `domain_bound`, `home_published` for a platform-hosted shop).
+- [ ] `GET .../setup-status`: `owner_assigned`, `owner_password_set`, `shipping_method_active`, `payment_credentials_set`, `publishable_key_active` all true (`home_published` reflects the CMS home page: it is true only after a content schema is registered and the home page is saved and published).
 - [ ] Storefront read-back with the key: `curl -s -H "X-Publishable-Key: $PK" "$API/api/v1/shop/products"`, `/categories`, `/shipping-methods` return the expected catalogue; images present.
 - [ ] CORS: from the browser at the storefront origin the three calls above succeed. If `curl` works but the browser fails, the origin is not registered (or has the wrong purpose).
 - [ ] Guest checkout end to end on stage: place an order, follow the ECPay stage redirect, confirm the payment webhook turns the order paid (`ECPAY_RETURN_URL` reachable), check the order in the admin. (`cd e2e && node commerce-path.mjs` is the platform regression chain: it needs a throwaway stack with `make seed-demo` data and tests the demo shop, not the new merchant; run it only if platform code changed, never against production or the main database.)

@@ -17,7 +17,9 @@ Placeholders: `shop.example.com` storefront, `admin.shop.example.com` the mercha
 6. Set the five variables (see `env-reference.md`), restart the API.
 7. Verify: `GET /api/v1/admin/media/config` returns `{"enabled": true, ...}`; upload one product image in the admin; the public `images[0].urls.large` opens as `image/webp` with `Cache-Control: public, max-age=31536000, immutable`; no leftover under `incoming/`.
 
-If the merchant's admin or storefront uses a strict CSP, `img-src` needs the image domain and `connect-src` the R2 direct-upload origin (`docs/admin-frontend-integration.md` section 7, `admin/docs/AI-EDIT-SERVICE-NOTES.md` CSP block of the merchant template).
+A strict CSP is REQUIRED for the merchant's admin and storefront in production and in AI-edit previews (template `docs/DECISIONS.md`): the storefront ships it as `public/_headers` (picked up by the `assets.directory = ./public` Worker, no dashboard step), the admin as `admin/deploy/nginx.conf.template`. Verify with `curl -sI https://<storefront>/ | grep -i content-security-policy` (and the admin host). It means `img-src` needs the image domain and `connect-src` the R2 direct-upload origin for the admin; the storefront policy allows `https:` for both. Original note:
+
+if the merchant's admin or storefront uses a strict CSP, `img-src` needs the image domain and `connect-src` the R2 direct-upload origin (`docs/admin-frontend-integration.md` section 7, `admin/docs/AI-EDIT-SERVICE-NOTES.md` CSP block of the merchant template).
 
 ## B. Static hosting for the merchant admin (origin server)
 
