@@ -1,0 +1,32 @@
+# EXAMPLE ONLY. Nothing in this repo reads or applies this file: merge it BY HAND into your own tunnel
+# config (outside the repo, e.g. ~/.cloudflared/<tunnel>.yml). Replace the tunnel values and the
+# *.example.com hostnames. Follows the platform runbook docs/deploy/admin-exposure-runbook.md and its
+# docs/deploy/cloudflared-admin.example.yml. Do not apply it without reading the runbook.
+#
+# One hostname serves BOTH the static admin and the back-office API, so the browser sees one origin (no
+# CORS, cookie-mode refresh works). Cloudflare Access (One-time PIN) sits in front of this hostname; create
+# the Access application and the API's CF_ACCESS_* settings as the runbook describes (human steps).
+#
+# cloudflared takes the FIRST matching rule, so for each hostname the more specific `path` rule comes
+# BEFORE the catch-all rule. The PUBLIC API hostname keeps blocking /api/v1/admin (shown last, unchanged).
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /path/to/<TUNNEL-UUID>.json
+
+ingress:
+  # --- this merchant's admin hostname ---------------------------------------
+  - hostname: admin.shop.example.com
+    path: ^/api/v1/admin
+    service: http://127.0.0.1:8080          # the platform API
+  - hostname: admin.shop.example.com
+    service: http://127.0.0.1:3001          # this folder's nginx container (deploy/Dockerfile)
+
+  # --- public API hostname: UNCHANGED, the back office stays blocked here ----
+  - hostname: api.example.com
+    path: ^/api/v1/admin
+    service: http_status:404
+  - hostname: api.example.com
+    service: http://127.0.0.1:8080
+
+  # Required final catch-all.
+  - service: http_status:404

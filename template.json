@@ -1,0 +1,83 @@
+{
+  "name": "merchant-template",
+  "version": "0.1.0",
+  "isTemplate": true,
+  "description": "Default merchant template: storefront (repo root) + admin (admin/). See README.md and docs/TEMPLATE-NOTES.md.",
+  "sites": {
+    "storefront": {
+      "root": ".",
+      "designPaths": [
+        "public/app.js",
+        "public/content.js",
+        "public/styles.css",
+        "public/index.html",
+        "public/assets/"
+      ]
+    },
+    "admin": {
+      "root": "admin",
+      "designPaths": [
+        "admin/design/"
+      ]
+    }
+  },
+  "lockedPaths": [
+    "public/commerce/",
+    "public/config.js",
+    "scripts/check-layers.mjs",
+    "scripts/check-scope.mjs",
+    "scripts/check-locked.mjs",
+    "scripts/sync-core.mjs",
+    "scripts/import-catalog.mjs",
+    "scripts/lib/",
+    "admin/app.js",
+    "admin/index.html",
+    "admin/config.js",
+    "admin/config-loader.js",
+    "admin/styles.css",
+    "admin/lib/",
+    "admin/ui/",
+    "admin/core/",
+    "admin/vendor/",
+    "admin/design-defaults/",
+    "admin/scripts/",
+    "admin/e2e/",
+    "admin/docs/",
+    "admin/deploy/",
+    "admin/README.md",
+    "admin/CLAUDE.md",
+    "admin/.gitignore",
+    "admin/config.local.js.example",
+    "public/config.local.js.example",
+    "CLAUDE.md",
+    ".github/",
+    ".claude/",
+    "docs/CORE-CHANGELOG.md"
+  ],
+  "merchantOwnedPaths": [
+    "public/config.js",
+    "wrangler.jsonc"
+  ],
+  "keepExtraPaths": [
+    ".claude/",
+    ".github/"
+  ],
+  "templateOnlyPaths": [
+    "scripts/new-merchant.mjs",
+    "scripts/gen-placeholders.mjs",
+    "tests/",
+    "docs/TEMPLATE-NOTES.md",
+    "README.md"
+  ],
+  "manifests": {
+    "storefront": "scripts/commerce.manifest.json",
+    "admin": "admin/scripts/core.manifest.json"
+  },
+  "sync": {
+    "copy": "every file under lockedPaths, except merchantOwnedPaths",
+    "never": "designPaths, merchantOwnedPaths, .gitignore, template.json (only its version and path lists are updated)",
+    "changelog": "docs/CORE-CHANGELOG.md",
+    "versionFiles": [".template-version", "template.json"],
+    "requires": "clean git working tree; incoming version strictly newer; hash manifests verify afterwards"
+  }
+}

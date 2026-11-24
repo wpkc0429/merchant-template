@@ -1,0 +1,40 @@
+# nginx config for the merchant ADMIN static files (admin/). A TEMPLATE for the official nginx image:
+# the image runs envsubst over /etc/nginx/templates/*.template at start-up and substitutes ONLY the
+# environment variables that are set (nginx's own $uri etc. are left alone). See admin/deploy/Dockerfile.
+#
+# Topology (docs/deploy/admin-exposure-runbook.md of the platform, admin/README.md "部署"): the admin is
+# served on its OWN hostname, same-origin with the API, behind Cloudflare Access:
+#
+#   browser --> admin.<shop-domain> --(Cloudflare Access)--> tunnel
+#                 |-- ^/api/v1/admin --> the platform API   (tunnel rule, see cloudflared-ingress.example.yml)
+#                 `-- everything else --> THIS nginx (static files)
+#
+# so this server never proxies the API and needs no CORS. Required environment variables:
+#   ADMIN_IMG_ORIGIN     origin that serves product images (the platform's IMAGE_PUBLIC_BASE_URL origin),
+#                        e.g. https://img.example.com
+#   ADMIN_UPLOAD_ORIGIN  the R2 / S3 origin the browser PUTs image uploads to (direct upload),
+#                        e.g. https://<account-id>.r2.cloudflarestorage.com  (media-r2-setup.md)
+#
+# The CSP below is the strict one from admin/README.md and admin/docs/AI-EDIT-SERVICE-NOTES.md, adapted to
+# the template (no third-party fonts: style-src and font-src are 'self' only). The core has no inline
+# scripts or styles, so no 'unsafe-inline'. `worker-src blob:` is for the vendored HEIC converter's worker.
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    # No filename hashes, so no long caching: browsers revalidate and a publish takes effect at once.
+    add_header Cache-Control "no-cache" always;
+
+    # Never serve local overrides or anything that is not a published file, even if one slips into the image.
+    location ~ /(config\.local\.js|\.|scripts/|e2e/|docs/|deploy/) { return 404; }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}

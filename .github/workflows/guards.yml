@@ -1,0 +1,109 @@
+# Guards for the merchant template and every merchant repo made from it. Pure Node, no dependencies, no secrets.
+#
+#   * Always:  storefront layer guard (+ hash manifest), admin design guard + its self-test.
+#   * On `design/storefront-*` branches: scripts/check-scope.mjs storefront (only the storefront design paths may change).
+#   * On `design/admin-*` branches:      scripts/check-scope.mjs admin (only admin/design/** may change).
+#   * On ANY `design/*` branch:          scripts/check-locked.mjs fails the run if a locked path, config.js, a hash
+#                                        manifest or template.json is modified.
+#
+# IMPORTANT, HUMAN STEP ON GITHUB (a workflow file cannot configure this itself):
+#   Configure branch protection for the deploying branch (main). Settings -> Branches (or Rulesets) -> require a pull request before
+#   merging, require the "guards" status check, and block direct pushes (also for admins if you can). Without
+#   it, nothing stops a direct push to main, which auto-deploys the storefront. Because a pull request can edit
+#   this very workflow, also require review from a human code owner for `.github/**` and the locked paths.
+name: guards
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Work out the base commit and the branch kind
+        id: ctx
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -eu
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = "pull_request" ]; then
+            base="$PR_BASE"
+          elif [ "${HEAD_REF#design/}" != "$HEAD_REF" ]; then
+            # a push to a design branch: everything the branch changed since it left the default branch
+            git fetch --no-tags origin "$DEFAULT_BRANCH" || true
+            base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD || true)"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "$zero" ]; then
+            base="$BEFORE"
+          else
+            base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          kind=other
+          case "$HEAD_REF" in
+            design/storefront-*) kind=storefront ;;
+            design/admin-*) kind=admin ;;
+            design/*) kind=design ;;
+          esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "branch=$HEAD_REF base=$base kind=$kind"
+
+      - name: Storefront guard (layers + hash manifest)
+        run: node scripts/check-layers.mjs --check
+
+      - name: Admin guard (design layer, ctx, core manifest)
+        run: |
+          if [ "${{ steps.ctx.outputs.kind }}" = "admin" ]; then
+            node admin/scripts/check-design.mjs --base "${{ steps.ctx.outputs.base }}"
+          else
+            # --base would reject legitimate non-admin changes as "out of scope"; the scope rule is enforced per design/* branch.
+            node admin/scripts/check-design.mjs
+          fi
+
+      - name: Admin guard self-test
+        run: node admin/scripts/test-guard.mjs
+
+      - name: Scope check (design/storefront-* or design/admin-* branches)
+        if: steps.ctx.outputs.kind == 'storefront' || steps.ctx.outputs.kind == 'admin'
+        run: node scripts/check-scope.mjs "${{ steps.ctx.outputs.kind }}" --base "${{ steps.ctx.outputs.base }}"
+
+      - name: A design/* branch must not modify locked paths
+        if: steps.ctx.outputs.kind != 'other'
+        run: node scripts/check-locked.mjs --base "${{ steps.ctx.outputs.base }}" --head HEAD
+
+  # Template repo only: the tests for new-merchant / sync-core / import-catalog live in tests/, which is a
+  # template-only path and does not exist in merchant repos (the job then does nothing).
+  template-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run the template tests (skipped in merchant repos)
+        run: |
+          if [ -f tests/run.mjs ]; then
+            git config --global user.name ci
+            git config --global user.email ci@localhost
+            node tests/run.mjs
+          else
+            echo "no tests/run.mjs: merchant repo, nothing to do"
+          fi
