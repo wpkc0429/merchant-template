@@ -104,6 +104,11 @@
   var app = document.getElementById('app');
   var toastTimer = null;
 
+  // Multi-line text (title fields): escape, then turn each newline into <br>. Never insert content as raw HTML.
+  function lines(s) {
+    return esc(s).replace(/\r?\n/g, '<br>');
+  }
+
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;')
@@ -538,7 +543,7 @@
           (hero[0] ? ' aria-label="' + esc(hero[0].title) + '"' : ' aria-label="商品列表"') + '></a>' +
         '<div class="hero__copy">' +
           '<div class="eyebrow">' + esc(CONTENT.hero.eyebrow) + '</div>' +
-          '<h1>' + CONTENT.hero.titleHtml + '</h1>' +
+          '<h1>' + lines(CONTENT.hero.title) + '</h1>' +
           '<p class="lede">' + esc(CONTENT.hero.lede) + '</p>' +
           '<a class="rule-link" href="#/shop">SHOP NOW</a>' +
         '</div>' +
@@ -572,7 +577,7 @@
       '<div class="story-teaser__img" style="' + imgCss(CONTENT.storyImage) + '"></div>' +
       '<div>' +
         '<div class="eyebrow eyebrow--tight">' + esc(CONTENT.storyTeaser.eyebrow) + '</div>' +
-        '<h3>' + CONTENT.storyTeaser.titleHtml + '</h3>' +
+        '<h3>' + lines(CONTENT.storyTeaser.title) + '</h3>' +
         '<p class="lede">' + esc(CONTENT.storyTeaser.lede) + '</p>' +
         '<a class="rule-link" href="#/story">READ MORE</a>' +
       '</div>' +
@@ -894,7 +899,7 @@
   function storyView() {
     return '<article class="story-page">' +
       '<div class="eyebrow">' + esc(CONTENT.story.eyebrow) + '</div>' +
-      '<h1>' + CONTENT.story.titleHtml + '</h1>' +
+      '<h1>' + lines(CONTENT.story.title) + '</h1>' +
       '<div class="story-page__img" style="' + imgCss(CONTENT.storyImage) + '"></div>' +
       CONTENT.story.paragraphs.map(function (t) { return '<p>' + esc(t) + '</p>'; }).join('') +
       '<a class="rule-link" href="#/shop">VIEW COLLECTION</a>' +
@@ -1040,7 +1045,7 @@
       '<a class="m-hero" href="' + productHref(mHero) + '" style="' + imgCss(largeOf(mHero)) + '">' +
         '<div class="m-hero__cap">' +
           '<div class="eyebrow">' + esc(CONTENT.hero.eyebrow) + '</div>' +
-          '<h1>' + CONTENT.hero.titleHtml + '</h1>' +
+          '<h1>' + lines(CONTENT.hero.title) + '</h1>' +
         '</div>' +
       '</a>' +
       '<div class="m-sec-head"><h2>' + esc(CONTENT.featuredTitle) + '</h2><a href="#/shop">全部 ›</a></div>' +
@@ -1165,7 +1170,7 @@
   function mStoryView() {
     return '<div class="m-story__head">' +
         '<div class="eyebrow">' + esc(CONTENT.story.eyebrow) + '</div>' +
-        '<h1>' + CONTENT.story.titleHtml + '</h1>' +
+        '<h1>' + lines(CONTENT.story.title) + '</h1>' +
       '</div>' +
       '<div class="m-story__img" style="' + imgCss(CONTENT.storyImage) + '"></div>' +
       '<div class="m-story__body">' +

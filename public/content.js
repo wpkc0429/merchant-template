@@ -37,19 +37,19 @@ window.SHOP_CONTENT = {
 
   hero: {
     eyebrow: 'NEW COLLECTION',
-    titleHtml: '簡單，<br>剛剛好',
+    title: '簡單，\n剛剛好',
     lede: '這裡是你的商店首頁標語，請換成自己的文字。'
   },
 
   storyTeaser: {
     eyebrow: 'ABOUT US',
-    titleHtml: '關於<br>你的商店',
+    title: '關於\n你的商店',
     lede: '用幾句話介紹你的品牌與理念。'
   },
 
   story: {
     eyebrow: 'ABOUT US',
-    titleHtml: '關於<br>你的商店',
+    title: '關於\n你的商店',
     paragraphs: [
       '這是品牌故事的第一段，請換成你想對顧客說的話。',
       '第二段可以介紹你的選品原則、製作方式或服務承諾。'
