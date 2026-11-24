@@ -289,3 +289,14 @@ test('fixed warnings: every irreversible confirm in core/actions.js goes through
   assert.match(tplFile('admin/ui/kit.js'), /data-testid": "confirm-warning"/);
   assert.equal(existsSync(path.join(TEMPLATE, 'admin/core/warnings.js')), true);
 });
+
+test('check-content-schema --lint passes in a merchant repo that has not adopted the schema file yet (CI stays green), a dry run does not', () => {
+  const m = makeMerchant();
+  const { unlinkSync } = require_fs();
+  unlinkSync(path.join(m.dir, 'public/content.schema.json'));
+  let r = node(['scripts/check-content-schema.mjs', '--lint'], m.dir);
+  assert.equal(r.status, 0, r.out); assert.match(r.out, /nothing to lint/);
+  r = node(['scripts/check-content-schema.mjs'], m.dir);
+  assert.equal(r.status, 2);
+});
+function require_fs() { return { unlinkSync: (p) => node(['-e', `require('fs').unlinkSync(${JSON.stringify(p)})`], TEMPLATE) }; }

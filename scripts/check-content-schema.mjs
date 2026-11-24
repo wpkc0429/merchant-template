@@ -20,7 +20,7 @@
    Exit: 0 ok, 1 lint failed or the platform rejected the schema (422 with pointers) or removals need confirmation (report shown),
          2 usage / environment error.
    ============================================================ */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
@@ -86,6 +86,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   if (files.length > 1 || argv.some((a) => a.startsWith('--') && a !== '--lint')) { console.error('usage: node scripts/check-content-schema.mjs [schema-file] [--lint]   (credentials only from CONTENT_* environment variables)'); return 2; }
   const file = path.resolve(files[0] || DEFAULT_SCHEMA);
   let parsed;
+  // A merchant repo that has not adopted the schema file yet (it syncs in from v0.1.0 without one) is fine for the offline lint, so
+  // the CI workflow stays green; a dry run needs the file.
+  if (lintOnly && !files[0] && !existsSync(file)) { console.log('no public/content.schema.json in this repo: nothing to lint (optional until a merchant adopts the content schema)'); return 0; }
   try { parsed = parseJsonFile(file); } catch (e) { console.error(`cannot read ${file}: ${e.message}`); return 2; }
   const problems = lintSchema(parsed.doc);
   if (problems.length) {

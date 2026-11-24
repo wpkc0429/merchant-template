@@ -42,6 +42,7 @@ Its output lists the next steps, including the human-only content schema registr
    git -C <template checkout> checkout vX.Y.Z
    git -C <template checkout> status --short        # must print nothing
    ```
+   **First hop only:** a merchant still on v0.1.0 runs its OWN old `scripts/sync-core.mjs`, which has no tag check (the check arrives with v0.2.0). For that one sync, step 2 above (`git describe --exact-match` on the template checkout, clean status) is your manual check; from v0.2.0 on the script enforces the tag rule itself.
 3. **Dry run first**, read it:
    ```bash
    node scripts/sync-core.mjs --from <template checkout> --dry-run
