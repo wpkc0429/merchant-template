@@ -20,6 +20,7 @@
        REPLACE_WITH_* placeholders (check-layers then warns until a human fills them in)
      * sets "isTemplate": false, records the template version in .template-version and template.json
      * re-locks the hash manifests (check-layers --update, admin check-design --update) after all edits
+     * records provenance (version, tag, commit) in .template-version
      * writes a short merchant README.md, runs `git init -b main` and makes the initial commit
    Next steps are printed at the end (platform provisioning, origins, key, catalogue import, hosting).
    ============================================================ */
@@ -27,7 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { readJson, inPaths, listFiles } from './lib/template.mjs';
+import { readJson, inPaths, listFiles, sourceInfo, withHistory } from './lib/template.mjs';
 
 const TEMPLATE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -107,8 +108,9 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
   edit('public/content.js', (t) => {
     t = replaceOnce(t, "brand: { name: '你的商店', footer: '你的商店' },", `brand: { name: ${jsStr(shopName)}, footer: ${jsStr(shopName)} },`, 'content.js brand');
     t = replaceOnce(t, "store: {\n    name: '你的商店',", `store: {\n    name: ${jsStr(shopName)},`, 'content.js store name');
-    t = replaceOnce(t, 'titleHtml: \'關於<br>你的商店\',\n    lede: \'用幾句話介紹你的品牌與理念。\'', `titleHtml: ${jsStr('關於<br>' + escHtml(shopName))},\n    lede: '用幾句話介紹你的品牌與理念。'`, 'storyTeaser');
-    t = replaceOnce(t, 'titleHtml: \'關於<br>你的商店\',\n    paragraphs', `titleHtml: ${jsStr('關於<br>' + escHtml(shopName))},\n    paragraphs`, 'story');
+    // title fields are plain text; a newline becomes <br> at render time (app.js lines()), see public/content.schema.json
+    t = replaceOnce(t, 'title: \'關於\\n你的商店\',\n    lede: \'用幾句話介紹你的品牌與理念。\'', `title: ${jsStr('關於\n' + shopName)},\n    lede: '用幾句話介紹你的品牌與理念。'`, 'storyTeaser');
+    t = replaceOnce(t, 'title: \'關於\\n你的商店\',\n    paragraphs', `title: ${jsStr('關於\n' + shopName)},\n    paragraphs`, 'story');
     return t;
   });
 
@@ -135,7 +137,9 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
   const next = { ...tpl, isTemplate: false, merchant: { name: shopName, slug, siteUrl: site ? site.origin : null, adminOrigin: admin ? admin.origin : null } };
   delete next.description;
   writeFileSync(path.join(dest, 'template.json'), JSON.stringify(next, null, 2) + '\n');
-  writeFileSync(path.join(dest, '.template-version'), tpl.version + '\n');
+  const prov = sourceInfo(templateRoot, tpl.version);
+  const provNote = prov.tagged ? `tag v${tpl.version} (commit ${String(prov.commit).slice(0, 12)})` : `template checkout NOT at tag v${tpl.version} (${prov.reason}${prov.commit ? `; commit ${String(prov.commit).slice(0, 12)}` : ''})`;
+  writeFileSync(path.join(dest, '.template-version'), withHistory('', tpl.version, `${new Date().toISOString().slice(0, 10)} created by new-merchant.mjs from ${provNote}`));
 
   // ---- merchant README (the template's README is template-only)
   writeFileSync(path.join(dest, 'README.md'), merchantReadme({ shopName, slug, version: tpl.version, site, admin }));
@@ -179,6 +183,8 @@ catalog/  catalogue data for scripts/import-catalog.mjs
 - Admin: \`cd admin && node scripts/serve.mjs --proxy <API>\` (local override: \`admin/config.local.js\`).
 - Guards: \`node scripts/check-layers.mjs --check\`, \`node admin/scripts/check-design.mjs --base <ref>\`, \`node scripts/check-scope.mjs <storefront|admin> --base <ref>\`.
 - \`public/config.js\` holds this shop's real \`apiBase\` and \`publishableKey\` (locked and hash-protected; a human edits it, then runs \`node scripts/check-layers.mjs --update\`).
+- Strict CSP is a deployment requirement: \`public/_headers\` (storefront) and \`admin/deploy/nginx.conf.template\` (admin) carry it; AI-edit previews must serve it too (\`docs/DECISIONS.md\`).
+- \`public/content.schema.json\` describes the shop's editable content (design layer). Editing it registers nothing: registration on the platform is a HUMAN step (dry run with \`node scripts/check-content-schema.mjs\`, then register; never CI or an AI session).
 - Core updates: a human runs \`node scripts/sync-core.mjs --from <template checkout> --dry-run\` (never an AI session).
 ${site ? `\nStorefront origin: ${site.origin}\n` : ''}${admin ? `Admin origin: ${admin.origin}\n` : ''}`;
 }
@@ -193,7 +199,21 @@ Next steps (see .claude/skills/merchant-onboarding for the platform side):
   2. Register the storefront origin${flags.siteUrl ? ` (${flags.siteUrl})` : ''} as purpose=storefront and the admin origin${flags.adminOrigin ? ` (${flags.adminOrigin})` : ''} as purpose=admin on the platform; add the admin origin to the R2 bucket CORS.
   3. Import the catalogue: copy catalog/catalog.sample.json to catalog/catalog.json, edit it, then
        IMPORT_API_BASE=... IMPORT_ADMIN_EMAIL=... IMPORT_ADMIN_PASSWORD=... node scripts/import-catalog.mjs catalog/catalog.json --dry-run
-  4. Create the GitHub repo and Cloudflare / hosting setup yourself (this script never does).`);
+  4. Create the GitHub repo and Cloudflare / hosting setup yourself (this script never does).
+  5. Deploy with the strict CSP (a deployment requirement, docs/DECISIONS.md): the storefront gets it from public/_headers
+     (Cloudflare reads it from the assets directory); the admin gets it from admin/deploy/nginx.conf.template (on by default).
+     An AI-edit preview must serve the same policy.
+  6. CONTENT SCHEMA (HUMAN ONLY, never CI / an AI session / a script run unattended). public/content.schema.json describes the
+     shop's editable content; editing the file registers NOTHING. Someone who holds content.manage (the shop owner or a platform
+     admin) does, in this order, once the shop exists on the platform:
+       a. dry run (writes nothing):  CONTENT_API_BASE=... CONTENT_SHOP_ID=<id> CONTENT_ADMIN_EMAIL=... CONTENT_ADMIN_PASSWORD=... \\
+                                       node scripts/check-content-schema.mjs        (offline lint only: add --lint)
+          Read the report: ok / needs_attention / orphaned, removed_paths.
+       b. register for real:  PUT /api/v1/admin/shops/<id>/content/schema  (curl recipe: platform docs/content-schema.md; the
+          merchant-onboarding skill step 11a)
+       c. only if the platform answers 409 removals_require_confirmation: review what would be dropped, then repeat with
+          ?confirm_removals=true.
+     The storefront still reads public/content.js; fetching content from the platform is a later change.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

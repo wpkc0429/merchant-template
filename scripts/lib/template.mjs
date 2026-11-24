@@ -1,7 +1,7 @@
 /* Shared helpers for scripts/new-merchant.mjs and scripts/sync-core.mjs. No dependencies (Node 18+).
    Locked: part of the core, synced to merchant repos. */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -81,4 +81,32 @@ export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 export function isSymlink(file) {
   try { return lstatSync(file).isSymbolicLink(); } catch { return false; }
+}
+
+/**
+ * Where does a template checkout stand relative to the release tags? Used by sync-core (tag-only sync source) and
+ * new-merchant (provenance). `tagged` is true only when HEAD is exactly at an ANNOTATED tag vX.Y.Z that equals
+ * `v<version>` and the work tree is clean (what is on disk is what the tag contains).
+ * Returns { git, commit, tags, annotated, dirty, tagged, reason }.
+ */
+export function sourceInfo(root, version) {
+  const g = (...a) => { try { return { ok: true, out: execFileSync('git', a, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim() }; } catch { return { ok: false, out: '' }; } };
+  const same = (a, b) => { try { return realpathSync(a).toLowerCase() === realpathSync(b).toLowerCase(); } catch { return false; } };
+  const top = g('rev-parse', '--show-toplevel');
+  if (!top.ok || !same(top.out, root)) return { git: false, commit: null, tags: [], annotated: [], dirty: false, tagged: false, reason: 'not a git checkout of its own (a copied or exported folder has no tag)' };
+  const commit = g('rev-parse', 'HEAD').out || null;
+  const dirty = g('status', '--porcelain', '--untracked-files=all').out !== '';
+  const tags = g('tag', '--points-at', 'HEAD').out.split(/\r?\n/).filter(Boolean);
+  const annotated = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t) && g('cat-file', '-t', `refs/tags/${t}`).out === 'tag');
+  let reason = null;
+  if (!annotated.length) reason = tags.length ? `HEAD has tag(s) ${tags.join(', ')} but none is an annotated vX.Y.Z tag` : 'HEAD is not at any release tag (an annotated vX.Y.Z)';
+  else if (!annotated.includes(`v${version}`)) reason = `HEAD is at ${annotated.join(', ')} but template.json says version ${version}: the tag and template.json disagree`;
+  else if (dirty) reason = `the work tree has uncommitted changes (not exactly what tag v${version} contains)`;
+  return { git: true, commit, tags, annotated, dirty, tagged: reason === null, reason };
+}
+
+/** New text of .template-version: the version on the first line, then a `#` history (newest first). */
+export function withHistory(previousText, version, entry) {
+  const old = String(previousText || '').split(/\r?\n/).slice(1).filter((l) => l.startsWith('#') && !l.startsWith('# core history'));
+  return [version, '# core history (newest first; written by new-merchant.mjs and sync-core.mjs)', `# ${entry}`, ...old].join('\n') + '\n';
 }

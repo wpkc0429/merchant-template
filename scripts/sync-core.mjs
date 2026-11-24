@@ -3,7 +3,10 @@
    sync-core.mjs: brings a MERCHANT repo's locked core up to a newer template version.
    No dependencies (Node 18+).
 
-     node scripts/sync-core.mjs --from <path to a template checkout (a tag or a clean main)> [--dry-run] [--yes] [--ack-design-actions]
+     node scripts/sync-core.mjs --from <template checkout at an annotated vX.Y.Z tag> [--dry-run] [--yes] [--ack-design-actions] [--allow-untagged]
+
+   THE SOURCE IS A TAG ONLY: the template checkout must have HEAD exactly at the annotated tag v<version> (the version in
+   its template.json) with a clean work tree, otherwise the sync is refused (exit 2) unless --allow-untagged is given.
 
    RUN BY A HUMAN (or by the platform's own, human-approved pipeline). NEVER BY AN AI DESIGN SESSION: it rewrites
    the locked core and the hash manifests, which design sessions must not do. It does not commit and does not push:
@@ -33,6 +36,8 @@
      --dry-run              print the plan, change nothing (exit 0; exit 3 when a design-layer action would block)
      --yes                  do not ask for confirmation (required when stdin is not a terminal)
      --ack-design-actions   acknowledge the design-layer actions listed
+     --allow-untagged       EMERGENCY OVERRIDE: accept a template checkout that is not exactly at the annotated tag
+                            v<version> (or has a dirty tree). Loud in the output and recorded in .template-version.
    Exit: 0 ok, 1 failed (and rolled back), 2 refused / usage, 3 design-layer action needs acknowledgement.
    ============================================================ */
 import { spawnSync } from 'node:child_process';
@@ -40,7 +45,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, realpathSyn
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
-import { readJson, cmpSemver, inPaths, pathsOverlap, isSafeListedPath, listFiles, trackedFiles, normBytes, isSymlink } from './lib/template.mjs';
+import { readJson, cmpSemver, inPaths, pathsOverlap, isSafeListedPath, listFiles, trackedFiles, normBytes, isSymlink, sourceInfo, withHistory } from './lib/template.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -122,7 +127,7 @@ async function confirm(q) {
 export async function main(argv = process.argv.slice(2), root = ROOT) {
   const flag = (n) => argv.includes(n);
   const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null; };
-  const dry = flag('--dry-run'), yes = flag('--yes'), ack = flag('--ack-design-actions');
+  const dry = flag('--dry-run'), yes = flag('--yes'), ack = flag('--ack-design-actions'), allowUntagged = flag('--allow-untagged');
   const fromArg = val('--from');
   if (!fromArg || flag('--help')) { console.log(readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 40).join('\n')); return fromArg ? 0 : 2; }
 
@@ -162,6 +167,20 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
   }
   if ((theirs.manifests && Object.values(theirs.manifests).some((p) => !isSafeListedPath(p)))) throw new Refuse('the template lists an unsafe manifest path');
 
+  // ---- 1b. the sync SOURCE is a TAG only (decided 2026-11-25): HEAD exactly at the annotated tag v<version>, clean tree
+  const src = sourceInfo(fromRoot, theirs.version);
+  if (!src.tagged && !allowUntagged) {
+    throw new Refuse(`the template checkout is not at a release tag: ${src.reason}.\n  Check out the tag first (git -C ${fromRoot} checkout v${theirs.version}) and run again.\n  Core syncs come from annotated vX.Y.Z tags only. In an emergency a human may pass --allow-untagged (loud, recorded in .template-version).`);
+  }
+  if (!src.tagged) {
+    console.log('!!!!!!!! --allow-untagged: syncing from an UNTAGGED template checkout !!!!!!!!');
+    console.log(`  reason: ${src.reason}`);
+    console.log(`  commit: ${src.commit || '(none, not a git checkout)'}${src.dirty ? '  (work tree has uncommitted changes)' : ''}`);
+    console.log('  This is recorded in .template-version. Normal syncs must come from an annotated release tag.\n');
+  }
+  const sourceNote = src.tagged ? `tag v${theirs.version} (commit ${String(src.commit).slice(0, 12)})`
+    : `UNTAGGED checkout via --allow-untagged (${src.reason}; commit ${src.commit ? String(src.commit).slice(0, 12) : 'none'}${src.dirty ? ', dirty' : ''})`;
+
   // ---- 2. the template must verify itself
   const theirsGuards = [
     runGuard(fromRoot, ['scripts/check-layers.mjs', '--check'], 'template: storefront check-layers --check'),
@@ -188,6 +207,7 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
 
   // ---- report
   console.log(`core sync: ${mine.version} -> ${theirs.version}   (template: ${fromRoot})`);
+  console.log(`source: ${sourceNote}`);
   const show = (t, l) => { if (l.length) { console.log(`\n${t} (${l.length}):`); l.forEach((f) => console.log(`  ${t === 'removed' ? '-' : t === 'added' ? '+' : '~'} ${f}`)); } };
   show('added', p.add); show('changed', p.change); show('removed', p.remove);
   console.log(`\nunchanged locked files: ${p.same.length}. merchant-owned (never overwritten): ${p.owned.join(', ') || '(none)'}. design paths (never touched): ${myDesign.join(', ')}`);
@@ -236,7 +256,8 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
     remember('template.json'); remember('.template-version');
     const next = { ...mine, version: theirs.version, description: theirs.description ?? mine.description, sites: theirs.sites, lockedPaths: theirs.lockedPaths, merchantOwnedPaths: theirs.merchantOwnedPaths, templateOnlyPaths: theirs.templateOnlyPaths, keepExtraPaths: theirs.keepExtraPaths, manifests: theirs.manifests, sync: theirs.sync };
     writeFileSync(path.join(root, 'template.json'), JSON.stringify(next, null, 2) + '\n');
-    writeFileSync(path.join(root, '.template-version'), theirs.version + '\n');
+    const prevVersionFile = existsSync(path.join(root, '.template-version')) ? readFileSync(path.join(root, '.template-version'), 'utf8') : '';
+    writeFileSync(path.join(root, '.template-version'), withHistory(prevVersionFile, theirs.version, `${new Date().toISOString().slice(0, 10)} sync ${mine.version} -> ${theirs.version} from ${sourceNote}`));
 
     // ---- 5. verify with this repo's own guards
     const guards = [
