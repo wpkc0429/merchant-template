@@ -10,16 +10,28 @@ import * as team from "../lib/team.js";
 import * as upload from "../lib/upload.js";
 import { t } from "../lib/design.js";
 import { confirmDialog } from "../ui/kit.js";
+import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
 import { need } from "./guard.js";
 import { ActionError, invalid, blocked } from "./errors.js";
 
 const S = () => session.shopID;
 const CANCELLED = Object.freeze({ cancelled: true });
-const ask = (key, params, { danger = true, cancelKey } = {}) => confirmDialog({
-  title: t(`${key}.title`, params), message: t(`${key}.message`, params), confirmText: t(`${key}.yes`, params),
-  ...(cancelKey ? { cancelText: t(cancelKey) } : {}), danger,
-});
+// Confirmation = editable wording from copy (title, lead-in text, button labels) + the core's FIXED warning for the
+// irreversible actions (core/warnings.js; not a copy key, so a design cannot weaken or remove it). `key` is
+// "confirm.<id>"; an id in WARNED_CONFIRMS always renders its fixed warning, any other id is a plain confirm
+// whose message is the copy key `.message`.
+const ask = (key, params, { danger = true, cancelKey, textKey } = {}) => {
+  const id = key.split(".")[1];
+  const warned = WARNED_CONFIRMS.includes(id);
+  return confirmDialog({
+    title: t(`${key}.title`, params),
+    message: t(warned ? (textKey || `${key}.text`) : `${key}.message`, params),
+    ...(warned ? { warning: fixedWarning(id, params) } : {}),
+    confirmText: t(`${key}.yes`, params),
+    ...(cancelKey ? { cancelText: t(cancelKey) } : {}), danger,
+  });
+};
 const must = (fields) => { if (Object.keys(fields).length) throw invalid(fields); };
 const idOrNull = (v) => (v === null || v === "" || v === undefined ? null : Number(v));
 
@@ -132,12 +144,7 @@ async function deleteCategory(id) {
   const node = catalog.flattenTree(await catalog.categoryTree(S())).find((c) => c.id === id);
   if (!node) throw new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
   const sub = (node.children || []).length;
-  const ok = await confirmDialog({
-    title: t("confirm.deleteCategory.title", { name: node.name }),
-    message: sub ? t("confirm.deleteCategory.messageSub", { n: sub }) : t("confirm.deleteCategory.message"),
-    confirmText: t("confirm.deleteCategory.yes"), danger: true,
-  });
-  if (!ok) return CANCELLED;
+  if (!(await ask("confirm.deleteCategory", { name: node.name, n: sub }, { textKey: sub ? "confirm.deleteCategory.textSub" : "confirm.deleteCategory.text" }))) return CANCELLED;
   await catalog.deleteCategory(S(), id);
   return { ok: true };
 }

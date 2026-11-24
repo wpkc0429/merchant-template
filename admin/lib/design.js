@@ -33,6 +33,7 @@ export async function loadDesign() {
     const r = validateCopy(mod.default, defaultCopy);
     copy = r.copy;
     r.warnings.forEach((w) => warn(w));
+    (r.retired || []).forEach((w) => warn(w));
   } catch (e) { warn("design/copy.js could not be loaded; using the built-in copy", e); copy = {}; }
   try {
     const mod = await import(`${DESIGN}routes.js`);

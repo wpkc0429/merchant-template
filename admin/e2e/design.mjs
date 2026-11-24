@@ -395,7 +395,64 @@ try {
   await page.context().close();
   restore();
   // ───────────────────────────────────────────────────────────────────
-  section("D8. The admin works under the strict CSP recommended for serving");
+  section("D7b. A design cannot remove or weaken the FIXED warning of an irreversible confirmation");
+  {
+    const FIXED = "庫存會歸還，取消後無法復原。";
+    const dlgText = async (pg, orderId) => {
+      await pg.goto(SITE + `/#/orders/${orderId}`);
+      await T(pg, "cancel-order").waitFor();
+      await T(pg, "cancel-order").click();
+      await pg.locator("dialog[open] .dlg__title").waitFor();
+      return { all: await pg.locator("dialog[open]").innerText(), warning: await T(pg, "confirm-warning").innerText().catch(() => null) };
+    };
+    // 1. default: lead-in text + the core's warning, same wording as before the split
+    const w1 = await unpaidOrder("warn1");
+    page = await newPage();
+    await login(page, OWNER);
+    let d = await dlgText(page, w1.id);
+    check("default confirm shows the fixed warning in its own element", d.warning === FIXED, String(d.warning));
+    check("default confirm wording is unchanged (lead-in + warning)", d.all.includes(`確定取消訂單 #${w1.id}？庫存會歸還，取消後無法復原。`), d.all);
+    await page.locator("dialog[open] .btn--ghost").first().click();
+    await page.context().close();
+
+    // 2. a design that tries to define / replace the warning and rewrites the lead-in to say the opposite
+    const hostile = read("copy.js")
+      .replace('"confirm.cancelOrder.text": "確定取消訂單 #{id}？"', '"confirm.cancelOrder.text": "放心，這個動作隨時可以復原。", "confirm.cancelOrder.warning": "沒有任何風險", "confirm.cancelOrder.message": "沒有任何風險", "confirm.deleteProduct.warning": "沒事"');
+    put("copy.js", hostile);
+    const g = guard("--no-layers", "--files", "design/copy.js");
+    check("the guard rejects copy that defines a confirmation warning (exit 1, names the fixed warning)", g.status === 1 && /schema\/copy/.test(g.stderr) && /cannot be defined/.test(g.stderr) && !/confirm\.cancelOrder\.message/.test(g.stderr), g.stderr);
+    page = await newPage();
+    await login(page, OWNER);
+    d = await dlgText(page, w1.id);
+    check("even if such a copy.js is deployed, the dialog still renders the unchanged fixed warning", d.warning === FIXED, String(d.warning));
+    check("the invented warning text never appears", !/沒有任何風險|沒事/.test(d.all), d.all);
+    check("the loader reported the rejected keys on the console", page.warnings.some((x) => /cannot be defined/.test(x)), page.warnings.join("|"));
+    check("the editable lead-in is applied (it may be reworded) but sits next to the warning", d.all.includes("放心，這個動作隨時可以復原。") && d.all.includes(FIXED));
+    await page.locator("dialog[open] .btn--ghost").first().click();
+    await page.waitForTimeout(300);
+    check("declined: the order is NOT cancelled", (await req("GET", `/admin/shops/1/orders/${w1.id}`, { token: ownerToken })).json.status === 0);
+    await page.context().close();
+    restore();
+
+    // 3. CSS that hides or shrinks the warning is refused by the guard
+    for (const css of [".dlg__warning { display: none; }", "[data-testid=\"confirm-warning\"] { font-size: 0; }", "dialog .dlg__msg span { visibility: hidden; }"]) {
+      put("theme.css", css + "\n");
+      const gc = guard("--no-layers", "--files", "design/theme.css");
+      check(`the guard rejects theme.css that hides the warning: ${css.slice(0, 40)}`, gc.status === 1 && /css\/hides-dialog/.test(gc.stderr), gc.stderr);
+    }
+    put("theme.css", ".dlg__warning { color: rgb(176, 0, 32); font-weight: 600; }\n");
+    check("styling the warning (colour, weight) is allowed", guard("--no-layers", "--files", "design/theme.css").status === 0);
+    page = await newPage();
+    await login(page, OWNER);
+    d = await dlgText(page, w1.id);
+    check("a styled warning is still rendered", d.warning === FIXED && (await T(page, "confirm-warning").evaluate((e) => getComputedStyle(e).color)) === "rgb(176, 0, 32)");
+    await page.locator("dialog[open] .btn--ghost").first().click();
+    await page.context().close();
+    restore();
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  section("D8. The admin works under the strict CSP that is REQUIRED for serving");
   const csp = "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: http://127.0.0.1:9000; connect-src 'self' http://127.0.0.1:9000; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
   const cspProduct = (await req("POST", "/admin/shops/1/products", { token: ownerToken, body: { title: `CSP ${runId}`, slug: `csp-${runId}`, status: 0, skus: [{ sku_code: `csp-${runId}-M`, options: { size: "M" }, price_amount: 100, currency: "TWD", stock_qty: 1, is_active: true }] } })).json;
   // Playwright-fulfilled documents are treated as non-local by Chromium, so allow the loopback MinIO in this browser only.

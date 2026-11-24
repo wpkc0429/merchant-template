@@ -36,7 +36,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { scanCode, scanDataJs, scanCss, scanAsset, scopeViolations } from "./lib/design-scan.mjs";
 import { realSurface } from "./lib/ctx-surface.mjs";
-import { ROUTE_IDS, ICON_NAMES, LIMITS, validateCopy, validateRoutes, ASSET_EXTENSIONS } from "../lib/design-schema.js";
+import { ROUTE_IDS, ICON_NAMES, LIMITS, validateCopy, defaultsProblems, validateRoutes, ASSET_EXTENSIONS } from "../lib/design-schema.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -112,16 +112,60 @@ export function scanTree(root, dirName, api) {
   return out;
 }
 
+/** Non-failing notes collected by the checks (printed by main). */
+const NOTES = [];
+
+/**
+ * A strict CSP is a DEPLOYMENT REQUIREMENT for production and for AI-edit preview environments (docs/DECISIONS.md).
+ * The hosting files in deploy/ must therefore carry it by default: the nginx template sends a Content-Security-Policy
+ * with script-src 'self' only (no unsafe-inline / unsafe-eval / wildcard), object-src 'none', base-uri and
+ * frame-ancestors locked, and the Dockerfile installs that template. Exported for scripts/test-guard.mjs.
+ */
+export function deployChecks(root) {
+  const out = [];
+  const v = (rule, msg, file) => out.push({ rule, msg, file, line: 0 });
+  const read = (rel) => (existsSync(path.join(root, rel)) ? readFileSync(path.join(root, rel), "utf8") : null);
+  const nginx = read("deploy/nginx.conf.template");
+  const docker = read("deploy/Dockerfile");
+  if (nginx === null) v("deploy/csp-missing", "deploy/nginx.conf.template is missing: the admin hosting config must carry the strict CSP", "deploy/nginx.conf.template");
+  else {
+    const live = nginx.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    const m = /add_header\s+Content-Security-Policy\s+"([^"]+)"\s*(always)?\s*;/i.exec(live);
+    if (!m) v("deploy/csp-missing", "deploy/nginx.conf.template has no (uncommented) `add_header Content-Security-Policy \"...\" always;`", "deploy/nginx.conf.template");
+    else {
+      if (!m[2]) v("deploy/csp-always", "the CSP add_header must end with `always` so error responses carry it too", "deploy/nginx.conf.template");
+      const dirs = new Map();
+      for (const part of m[1].split(";")) { const [n, ...rest] = part.trim().split(/\s+/); if (n) dirs.set(n.toLowerCase(), rest); }
+      const bad = (msg) => v("deploy/csp-weak", msg, "deploy/nginx.conf.template");
+      const script = dirs.get("script-src");
+      if (!script) bad("CSP has no script-src");
+      else if (script.length !== 1 || script[0] !== "'self'") bad(`CSP script-src must be exactly 'self' (found: ${script.join(" ")})`);
+      if (!dirs.has("default-src")) bad("CSP has no default-src");
+      for (const [n, vals] of dirs) if (vals.some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) bad(`CSP ${n} must not contain ${vals.find((x) => /unsafe|\*/.test(x))}`);
+      for (const n of ["object-src", "base-uri"]) if (!dirs.has(n) || dirs.get(n).join(" ") !== "'none'") bad(`CSP ${n} must be 'none'`);
+      if (!dirs.has("frame-ancestors") || dirs.get("frame-ancestors").join(" ") !== "'none'") bad("CSP frame-ancestors must be 'none'");
+    }
+  }
+  if (docker === null) v("deploy/csp-missing", "deploy/Dockerfile is missing", "deploy/Dockerfile");
+  else {
+    if (!/COPY\s+deploy\/nginx\.conf\.template\s+\/etc\/nginx\/templates\/default\.conf\.template/.test(docker)) v("deploy/csp-dockerfile", "deploy/Dockerfile must install deploy/nginx.conf.template as /etc/nginx/templates/default.conf.template (the CSP is on by default and not optional)", "deploy/Dockerfile");
+    if (/(rm|sed|truncate)\b[^\n]*(default\.conf|nginx\.conf\.template|Content-Security)/i.test(docker.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n"))) v("deploy/csp-dockerfile", "deploy/Dockerfile must not remove or edit the CSP", "deploy/Dockerfile");
+  }
+  return out;
+}
+
 /** copy.js / routes.js validated with the same code the browser loader uses. Only imports files that passed the data scan. */
 export async function schemaChecks(root, dataClean) {
   const out = [];
   const imp = async (rel) => (await import(`${pathToFileURL(path.join(root, rel)).href}?t=${Date.now()}`)).default;
   let defaults = {};
   try { defaults = await imp("design-defaults/copy.js"); } catch (e) { out.push({ rule: "schema/defaults", msg: `design-defaults/copy.js cannot be loaded: ${e.message}`, file: "design-defaults/copy.js", line: 0 }); }
+  for (const msg of defaultsProblems(defaults)) out.push({ rule: "schema/defaults", msg: `design-defaults/copy.js: ${msg}`, file: "design-defaults/copy.js", line: 0 });
   if (!existsSync(path.join(root, "design/copy.js"))) out.push({ rule: "schema/copy", msg: "design/copy.js is missing", file: "design/copy.js", line: 0 });
   else if (dataClean["design/copy.js"]) {
-    const { warnings } = validateCopy(await imp("design/copy.js"), defaults);
+    const { warnings, retired } = validateCopy(await imp("design/copy.js"), defaults);
     for (const w of warnings) out.push({ rule: "schema/copy", msg: w, file: "design/copy.js", line: 0 });
+    for (const w of retired) NOTES.push(`note (not a failure) design/copy.js: ${w}`);
   }
   if (!existsSync(path.join(root, "design/routes.js"))) out.push({ rule: "schema/routes", msg: "design/routes.js is missing", file: "design/routes.js", line: 0 });
   else if (dataClean["design/routes.js"]) {
@@ -260,6 +304,7 @@ async function main() {
   step("ctx manifest (lib/public-api.json == real ctx)", await guarded("ctx", async () => (await ctxChecks(root)).out));
   step("defaults (design-defaults/ scans and covers every route)", await guarded("defaults", () => defaultsChecks(root, api)));
   step("copy keys (used == defined)", await guarded("copy", () => copyChecks(root)));
+  step("deploy (strict CSP is on by default in deploy/)", deployChecks(root));
   step("core manifest (scripts/core.manifest.json)", manifestChecks(root).out);
 
   if (!flag("--no-layers")) {
@@ -270,6 +315,7 @@ async function main() {
 
   if (json) { console.log(JSON.stringify({ ok: violations.length === 0, steps, violations }, null, 2)); return violations.length ? 1 : 0; }
   for (const s of steps) console.log(`${s.count ? "x" : "ok"}  ${s.name}${s.note ? `  (${s.note})` : ""}${s.count ? `  ${s.count} violation(s)` : ""}`);
+  for (const n of NOTES) console.log(n);
   if (violations.length) {
     console.error("\nDESIGN CHECK FAILED");
     for (const x of violations) console.error(`  x [${x.rule}] ${x.file}${x.line ? `:${x.line}` : ""}  ${x.msg}`);

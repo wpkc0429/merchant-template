@@ -108,5 +108,8 @@ export default function view(root, ctx) {
   { name: "css behavior / -moz-binding", kind: "css", expect: "css/behavior", src: `.a { behavior: url(x.htc); }` },
   { name: "css escape hiding url(", kind: "css", expect: "css/escape", src: `.a { background: u\\72l(https://evil.example/x); }` },
   { name: "css hides the confirm button", kind: "css", expect: "css/hides-dialog", src: `dialog.dlg [data-testid="confirm-yes"] { display: none; }` },
+  { name: "css hides the fixed confirmation warning", kind: "css", expect: "css/hides-dialog", src: `.dlg__warning { display: none; }` },
+  { name: "css hides the warning by test id", kind: "css", expect: "css/hides-dialog", src: `[data-testid="confirm-warning"] { font-size: 0; }` },
+  { name: "css styles the fixed warning (allowed)", kind: "css", expect: null, src: `.dlg__warning { color: #b00020; font-weight: 600; }` },
   { name: "css disables dialogs", kind: "css", expect: "css/hides-dialog", src: `dialog { pointer-events: none; }` },
 ];

@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { scanCode, scanDataJs, scanCss, scanAsset, scopeViolations } from "./lib/design-scan.mjs";
-import { validateCopy, validateRoutes, LIMITS } from "../lib/design-schema.js";
+import { validateCopy, validateRoutes, defaultsProblems, WARNED_CONFIRM_IDS, LIMITS } from "../lib/design-schema.js";
+import { fixedWarning } from "../core/warnings.js";
+import { deployChecks } from "./check-design.mjs";
 import { CASES } from "./__fixtures__/cases.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,6 +65,15 @@ ok("scope: windows separators are normalised", scopeViolations(["design\\views\\
   ok("copy: a string over the cap is dropped", !("a.b" in validateCopy({ "a.b": "x".repeat(LIMITS.copyValueMax + 1) }, defaults).copy));
   ok("copy: an invented placeholder is dropped", !("a.b" in validateCopy({ "a.b": "hi {secret}" }, defaults).copy));
   ok("copy: not an object falls back entirely", Object.keys(validateCopy("nope", defaults).copy).length === 0);
+  // fixed confirmation warnings are core-owned: copy can never define, replace or remove them
+  const real = (await import("../design-defaults/copy.js")).default;
+  const fw = validateCopy({ "confirm.cancelOrder.warning": "放心，可以復原", "confirm.deleteProduct.warn": "x", "confirm.newThing.warning": "y", "confirm.cancelOrder.message": "確定？無法復原不會顯示", "confirm.cancelOrder.text": "你確定嗎？" }, real);
+  ok("copy: a confirm .warning / .warn key is rejected (even for an unknown confirm id)", !Object.keys(fw.copy).some((k) => /warn/.test(k)) && fw.warnings.filter((w) => /cannot be defined/.test(w)).length === 3, JSON.stringify(fw.warnings));
+  ok("copy: the retired .message key of an irreversible confirm is ignored with a rename note (not a violation)", !("confirm.cancelOrder.message" in fw.copy) && !fw.warnings.some((w) => /\.message/.test(w)) && fw.retired.some((w) => /confirm\.cancelOrder\.message.*confirm\.cancelOrder\.text/.test(w)), JSON.stringify(fw));
+  ok("copy: the editable .text lead-in of an irreversible confirm is accepted", fw.copy["confirm.cancelOrder.text"] === "你確定嗎？");
+  ok("defaults: no warning key and no retired .message key for irreversible confirms", defaultsProblems(real).length === 0, JSON.stringify(defaultsProblems(real)));
+  ok("defaults: a defaults file that defines a warning is reported", defaultsProblems({ "confirm.cancelOrder.warning": "x" }).length === 1);
+  ok("core: every irreversible confirm has a fixed warning and a non-empty text", WARNED_CONFIRM_IDS.every((id) => fixedWarning(id, { id: 1, email: "a@b.c" }).length > 5 && `confirm.${id}.title` in real && (`confirm.${id}.text` in real) && `confirm.${id}.yes` in real));
   const rr = validateRoutes({ home: "views/home.js", nope: "views/x.js", orders: "../lib/api.js", team: "views/../x.js", shipping: 5, reports: "https://x/y.js" });
   ok("routes: only a known id with a views/ path is kept", Object.keys(rr.routes).join() === "home" && rr.warnings.length === 5, JSON.stringify(rr));
 }
@@ -118,6 +129,31 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
     r = CLI(dir);
     ok("copy.js with a call: exit 1 (data file must be pure)", r.status === 1 && /js\/data-not-pure/.test(r.stderr), r.stderr);
     write(dir, "design/copy.js", copy);
+
+    write(dir, "design/copy.js", copy.replace('"confirm.cancelOrder.yes"', '"confirm.cancelOrder.warning": "可以復原", "confirm.cancelOrder.yes"'));
+    r = CLI(dir);
+    ok("copy.js defining a confirmation warning: exit 1 (the warning is fixed by the core)", r.status === 1 && /schema\/copy/.test(r.stderr) && /FIXED/.test(r.stderr), r.stderr);
+    write(dir, "design/copy.js", copy.replace('"confirm.cancelOrder.text"', '"confirm.cancelOrder.message"'));
+    r = CLI(dir);
+    ok("copy.js still using the retired .message key (a v0.1.0 merchant): exit 0, a note says to rename it, the key is ignored", r.status === 0 && /note \(not a failure\).*confirm\.cancelOrder\.message/.test(r.stdout), r.stdout + r.stderr);
+    write(dir, "design/copy.js", copy);
+
+    // deploy config: a strict CSP is a deployment requirement, so the hosting files must carry it
+    ok("deploy: the shipped nginx template and Dockerfile pass", deployChecks(dir).length === 0, JSON.stringify(deployChecks(dir)));
+    const ng = readFileSync(path.join(dir, "deploy/nginx.conf.template"), "utf8");
+    const dk = readFileSync(path.join(dir, "deploy/Dockerfile"), "utf8");
+    const dep = (nginx, docker = dk) => { write(dir, "deploy/nginx.conf.template", nginx); write(dir, "deploy/Dockerfile", docker); return deployChecks(dir).map((x) => x.rule).join(); };
+    ok("deploy: no CSP header at all -> csp-missing", /deploy\/csp-missing/.test(dep(ng.replace(/^\s*add_header Content-Security-Policy.*$/m, ""))));
+    ok("deploy: a commented-out CSP does not count", /deploy\/csp-missing/.test(dep(ng.replace(/^(\s*)add_header Content-Security-Policy(.*)$/m, "$1# add_header Content-Security-Policy$2"))));
+    ok("deploy: script-src with 'unsafe-inline' -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"))));
+    ok("deploy: a wildcard source -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("default-src 'self'", "default-src *"))));
+    ok("deploy: object-src not 'none' -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("object-src 'none'", "object-src 'self'"))));
+    ok("deploy: CSP without `always` -> csp-always", /deploy\/csp-always/.test(dep(ng.replace("object-src 'none'\" always;", "object-src 'none'\";"))));
+    ok("deploy: a Dockerfile that does not install the template -> csp-dockerfile", /deploy\/csp-dockerfile/.test(dep(ng, dk.replace(/^COPY deploy\/nginx\.conf\.template.*$/m, ""))));
+    ok("deploy: a Dockerfile that strips the CSP -> csp-dockerfile", /deploy\/csp-dockerfile/.test(dep(ng, dk + "RUN sed -i '/Content-Security-Policy/d' /etc/nginx/templates/default.conf.template\n")));
+    ok("deploy: a missing deploy/ directory -> csp-missing", (rmSync(path.join(dir, "deploy"), { recursive: true }), /deploy\/csp-missing/.test(deployChecks(dir).map((x) => x.rule).join())));
+    cpSync(path.join(ROOT, "deploy"), path.join(dir, "deploy"), { recursive: true });
+    ok("deploy: restored -> passes", deployChecks(dir).length === 0);
 
     // theme / assets
     write(dir, "design/theme.css", `@import url(https://evil.example/x.css);`);

@@ -152,12 +152,14 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
 }
 
 /** Promise<boolean>. This is the core's confirmation primitive: action functions call it themselves. */
-export function confirmDialog({ title, message, confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
+export function confirmDialog({ title, message, warning = "", confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
     showDialog({
       title,
-      content: h("p", { class: "dlg__msg" }, message),
+      // `warning` is the core's FIXED text (core/warnings.js) for an irreversible action: it is always rendered, in its
+      // own element, and is never taken from the design layer's copy.
+      content: h("p", { class: "dlg__msg" }, message, warning ? h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, warning) : ""),
       actions: [
         { label: cancelText, kind: "ghost" },
         { label: confirmText, kind: danger ? "danger" : "primary", testid: "confirm-yes", onClick: () => { answer = true; } },
