@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { TEMPLATE, tmp, cleanup, node, git, read, write, makeMerchant } from './helpers.mjs';
+import { V1, TEMPLATE, tmp, cleanup, node, git, read, write, makeMerchant } from './helpers.mjs';
 import { createMerchant } from '../scripts/new-merchant.mjs';
 
 after(cleanup);
@@ -34,18 +34,19 @@ test('new-merchant: brand, config values, version records, no template-only file
   assert.match(read(d, 'public/config.js'), /publishableKey: "pk_testkey123456"/);
   const tj = JSON.parse(read(d, 'template.json'));
   assert.equal(tj.isTemplate, false);
-  assert.equal(tj.version, '0.1.0');
+  assert.equal(tj.version, V1);
   assert.equal(tj.merchant.slug, 'test-shop');
-  assert.equal(read(d, '.template-version').trim(), '0.1.0');
+  assert.equal(read(d, '.template-version').split('\n')[0], V1);
+  assert.match(read(d, '.template-version'), /# \d{4}-\d\d-\d\d created by new-merchant\.mjs from /);
   for (const f of ['scripts/new-merchant.mjs', 'scripts/gen-placeholders.mjs', 'tests', 'docs/TEMPLATE-NOTES.md']) {
     assert.equal(existsSync(path.join(d, f)), false, `${f} must not be copied`);
   }
-  assert.match(read(d, 'README.md'), /merchant-template v0\.1\.0/);
+  assert.ok(read(d, 'README.md').includes(`merchant-template v${V1}`));
   // brand-free: nothing of the template author's old site leaks into a merchant
   assert.equal(node(['scripts/check-layers.mjs', '--check'], d).status, 0);
   assert.equal(node(['scripts/check-design.mjs'], path.join(d, 'admin')).status, 0);
   const log = git(d, 'log', '--oneline');
-  assert.match(log.out, /Initial commit from merchant-template v0\.1\.0/);
+  assert.ok(log.out.includes(`Initial commit from merchant-template v${V1}`));
   assert.equal(git(d, 'status', '--porcelain').out.trim(), '');
   assert.equal(git(d, 'remote').out.trim(), '', 'no remote may be set');
   assert.equal(git(d, 'tag').out.trim(), '', 'no tags are copied');

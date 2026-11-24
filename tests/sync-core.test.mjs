@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { TEMPLATE, cleanup, node, git, read, write, makeMerchant, makeTemplateCopy, sync, snap } from './helpers.mjs';
+import { V1, V2, V3, TEMPLATE, cleanup, node, git, read, write, makeMerchant, makeTemplateCopy, sync, snap } from './helpers.mjs';
 import { designActions, parseChangelog, plan } from '../scripts/sync-core.mjs';
 
 after(cleanup);
@@ -26,7 +26,7 @@ function editedMerchant() {
   return m;
 }
 
-function newTemplate(version = '0.2.0', extraMutate = () => {}) {
+function newTemplate(version = V2, extraMutate = () => {}, opts) {
   return makeTemplateCopy(version, (d) => {
     write(d, 'public/commerce/cart.js', read(d, 'public/commerce/cart.js') + '\n// core change in ' + version + '\n');
     write(d, 'admin/core/errors.js', read(d, 'admin/core/errors.js') + '\n// core change in ' + version + '\n');
@@ -38,9 +38,9 @@ function newTemplate(version = '0.2.0', extraMutate = () => {}) {
     write(d, 'public/config.js', read(d, 'public/config.js').replace('showPrices: true,', 'showPrices: false,'));
     write(d, 'admin/design/tokens.css', read(d, 'admin/design/tokens.css').replace('#2f5d8a', '#112233'));
     write(d, 'wrangler.jsonc', read(d, 'wrangler.jsonc').replace('merchant-template', 'changed-template'));
-    write(d, 'docs/CORE-CHANGELOG.md', read(d, 'docs/CORE-CHANGELOG.md').replace('## v0.1.0', `## v${version}\n\nDesign-layer action: none\n\n* test change\n\n## v0.1.0`));
+    write(d, 'docs/CORE-CHANGELOG.md', read(d, 'docs/CORE-CHANGELOG.md').replace(`## v${V1}`, `## v${version}\n\nDesign-layer action: none\n\n* test change\n\n## v${V1}`));
     extraMutate(d);
-  });
+  }, opts);
 }
 
 test('sync-core: copies only locked files; design files, config.js and merchant extras are preserved; manifests verify', () => {
@@ -50,14 +50,15 @@ test('sync-core: copies only locked files; design files, config.js and merchant 
   const keepBefore = snap(m.dir, KEEP_FILES);
   const r = sync(m.dir, tpl, '--yes');
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /core sync: 0\.1\.0 -> 0\.2\.0/);
+  assert.ok(r.out.includes(`core sync: ${V1} -> ${V2}`), r.out);
+  assert.match(r.out, /source: tag v/);
   assert.match(r.out, /~ public\/commerce\/cart\.js/);
   assert.match(r.out, /\+ scripts\/lib\/extra\.mjs/);
   assert.match(r.out, /verified: storefront/);
 
   // locked files updated
-  assert.match(read(m.dir, 'public/commerce/cart.js'), /core change in 0\.2\.0/);
-  assert.match(read(m.dir, 'admin/core/errors.js'), /core change in 0\.2\.0/);
+  assert.match(read(m.dir, 'public/commerce/cart.js'), new RegExp(`core change in ${V2.replaceAll('.', '\\.')}`));
+  assert.match(read(m.dir, 'admin/core/errors.js'), new RegExp(`core change in ${V2.replaceAll('.', '\\.')}`));
   assert.equal(read(m.dir, 'scripts/lib/extra.mjs').includes('new locked helper'), true);
   assert.equal(existsSync(path.join(m.dir, '.claude/skills/storefront-design/references/new-note.md')), true);
   // design layer, config.js and merchant-owned files byte-identical to before
@@ -69,9 +70,11 @@ test('sync-core: copies only locked files; design files, config.js and merchant 
   assert.equal(existsSync(path.join(m.dir, '.claude/skills/my-custom/SKILL.md')), true);
   assert.equal(existsSync(path.join(m.dir, '.github/workflows/mine.yml')), true);
   // version records
-  assert.equal(read(m.dir, '.template-version').trim(), '0.2.0');
+  assert.equal(read(m.dir, '.template-version').split('\n')[0], V2);
+  assert.ok(new RegExp(`# \\d{4}-\\d\\d-\\d\\d sync ${V1.replaceAll('.', '\\.')} -> ${V2.replaceAll('.', '\\.')} from tag v${V2.replaceAll('.', '\\.')} `).test(read(m.dir, '.template-version')), read(m.dir, '.template-version'));
+  assert.match(read(m.dir, '.template-version'), /created by new-merchant\.mjs/, 'the older history line is kept');
   const tj = JSON.parse(read(m.dir, 'template.json'));
-  assert.equal(tj.version, '0.2.0'); assert.equal(tj.isTemplate, false); assert.equal(tj.merchant.slug, 'test-shop');
+  assert.equal(tj.version, V2); assert.equal(tj.isTemplate, false); assert.equal(tj.merchant.slug, 'test-shop');
   // only expected paths changed in git
   const changed = git(m.dir, 'status', '--porcelain', '--untracked-files=all').out.split('\n').filter(Boolean).map((l) => l.slice(3));
   for (const f of changed) {
@@ -97,13 +100,13 @@ test('sync-core: --dry-run changes nothing and reports the plan', () => {
   assert.match(r.out, /\[dry-run\] nothing changed/);
   assert.match(r.out, /~ public\/commerce\/cart\.js/);
   assert.equal(git(m.dir, 'status', '--porcelain').out.trim(), '');
-  assert.equal(read(m.dir, '.template-version').trim(), '0.1.0');
+  assert.equal(read(m.dir, '.template-version').split('\n')[0], V1);
   assert.equal(git(m.dir, 'rev-parse', 'HEAD').out, before);
 });
 
 test('sync-core: files the template removed are removed, merchant extras in .claude/ are kept', () => {
   const m = editedMerchant();
-  const tpl = newTemplate('0.2.0', (d) => rmSync(path.join(d, 'admin/docs/AI-EDIT-SERVICE-NOTES.md'), { force: true }));
+  const tpl = newTemplate(V2, (d) => rmSync(path.join(d, 'admin/docs/AI-EDIT-SERVICE-NOTES.md'), { force: true }));
   const r = sync(m.dir, tpl, '--yes');
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /- admin\/docs\/AI-EDIT-SERVICE-NOTES\.md/);
@@ -126,7 +129,7 @@ test('sync-core refuses a dirty working tree (modified or untracked) and changes
 
 test('sync-core refuses an equal or older template version', () => {
   const m = editedMerchant();
-  for (const v of ['0.1.0', '0.0.9']) {
+  for (const v of [V1, '0.0.9']) {
     const tpl = makeTemplateCopy(v);
     const r = sync(m.dir, tpl, '--yes');
     assert.equal(r.status, 2, v); assert.match(r.out, /not newer/);
@@ -137,7 +140,7 @@ test('sync-core refuses an equal or older template version', () => {
 test('sync-core refuses a template whose locked paths reach into the design layer or outside the repo', () => {
   const m = editedMerchant();
   for (const [bad, msg] of [['public/app.js', /overlaps the design-layer path/], ['public/assets/', /overlaps the design-layer path/], ['admin/design/', /overlaps the design-layer path/], ['../outside', /unsafe path/], ['.git/hooks/', /unsafe path/], ['.gitignore', /locked paths include/]]) {
-    const tpl = newTemplate('0.3.0', (d) => {
+    const tpl = newTemplate(V3, (d) => {
       const tj = JSON.parse(read(d, 'template.json')); tj.lockedPaths.push(bad); write(d, 'template.json', JSON.stringify(tj, null, 2));
     });
     const r = sync(m.dir, tpl, '--yes');
@@ -151,10 +154,10 @@ test('sync-core refuses to run in the template, from a different template name, 
   let r = node(['scripts/sync-core.mjs', '--from', tpl, '--yes'], TEMPLATE);
   assert.equal(r.status, 2); assert.match(r.out, /template repo itself/);
   const m = editedMerchant();
-  const other = newTemplate('0.2.0', (d) => { const tj = JSON.parse(read(d, 'template.json')); tj.name = 'other-template'; write(d, 'template.json', JSON.stringify(tj, null, 2)); });
+  const other = newTemplate(V2, (d) => { const tj = JSON.parse(read(d, 'template.json')); tj.name = 'other-template'; write(d, 'template.json', JSON.stringify(tj, null, 2)); });
   r = sync(m.dir, other, '--yes');
   assert.equal(r.status, 2); assert.match(r.out, /name mismatch/);
-  const nonTpl = newTemplate('0.2.0', (d) => { const tj = JSON.parse(read(d, 'template.json')); tj.isTemplate = false; write(d, 'template.json', JSON.stringify(tj, null, 2)); });
+  const nonTpl = newTemplate(V2, (d) => { const tj = JSON.parse(read(d, 'template.json')); tj.isTemplate = false; write(d, 'template.json', JSON.stringify(tj, null, 2)); });
   r = sync(m.dir, nonTpl, '--yes');
   assert.equal(r.status, 2);
   r = sync(m.dir, path.join(m.dir, 'nonexistent'), '--yes');
@@ -167,6 +170,7 @@ test('sync-core refuses a template that fails its own guards', () => {
   const m = editedMerchant();
   const tpl = newTemplate();
   write(tpl, 'public/commerce/api.js', read(tpl, 'public/commerce/api.js') + '\n// tampered after the manifest\n');
+  git(tpl, 'commit', '-qam', 'tamper'); git(tpl, 'tag', '-f', '-a', `v${V2}`, '-m', 'retag'); // a clean checkout at the tag: only the template's own guards can refuse it
   const r = sync(m.dir, tpl, '--yes');
   assert.equal(r.status, 2); assert.match(r.out, /failed inside the template checkout/);
   assert.equal(git(m.dir, 'status', '--porcelain').out.trim(), '');
@@ -182,20 +186,20 @@ test('sync-core without --yes does not apply on a non-terminal', () => {
 
 test('sync-core: a "Design-layer action:" changelog entry blocks until --ack-design-actions, then applies and repeats the notice', () => {
   const m = editedMerchant();
-  const tpl = newTemplate('0.2.0', (d) => {
+  const tpl = newTemplate(V2, (d) => {
     write(d, 'docs/CORE-CHANGELOG.md', read(d, 'docs/CORE-CHANGELOG.md').replace('Design-layer action: none\n\n* test change', 'Design-layer action: the checkout page should show the new ShopCommerce.checkout.foo() result\n\n* test change'));
   });
   let r = sync(m.dir, tpl, '--yes');
   assert.equal(r.status, 3, r.out);
   assert.match(r.out, /DESIGN-LAYER ACTION NEEDED/);
-  assert.match(r.out, /v0\.2\.0: the checkout page should show/);
+  assert.ok(r.out.includes(`v${V2}: the checkout page should show`), r.out);
   assert.equal(git(m.dir, 'status', '--porcelain').out.trim(), '', 'nothing may change without the acknowledgement');
   r = sync(m.dir, tpl, '--dry-run');
   assert.equal(r.status, 3); assert.match(r.out, /DESIGN-LAYER ACTION NEEDED/);
   r = sync(m.dir, tpl, '--yes', '--ack-design-actions');
   assert.equal(r.status, 0, r.out);
   assert.equal((r.out.match(/DESIGN-LAYER ACTION NEEDED/g) || []).length, 2, 'the notice is printed before and after');
-  assert.equal(read(m.dir, '.template-version').trim(), '0.2.0');
+  assert.equal(read(m.dir, '.template-version').split('\n')[0], V2);
 });
 
 test('designActions: changelog lines in (from, to] and public-api diffs (added and removed names)', () => {
@@ -236,20 +240,20 @@ test('sync-core rolls everything back when the merchant\'s own guards fail after
   assert.match(r.out, /SYNC FAILED, every file was restored/);
   assert.equal(git(m.dir, 'status', '--porcelain', '--untracked-files=all').out.trim(), '', 'working tree must be exactly as before');
   assert.equal(git(m.dir, 'rev-parse', 'HEAD').out, before);
-  assert.equal(read(m.dir, '.template-version').trim(), '0.1.0');
+  assert.equal(read(m.dir, '.template-version').split('\n')[0], V1);
   assert.doesNotMatch(read(m.dir, 'public/commerce/cart.js'), /core change/);
   assert.equal(existsSync(path.join(m.dir, 'scripts/lib/extra.mjs')), false);
 });
 
 test('a second sync to the same version is refused; a further newer one works (chain 0.1 -> 0.2 -> 0.3)', () => {
   const m = editedMerchant();
-  const t2 = newTemplate('0.2.0');
+  const t2 = newTemplate(V2);
   assert.equal(sync(m.dir, t2, '--yes').status, 0);
-  git(m.dir, 'add', '-A'); git(m.dir, 'commit', '-q', '-m', 'sync 0.2.0');
+  git(m.dir, 'add', '-A'); git(m.dir, 'commit', '-q', '-m', `sync ${V2}`);
   assert.equal(sync(m.dir, t2, '--yes').status, 2);
-  const t3 = newTemplate('0.3.0', (d) => write(d, 'public/commerce/cart.js', read(d, 'public/commerce/cart.js') + '\n// v3 only\n'));
+  const t3 = newTemplate(V3, (d) => write(d, 'public/commerce/cart.js', read(d, 'public/commerce/cart.js') + '\n// v3 only\n'));
   const r = sync(m.dir, t3, '--yes');
   assert.equal(r.status, 0, r.out);
   assert.match(read(m.dir, 'public/commerce/cart.js'), /v3 only/);
-  assert.equal(read(m.dir, '.template-version').trim(), '0.3.0');
+  assert.equal(read(m.dir, '.template-version').split('\n')[0], V3);
 });

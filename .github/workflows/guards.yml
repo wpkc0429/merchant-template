@@ -1,6 +1,8 @@
 # Guards for the merchant template and every merchant repo made from it. Pure Node, no dependencies, no secrets.
 #
-#   * Always:  storefront layer guard (+ hash manifest), admin design guard + its self-test.
+#   * Always:  storefront layer guard (+ hash manifest, strict CSP in public/_headers), content schema lint (offline),
+#              admin design guard (+ strict CSP in admin/deploy/) + its self-test.
+#   * NEVER:   registering the content schema on the platform (human only: no credentials in CI, no call to the registration endpoint).
 #   * On `design/storefront-*` branches: scripts/check-scope.mjs storefront (only the storefront design paths may change).
 #   * On `design/admin-*` branches:      scripts/check-scope.mjs admin (only admin/design/** may change).
 #   * On ANY `design/*` branch:          scripts/check-locked.mjs fails the run if a locked path, config.js, a hash
@@ -66,6 +68,9 @@ jobs:
 
       - name: Storefront guard (layers + hash manifest)
         run: node scripts/check-layers.mjs --check
+
+      - name: Content schema lint (offline; the platform registration is a HUMAN step and is never run here)
+        run: node scripts/check-content-schema.mjs --lint
 
       - name: Admin guard (design layer, ctx, core manifest)
         run: |

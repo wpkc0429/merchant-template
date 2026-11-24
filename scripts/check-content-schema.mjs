@@ -61,6 +61,10 @@ export function lintSchema(doc) {
     } else if (s.type === 'string') {
       if (!('default' in s)) bad(ptr, 'every string needs a default');
       if (!('const' in s) && !('enum' in s) && !Number.isInteger(s.maxLength)) bad(ptr, 'every string needs maxLength');
+      if (Number.isInteger(s.maxLength)) {
+        const cap = s['x-editor'] === 'richtext' ? 50000 : (s['x-editor'] === 'link' || s['x-editor'] === 'image') ? 2048 : 2000;
+        if (s.maxLength < 1 || s.maxLength > cap) bad(ptr, `maxLength must be between 1 and ${cap}`);
+      }
       if (typeof s.default === 'string' && Number.isInteger(s.maxLength) && s.default.length > s.maxLength) bad(ptr, 'default is longer than maxLength');
       if (typeof s.default !== 'string' && 'default' in s) bad(ptr, 'default must be a string');
     } else if (['integer', 'number', 'boolean'].includes(s.type)) {

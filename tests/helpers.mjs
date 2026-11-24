@@ -8,6 +8,11 @@ import { listFiles } from '../scripts/lib/template.mjs';
 import { createMerchant } from '../scripts/new-merchant.mjs';
 
 export const TEMPLATE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Versions are relative to the template under test: V1 = what a freshly created merchant is at, V2 / V3 = newer fake releases.
+const bumpMinor = (v, n) => { const [a, b] = v.split('.').map(Number); return `${a}.${b + n}.0`; };
+export const V1 = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')).version;
+export const V2 = bumpMinor(V1, 1);
+export const V3 = bumpMinor(V1, 2);
 const created = [];
 export function tmp(prefix = 'mt-test-') {
   const d = mkdtempSync(path.join(tmpdir(), prefix));
@@ -36,8 +41,12 @@ export function makeMerchant(extra = {}) {
   return { dir, ...r };
 }
 
-/** A copy of the template working tree (a stand-in for a checkout of a newer tag), version bumped, manifests re-locked. */
-export function makeTemplateCopy(version, mutate = () => {}) {
+/**
+ * A copy of the template working tree (a stand-in for a checkout of a newer release), version bumped, manifests re-locked,
+ * committed in its own git repo. By default HEAD carries the ANNOTATED tag v<version> (what sync-core requires);
+ * { tag: false } leaves it untagged, { tag: 'light' } makes a lightweight tag, { dirty: true } leaves an uncommitted change.
+ */
+export function makeTemplateCopy(version, mutate = () => {}, { tag = true, dirty = false } = {}) {
   const dir = path.join(tmp('mt-tpl-'), 'template');
   for (const f of listFiles(TEMPLATE)) {
     if (/(^|\/)config\.local\.js$/.test(f)) continue;
@@ -51,6 +60,11 @@ export function makeTemplateCopy(version, mutate = () => {}) {
   const a = node(['scripts/check-layers.mjs', '--update'], dir);
   const b = node(['scripts/check-design.mjs', '--update'], path.join(dir, 'admin'));
   if (a.status !== 0 || b.status !== 0) throw new Error(`could not re-lock the template copy:\n${a.out}\n${b.out}`);
+  const g = (...x) => { const r = git(dir, ...x); if (r.status !== 0) throw new Error(`git ${x.join(' ')}: ${r.out}`); };
+  g('init', '-q', '-b', 'main'); g('add', '-A'); g('commit', '-q', '-m', `template ${version}`);
+  if (tag === true) g('tag', '-a', `v${version}`, '-m', `release ${version}`);
+  else if (tag === 'light') g('tag', `v${version}`);
+  if (dirty) write(dir, 'docs/CORE-CHANGELOG.md', read(dir, 'docs/CORE-CHANGELOG.md') + '\n<!-- uncommitted -->\n');
   return dir;
 }
 
