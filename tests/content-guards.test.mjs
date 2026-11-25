@@ -9,14 +9,14 @@ after(cleanup);
 const layers = (d) => node(['scripts/check-layers.mjs', '--check'], d);
 // A storefront-only scratch copy (public/, check-layers, template.json as a merchant repo), re-locked, so these tests need neither the
 // admin nor a fresh manifest. config.js gets real values like a merchant repo's.
-const fresh = () => {
+const fresh = (asTemplate = false) => {
   const dir = tmp('mt-layers-');
   cpSync(path.join(TEMPLATE, 'public'), path.join(dir, 'public'), { recursive: true });
   mkdirSync(path.join(dir, 'scripts'));
   cpSync(path.join(TEMPLATE, 'scripts/check-layers.mjs'), path.join(dir, 'scripts/check-layers.mjs'));
-  const tj = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')); tj.isTemplate = false;
+  const tj = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')); tj.isTemplate = asTemplate;
   writeFileSync(path.join(dir, 'template.json'), JSON.stringify(tj));
-  writeFileSync(path.join(dir, 'public/config.js'), readFileSync(path.join(dir, 'public/config.js'), 'utf8').replace('REPLACE_WITH_PLATFORM_API_BASE', 'https://api.example.com').replace('REPLACE_WITH_PUBLISHABLE_KEY', 'pk_test123456'));
+  if (!asTemplate) writeFileSync(path.join(dir, 'public/config.js'), readFileSync(path.join(dir, 'public/config.js'), 'utf8').replace('REPLACE_WITH_PLATFORM_API_BASE', 'https://api.example.com').replace('REPLACE_WITH_PUBLISHABLE_KEY', 'pk_test123456'));
   node(['scripts/check-layers.mjs', '--update'], dir);
   return { dir };
 };
@@ -65,10 +65,15 @@ test('check-layers: index.html must load content-allowlist.js and content.js, in
   const orig = read(d, 'public/index.html');
   const drop = (name) => orig.replace(new RegExp(`<script src="${name.replace('.', '\\.')}"></script>\\n`), '');
   let r;
+  // merchant repo (isTemplate false): a missing script is a WARNING until the design layer adopts v0.3.0 (so sync-core's verification passes)
   write(d, 'public/index.html', drop('commerce/content.js')); r = layers(d);
-  assert.equal(r.status, 1); assert.match(r.out, /does not load commerce\/content\.js/);
+  assert.equal(r.status, 0); assert.match(r.out, /does not load commerce\/content\.js/);
   write(d, 'public/index.html', drop('commerce/content-allowlist.js')); r = layers(d);
-  assert.equal(r.status, 1); assert.match(r.out, /does not load commerce\/content-allowlist\.js/);
+  assert.equal(r.status, 0); assert.match(r.out, /does not load commerce\/content-allowlist\.js/);
+  // the template itself: an error
+  const tpl = fresh(true).dir;
+  write(tpl, 'public/index.html', read(tpl, 'public/index.html').replace('<script src="commerce/content.js"></script>\n', ''));
+  r = layers(tpl); assert.equal(r.status, 1); assert.match(r.out, /does not load commerce\/content\.js/);
   // content.js after checkout.js
   write(d, 'public/index.html', drop('commerce/content.js').replace('<script src="commerce/checkout.js"></script>', '<script src="commerce/checkout.js"></script>\n<script src="commerce/content.js"></script>')); r = layers(d);
   assert.equal(r.status, 1); assert.match(r.out, /out of order/);

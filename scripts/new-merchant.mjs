@@ -209,11 +209,13 @@ Next steps (see .claude/skills/merchant-onboarding for the platform side):
        a. dry run (writes nothing):  CONTENT_API_BASE=... CONTENT_SHOP_ID=<id> CONTENT_ADMIN_EMAIL=... CONTENT_ADMIN_PASSWORD=... \\
                                        node scripts/check-content-schema.mjs        (offline lint only: add --lint)
           Read the report: ok / needs_attention / orphaned, removed_paths.
-       b. register for real:  PUT /api/v1/admin/shops/<id>/content/schema  (curl recipe: platform docs/content-schema.md; the
-          merchant-onboarding skill step 11a)
+       b. register for real: in the merchant's admin, screen "內容結構" (dry-run report, then the core's confirmation dialog;
+          needs ADMIN_SITE_ORIGIN on the admin host), or PUT /api/v1/admin/shops/<id>/content/schema (curl recipe: platform
+          docs/content-schema.md; the merchant-onboarding skill step 11a)
        c. only if the platform answers 409 removals_require_confirmation: review what would be dropped, then repeat with
           ?confirm_removals=true.
-     The storefront still reads public/content.js; fetching content from the platform is a later change.`);
+     Until documents are registered and published, the storefront shows the defaults in public/content.js; afterwards it overlays the
+     published platform content (ShopCommerce.content). Edit and publish documents in the admin content screens.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -207,7 +207,7 @@ function checkCsp(headersText, indexHtml, tpl = true) {
     let last = -1;
     for (const s of order) {
       const i = srcs.indexOf(s);
-      if (i < 0) { fail(`public/index.html does not load ${s} (v0.3.0 content store: load commerce/api.js, cart.js, content-allowlist.js, content.js and checkout.js (checkout.js freezes ShopCommerce, so it comes last), then content.js and app.js)`); continue; }
+      if (i < 0) { (isTemplate ? fail : (m) => warnings.push(m))(`public/index.html does not load ${s} (v0.3.0 content store, an error in the template and a warning in a merchant repo until its design layer adopts it: load commerce/api.js, cart.js, content-allowlist.js, content.js and checkout.js (checkout.js freezes ShopCommerce, so it comes last), then content.js and app.js)`); continue; }
       if (i < last) fail(`public/index.html loads ${s} out of order (expected: ${order.join(', ')})`);
       last = Math.max(last, i);
     }
