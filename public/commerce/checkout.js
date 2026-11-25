@@ -113,5 +113,6 @@
 
   Object.freeze(C.cart);
   Object.freeze(C.checkout);
+  if (C.content) Object.freeze(C.content);   // content.js must load before this file (it adds C.content)
   Object.freeze(C);
 })(window);

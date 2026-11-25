@@ -99,7 +99,7 @@ for (const f of designFiles) {
       const before = src.slice(Math.max(0, m.index - 20), m.index);
       if (/window\.$/.test(before)) continue;                      // the declaration itself
       if (first === undefined) { fail(`${rel(f)}: bare "${a}" (use only documented members)`); continue; }
-      if (first === 'cart' || first === 'checkout') {
+      if (first === 'cart' || first === 'checkout' || first === 'content') {
         const allowed = api[`ShopCommerce.${first}`];
         if (second === undefined) fail(`${rel(f)}: bare ${a}.${first} (call a documented function)`);
         else if (!allowed.includes(second)) fail(`${rel(f)}: ${a}.${first}.${second} is not in commerce/public-api.json`);
@@ -123,22 +123,25 @@ for (const f of designFiles) {
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
     document: { createElement: () => ({ appendChild() {} }), body: { appendChild() {} } },
-    crypto: {}, Date, Math, Object, Array, String, Number, encodeURIComponent
+    crypto: {}, Date, Math, Object, Array, String, Number, RegExp, encodeURIComponent,
+    location: { href: 'http://localhost/' }, history: { state: null, replaceState() {} },
+    DOMParser: class { parseFromString() { return { body: { childNodes: [] } }; } }
   };
   sandbox.window = sandbox;
   sandbox.SHOP_CONFIG = { apiBase: 'x', publishableKey: 'k', showPrices: true, featuredCategory: 'f' };
   vm.createContext(sandbox);
   try {
-    for (const n of ['api.js', 'cart.js', 'checkout.js']) {
+    for (const n of ['api.js', 'cart.js', 'content-allowlist.js', 'content.js', 'checkout.js']) {
       vm.runInContext(readFileSync(path.join(PUB, 'commerce', n), 'utf8'), sandbox, { filename: n });
     }
     const C = sandbox.ShopCommerce;
     const pub = (obj) => Object.keys(obj).filter((k) => !k.startsWith('_')).sort();
-    const top = pub(C).filter((k) => k !== 'cart' && k !== 'checkout');
+    const top = pub(C).filter((k) => k !== 'cart' && k !== 'checkout' && k !== 'content');
     const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
     if (!same(top, api.ShopCommerce)) fail(`public-api.json ShopCommerce [${api.ShopCommerce}] != exports [${top}]`);
     if (!same(pub(C.cart), api['ShopCommerce.cart'])) fail(`public-api.json cart != exports [${pub(C.cart)}]`);
     if (!same(pub(C.checkout), api['ShopCommerce.checkout'])) fail(`public-api.json checkout != exports [${pub(C.checkout)}]`);
+    if (!same(pub(C.content || {}), api['ShopCommerce.content'] || [])) fail(`public-api.json content != exports [${pub(C.content || {})}]`);
   } catch (e) {
     fail('could not load commerce scripts in the sandbox: ' + e.message);
   }
@@ -192,6 +195,35 @@ function checkCsp(headersText, indexHtml, tpl = true) {
   const hp = path.join(PUB, '_headers'), ip = path.join(PUB, 'index.html');
   const r = checkCsp(existsSync(hp) ? readFileSync(hp, 'utf8') : null, existsSync(ip) ? readFileSync(ip, 'utf8') : '', isTemplate);
   r.errors.forEach(fail); warnings.push(...r.warnings);
+}
+
+/* ---------- 5b: script load order in index.html (content-allowlist.js and content.js before the design layer) ---------- */
+
+{
+  const ip = path.join(PUB, 'index.html');
+  if (existsSync(ip)) {
+    const srcs = [...readFileSync(ip, 'utf8').replace(/<!--[\s\S]*?-->/g, '').matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
+    const order = ['commerce/api.js', 'commerce/cart.js', 'commerce/content-allowlist.js', 'commerce/content.js', 'commerce/checkout.js', 'content.js', 'app.js'];
+    let last = -1;
+    for (const s of order) {
+      const i = srcs.indexOf(s);
+      if (i < 0) { fail(`public/index.html does not load ${s} (v0.3.0 content store: load commerce/api.js, cart.js, content-allowlist.js, content.js and checkout.js (checkout.js freezes ShopCommerce, so it comes last), then content.js and app.js)`); continue; }
+      if (i < last) fail(`public/index.html loads ${s} out of order (expected: ${order.join(', ')})`);
+      last = Math.max(last, i);
+    }
+  }
+}
+
+/* ---------- 5c: content values reach the page only through the safe helpers ---------- */
+
+// The design layer may not hand a platform content VALUE to innerHTML/outerHTML/insertAdjacentHTML, nor use eval,
+// new Function, document.write or createContextualFragment. Everything it renders from ShopCommerce.content goes
+// through esc() (text), content.text/richText/link/image. A heuristic scan, not a proof: the server sanitiser and the
+// CSP are the other lines of defence.
+for (const f of designFiles) {
+  const src = stripComments(readFileSync(f, 'utf8'));
+  if (/\b(eval|Function)\s*\(|\bdocument\.write(ln)?\s*\(|\bcreateContextualFragment\b/.test(src)) fail(`${rel(f)}: eval / new Function / document.write / createContextualFragment are forbidden in the design layer`);
+  if (/(innerHTML|outerHTML)\s*[+]?=[^;\n]*\bcontent\.(get|all)\(|insertAdjacentHTML\([^;\n]*\bcontent\.(get|all)\(/.test(src)) fail(`${rel(f)}: content values must not be assigned to innerHTML; use ShopCommerce.content.text/richText/link/image or esc()`);
 }
 
 /* ---------- 6: hash manifest ---------- */

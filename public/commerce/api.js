@@ -15,7 +15,7 @@
   function apiUrl(path) { return String(CONFIG.apiBase || '').replace(/\/+$/, '') + path; }
 
   // Shared fetch wrapper: injects the publishable key, an optional bearer
-  // token or extra headers, JSON-encodes a body, applies a 15s timeout and
+  // token or extra headers, JSON-encodes a body, applies a 15s timeout (opts.timeoutMs overrides) and
   // never throws. Callers get {status, data}; status 0 = network failure /
   // timeout / unparseable response. (Internal: shared via C._internal.)
   function apiFetch(path, opts) {
@@ -26,7 +26,7 @@
     if (opts.body !== undefined) headers['content-type'] = 'application/json';
 
     var controller = root.AbortController ? new AbortController() : null;
-    var timer = setTimeout(function () { if (controller) controller.abort(); }, 15000);
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, opts.timeoutMs || 15000);
 
     return fetch(apiUrl(path), {
       method: opts.method || 'GET',
@@ -34,8 +34,9 @@
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: controller ? controller.signal : undefined
     }).then(function (res) {
+      // 304 and other bodiless answers have no JSON: data stays null. `etag` lets the content loader revalidate.
       return res.json().catch(function () { return null; }).then(function (data) {
-        return { status: res.status, data: data };
+        return { status: res.status, data: data, etag: res.headers && res.headers.get ? res.headers.get('ETag') : null };
       });
     }).catch(function () {
       return { status: 0, data: null };
@@ -76,6 +77,21 @@
     return out;
   }
 
+  // Origins of the product images the platform returned. The content loader treats them, plus the optional
+  // SHOP_CONFIG.imageOrigin, as the only hosts an `image` content value may point to.
+  var imageOrigins = {};
+  function noteImageOrigins(products) {
+    products.forEach(function (p) {
+      (p.images || []).forEach(function (im) {
+        var u = im && im.urls;
+        if (!u) return;
+        ['thumb', 'large'].forEach(function (k) {
+          try { var o = new URL(u[k]); if (o.protocol === 'https:' || o.protocol === 'http:') imageOrigins[o.origin] = true; } catch (e) { /* not a URL */ }
+        });
+      });
+    });
+  }
+
   function fetchAllProducts() {
     var all = [];
     function page(n) {
@@ -102,6 +118,7 @@
     ]).then(function (res) {
       var pr = res[0], sr = res[1], cr = res[2], fr = res[3];
       if (pr.failed) return { ok: false, error: describeApiError(pr.failed) };
+      noteImageOrigins(pr.products);
       if (!(sr.status === 200 && sr.data && Array.isArray(sr.data.shipping_methods))) {
         return { ok: false, error: describeApiError(sr) };
       }
@@ -119,5 +136,5 @@
   C.money = money;
   C.describeApiError = describeApiError;
   C.isSkuSellable = isSkuSellable;
-  C._internal = { apiFetch: apiFetch, config: CONFIG };
+  C._internal = { apiFetch: apiFetch, config: CONFIG, imageOrigins: imageOrigins };
 })(window);

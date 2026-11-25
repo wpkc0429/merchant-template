@@ -1,10 +1,14 @@
 /* ============================================================
    content.js — DESIGN LAYER: static copy and design constants.
 
-   Everything here is text / art-direction that is NOT in the platform API
-   (yet). It lives in this one module so it is easy to find and, later, to
-   drive from CMS fields instead. Edit freely; the commerce layer
-   (public/commerce/**) and public/config.js are not involved.
+   DEFAULT copy and design constants. Since v0.3.0 the shop's editable text is read at
+   runtime from the platform content store (ShopCommerce.content, documents global, home,
+   story, faq, product-info, described by content.schema.json); app.js overlays every
+   PUBLISHED platform field on these defaults, so a field that has no published value (no
+   document, API unreachable, preview off) still renders what is written here. Keep the
+   values in step with the "default" entries of content.schema.json (a template test checks
+   it). storyImage, navPages and sorts are design constants and are never platform content.
+   Edit freely; the commerce layer (public/commerce/**) and public/config.js are not involved.
 
    Catalogue data (products, prices, images, subtitles, categories,
    featured picks) does NOT belong here: it comes from the API.

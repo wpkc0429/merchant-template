@@ -1459,3 +1459,7 @@ button { cursor: pointer; }
 }
 .size-btn:disabled,
 .m-size:disabled { opacity: .4; text-decoration: line-through; cursor: not-allowed; }
+
+/* Content preview banner (ShopCommerce.content, v0.3.0). The locked core creates #shop-preview-banner when the page was
+   opened with ?content_preview=<token> and gives it a baseline inline style; restyle it here (use !important to override). */
+.shop-preview-banner { letter-spacing: .02em; }

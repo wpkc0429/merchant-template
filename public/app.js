@@ -10,6 +10,13 @@
    scripts/check-layers.mjs). Static copy lives in content.js; deployment
    settings (API base URL, publishable key) in config.js / config.local.js.
 
+   PLATFORM CONTENT (v0.3.0): the shop's editable copy is read at runtime from the platform content store through
+   ShopCommerce.content (documents global, home, story, faq, product-info; see content.schema.json). content.js stays the
+   DEFAULT copy: a field with no published platform value renders the content.js value. First paint waits at most
+   CONTENT_BUDGET_MS for the content request (a repeat visit within 5 minutes has it from the session cache at once), so
+   there is normally no flash of the defaults; a slow network renders the defaults and swaps when the content arrives.
+   Content values only ever enter the page through esc() (text), never as HTML.
+
    Product/SKU/shipping/category/image data comes from the `ecommerce`
    platform's public storefront API at runtime — a network dependency, not a
    build dependency; the site ships as-is with no bundler and no package.json.
@@ -20,7 +27,8 @@
   /* ---------- Layers ---------- */
 
   var Commerce = window.ShopCommerce;   // locked commerce layer (public/commerce/)
-  var CONTENT = window.SHOP_CONTENT;    // static copy and design constants (content.js)
+  var DEFAULTS = window.SHOP_CONTENT;   // default copy and design constants (content.js)
+  var CONTENT = DEFAULTS;               // what the views read: the defaults overlaid with published platform content
   // Shop-level switches from config.js. (The API endpoint settings are never read here.)
   var SHOP_SETTINGS = {
     showPrices: window.SHOP_CONFIG.showPrices !== false,
@@ -46,8 +54,6 @@
   var SIZE_ORDER = ['S', 'M', 'L'];
   var SIZE_LABELS = { S: 'S · 小', M: 'M · 標準', L: 'L · 加大' };
 
-  var FAQ = CONTENT.faq;
-  var PINFO = CONTENT.pinfo;
   var SORTS = CONTENT.sorts;
 
   var TABS = [
@@ -119,6 +125,58 @@
   }
 
   var money = Commerce.money;
+
+  /* ---------- Platform content (ShopCommerce.content) over the defaults ---------- */
+
+  // Content document key -> what it feeds. Keys are the ones declared in content.schema.json "documents".
+  var CONTENT_KEYS = ['global', 'home', 'story', 'faq', 'product-info'];
+  var CONTENT_BUDGET_MS = 600;     // longest first paint waits for the content request
+  var booted = false;              // render() does nothing before the first paint decision
+
+  function str(v, d) { return typeof v === 'string' ? v : d; }
+  function sub(src, def, keys) {
+    var o = {};
+    keys.forEach(function (k) { o[k] = str(src && src[k], def[k]); });
+    return o;
+  }
+  function pairs(src, d) {
+    if (!src || !Array.isArray(src.items)) return d;
+    return src.items.filter(function (x) { return x && typeof x.q === 'string' && typeof x.a === 'string'; })
+      .map(function (x) { return { q: x.q, a: x.a }; });
+  }
+
+  // CONTENT = DEFAULTS with every published platform field laid over it. A document that is not published (or whose
+  // field is missing or of the wrong type) leaves the content.js default in place. Pure function of the two inputs.
+  function applyPlatformContent() {
+    var g = Commerce.content.get('global'), h = Commerce.content.get('home'), st = Commerce.content.get('story');
+    var D = DEFAULTS;
+    var next = {};
+    Object.keys(D).forEach(function (k) { next[k] = D[k]; });
+    if (g) {
+      next.accent = /^#[0-9a-fA-F]{6}$/.test(g.accent || '') ? g.accent : D.accent;
+      next.brand = sub(g.brand, D.brand, ['name', 'footer']);
+      next.searchPlaceholder = str(g.searchPlaceholder, D.searchPlaceholder);
+      next.noteLabel = str(g.noteLabel, D.noteLabel);
+      next.featuredTitle = str(g.featuredTitle, D.featuredTitle);
+      next.instagram = sub(g.instagram, D.instagram, ['handle']);
+      next.store = sub(g.store, D.store, ['name', 'address', 'addressShort', 'hours', 'hoursShort', 'tel']);
+      next.newsletter = sub(g.newsletter, D.newsletter, ['title', 'success']);
+      next.promo = sub(g.promo, D.promo, ['title', 'sub', 'cta']);
+    }
+    if (h) {
+      next.hero = sub(h.hero, D.hero, ['eyebrow', 'title', 'lede']);
+      next.storyTeaser = sub(h.storyTeaser, D.storyTeaser, ['eyebrow', 'title', 'lede']);
+    }
+    if (st) {
+      var o = sub(st, D.story, ['eyebrow', 'title']);
+      o.paragraphs = Array.isArray(st.paragraphs) ? st.paragraphs.filter(function (t) { return typeof t === 'string'; }) : D.story.paragraphs;
+      next.story = o;
+    }
+    next.faq = pairs(Commerce.content.get('faq'), D.faq);
+    next.pinfo = pairs(Commerce.content.get('product-info'), D.pinfo);
+    CONTENT = next;
+    document.documentElement.style.setProperty('--accent', CONTENT.accent);
+  }
 
   // Product images are API URLs (CSS background). A URL that fails to load
   // simply leaves the `--placeholder` colour the stylesheet already paints
@@ -601,7 +659,7 @@
       '</div>' +
       '<div>' +
         '<div class="eyebrow eyebrow--tight eyebrow--clay">FAQ</div>' +
-        accordion(FAQ, state.faq, 'toggleFaq') +
+        accordion(CONTENT.faq, state.faq, 'toggleFaq') +
       '</div>' +
     '</div></section>' +
 
@@ -726,7 +784,7 @@
               (canBuy ? '加入購物袋 · ' + esc(CONFIG.showPrices && u != null ? money(u * state.qty) : '—') : '已售完') + '</button>' +
           '</div>' +
 
-          accordion(PINFO, state.pinfo, 'togglePInfo', 'pdp__acc') +
+          accordion(CONTENT.pinfo, state.pinfo, 'togglePInfo', 'pdp__acc') +
         '</div>' +
       '</div>' +
 
@@ -916,7 +974,7 @@
           '<h4>' + esc(CONTENT.store.name) + '</h4>' +
           '<p class="lede">' + esc(CONTENT.store.address) + '<br>' + esc(CONTENT.store.hours) + '<br>' + esc(CONTENT.store.tel) + '</p>' +
         '</div>' +
-        '<div>' + accordion(FAQ, state.faq, 'toggleFaq') + '</div>' +
+        '<div>' + accordion(CONTENT.faq, state.faq, 'toggleFaq') + '</div>' +
       '</div>' +
     '</div>';
   }
@@ -1198,7 +1256,7 @@
       '</div>' +
       '<div class="m-store__faq">' +
         '<div class="eyebrow eyebrow--muted">FAQ</div>' +
-        accordion(FAQ, state.faq, 'toggleFaq') +
+        accordion(CONTENT.faq, state.faq, 'toggleFaq') +
       '</div>';
   }
 
@@ -1326,6 +1384,7 @@
   }
 
   function render() {
+    if (!booted) return;
     // Preserve caret + scroll across the re-render.
     var active = document.activeElement;
     var focusKey = active && active.dataset ? active.dataset.k : null;
@@ -1737,10 +1796,25 @@
 
   document.documentElement.style.setProperty('--accent', CONFIG.accent);
   loadCatalog();
-  // A visitor bounced back from an off-site payment page with no more
-  // specific return target lands here with a stored order-access token —
-  // route them to the order-status check rather than the homepage.
-  if (!location.hash) location.replace(Commerce.checkout.getOrderToken() ? '#/order-status' : '#/');
-  applyHash();
-  render();
+
+  // Content changes after boot (a slow first response, a revalidation, a preview) swap the copy and repaint.
+  Commerce.content.onChange(function () { applyPlatformContent(); render(); });
+
+  // First paint: wait for the content request, but at most CONTENT_BUDGET_MS, so the defaults are not shown and then
+  // replaced when the network is healthy, and a dead API never blocks the page.
+  function boot() {
+    if (booted) return;
+    booted = true;
+    applyPlatformContent();
+    // A visitor bounced back from an off-site payment page with no more
+    // specific return target lands here with a stored order-access token —
+    // route them to the order-status check rather than the homepage.
+    if (!location.hash) location.replace(Commerce.checkout.getOrderToken() ? '#/order-status' : '#/');
+    applyHash();
+    render();
+  }
+  Promise.race([
+    Commerce.content.ready(CONTENT_KEYS),
+    new Promise(function (resolve) { setTimeout(resolve, CONTENT_BUDGET_MS); })
+  ]).then(boot, boot);
 })();

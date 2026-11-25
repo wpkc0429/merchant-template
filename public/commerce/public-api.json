@@ -14,5 +14,9 @@
     "newKey", "getOrderToken", "placeOrder",
     "startPayment", "redirectToPayment", "loadOrderStatus"
   ],
+  "ShopCommerce.content": [
+    "ready", "all", "get", "onChange", "isPreview",
+    "text", "richText", "link", "image", "safeHref", "safeImageSrc"
+  ],
   "config": ["showPrices", "featuredCategory"]
 }

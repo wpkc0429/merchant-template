@@ -35,6 +35,9 @@
 <script src="commerce/local-config.js"></script>
 <script src="commerce/api.js"></script>
 <script src="commerce/cart.js"></script>
+<!-- content-allowlist.js and content.js MUST load before checkout.js (checkout.js freezes ShopCommerce). -->
+<script src="commerce/content-allowlist.js"></script>
+<script src="commerce/content.js"></script>
 <script src="commerce/checkout.js"></script>
 <script src="content.js"></script>
 <script src="app.js"></script>
