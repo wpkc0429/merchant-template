@@ -30,6 +30,23 @@ The cart is persisted by the commerce layer, per shop (keyed by the publishable 
 | `getOrderToken()` | the stored order-access token or `''` |
 | `loadOrderStatus()` | Promise of `{ok:true, order}` or `{ok:false, reason:'no_token'|'api', error}` |
 
+## `ShopCommerce.content` (v0.3.0, platform content store)
+
+The platform's published documents (`global`, `home`, `story`, `faq`, `product-info`, keys declared in `content.schema.json`) are fetched by the core; `content.js` is the default copy.
+
+| Function | Notes |
+| --- | --- |
+| `ready(keys?)` | Promise, never rejects; starts the single request (`keys` only matters in preview mode) |
+| `all()`, `get(key)` | published content by key, `null` when missing (not an error) |
+| `onChange(fn)` | returns unsubscribe; fires only on real change (not on 304) |
+| `isPreview()` | true while a `?content_preview=` token is active (the core shows the banner) |
+| `text(el, v)` | textContent only |
+| `richText(el, html)` | sanitised DOM from the platform allowlist; never innerHTML |
+| `link(el, v)`, `safeHref(v)` | href only after the scheme check (http, https, mailto, tel, relative) |
+| `image(el, v)`, `safeImageSrc(v)` | src only from a known image origin (catalogue image origins or optional `SHOP_CONFIG.imageOrigin`) |
+
+Render content values only through `esc()` as text or these helpers. Failure, 429, a missing key or an unpublished document means the `content.js` default shows. `app.js` of the template does the overlay in `applyPlatformContent()` and waits at most 600 ms before the first paint.
+
 ## Config readable from design code
 
 `SHOP_CONFIG.showPrices` (false means every price shows as an em dash; the template keeps cart subtotal/total visible) and `SHOP_CONFIG.featuredCategory` (slug of the home featured block). Nothing else (`apiBase`, `publishableKey` are forbidden even to mention).

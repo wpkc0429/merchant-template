@@ -49,8 +49,13 @@ CONTENT_API_BASE=https://api.example.com CONTENT_SHOP_ID=12 CONTENT_ADMIN_EMAIL=
 # 3. only if the platform answers 409 removals_require_confirmation: review the removals, then repeat with ?confirm_removals=true
 ```
 
-The storefront still reads `public/content.js`; the platform's public `/shop/content` endpoint is not built, so the template has no
-content fetching yet (roadmap: `docs/TEMPLATE-NOTES.md`).
+Since v0.3.0 the template consumes and edits the platform content store. Storefront: the locked `ShopCommerce.content` fetches the
+published documents at runtime (ETag, cache, preview mode `?content_preview=<token>`, safe render helpers; the allowlist in
+`public/commerce/content-allowlist.json` is a byte copy of the platform's) and the design layer overlays them on the defaults of
+`public/content.js`, which stay the fallback. Admin: new `ctx` content functions, a core form builder and default screens
+(documents, editor, revisions, schema status; permissions `content.view/edit/publish/manage`); registering a schema is a core
+action with a human confirmation dialog. The admin host needs `ADMIN_SITE_ORIGIN` (preview link, schema proxy). See
+`docs/CORE-CHANGELOG.md` v0.3.0 and `docs/DECISIONS.md` D7-D9.
 
 Then load the catalogue (credentials only from the environment):
 

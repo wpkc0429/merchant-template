@@ -4,6 +4,25 @@ Standing decisions about the merchant template and every merchant repo made from
 (the template's owner) and is enforced by the tooling named next to it; changing one is a human decision, recorded here
 first. Newest first. This file is part of the locked core (it is synced to merchant repos so design sessions can read it).
 
+## v0.3.0 (PROPOSED on branch core/content-store-0.3.0; become standing decisions when the human reviewer merges)
+
+Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, D10 template follow-up T1-T5) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and need the reviewer's approval.
+
+### D7. The storefront reads platform content at runtime; `content.js` stays the default copy
+
+`ShopCommerce.content` (locked) fetches `GET /shop/content?include=content` with the publishable key, revalidates with ETag, and falls back to the last good content or the design layer's defaults on any failure (network, 5xx, 429, timeout); a missing key is not an error. The design layer overlays published documents on `content.js` and renders them through the core's safe helpers (text only via textContent; `richtext` only through the sanitizer built from the platform's allowlist, a locked byte copy with a pinned hash and a drift test; `link` only into href after a scheme check; `image` only into src from a known image origin). Loading approach (maintainer choice): the first paint waits at most 600 ms for the content (instant on a repeat visit thanks to a 5-minute sessionStorage cache of the published response, allowed because the locked core already uses sessionStorage and design code still may not); a slower API paints the defaults and swaps. Preview mode (`?content_preview=<token>`, header `X-Preview-Token`, token removed from the URL, never cached or persisted, visible banner) is core behaviour. Build-time snapshots and the publish hook are not built.
+
+### D8. Content editing in the admin is core-owned; registering a schema stays human-only (extends D6)
+
+New `ctx.data` / `ctx.actions` / `ctx.ui` functions (see admin/docs/DESIGN-LAYER.md) enforce permissions (`content.view` / `content.edit` / `content.publish` / `content.manage`), the optimistic lock (If-Match, If-None-Match: *; 412 shows a reload prompt, 428 is a programming error), and 422 pointer mapping inside the core, never in a view. Validation and field behaviour live in the core form builder; the design layer only lays out screens (required fields it omits are appended). The design layer can only DRY-RUN a schema (read-only report). `registerContentSchema()` is a core action that takes no arguments, requires `content.manage`, and always shows a confirmation dialog with a fixed warning and the removals report (a second confirmation before `confirm_removals=true`); no code path registers without the human answering that dialog. Restore only writes the draft ("restored to draft, not published yet"). Fixed warnings were added for publish, unpublish, delete, restore, register and register-with-removals (maintainer choice: publish is arguably reversible; reviewer may drop it).
+
+### D9. Maintainer choices recorded for review
+
+* The admin reads the schema from the same-origin `/content.schema.json` (nginx proxies it from the storefront, the dev server serves it from public/); the admin CSP `connect-src` stays `'self'`. Preview needs `ADMIN_CONFIG.siteOrigin`, supplied by the required deploy env `ADMIN_SITE_ORIGIN`.
+* The schema screen is routed at `/content-schema` (not `/content/schema`): `schema` is a valid document key.
+* Content images: only absolute http(s) URLs from an origin the platform returned (catalogue images) or from the optional `SHOP_CONFIG.imageOrigin` are accepted; relative paths and data: are refused.
+* A published but empty FAQ shows an empty FAQ (not the defaults).
+
 ## 2026-11-25 (v0.2.0), decided by the user
 
 ### D1. A strict Content-Security-Policy is a DEPLOYMENT REQUIREMENT
@@ -69,5 +88,4 @@ platform's per-shop content schema. **Editing the file registers nothing.** Regi
 (`PUT /api/v1/admin/shops/{id}/content/schema`) is done by a human who holds `content.manage` after reading a dry-run report; CI,
 the AI edit service, deploy hooks and unattended scripts never call it. `scripts/check-content-schema.mjs` can lint the file offline
 and dry-run it (`?dry_run=true`, writes nothing; credentials from environment variables only); it has no registration code path.
-The storefront still reads `public/content.js` for now; the platform's public `/shop/content` read endpoint is not built, and no
-content fetching exists in the template (roadmap in `docs/TEMPLATE-NOTES.md`).
+Since v0.3.0 the storefront reads published platform content with `content.js` as the default copy (D7) and the admin registers a schema only through the confirmation dialog (D8).

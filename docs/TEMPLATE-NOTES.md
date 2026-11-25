@@ -58,6 +58,12 @@ Behaviour of the locked code is unchanged except for the items marked **(behavio
 10. New locked files: `scripts/{check-locked,sync-core,import-catalog}.mjs`, `scripts/lib/template.mjs`,
     `admin/deploy/**`, `.github/workflows/guards.yml`, `docs/CORE-CHANGELOG.md`, `*.example` config files.
 
+### v0.3.0 (branch core/content-store-0.3.0, see docs/CORE-CHANGELOG.md and docs/DECISIONS.md D7-D9)
+
+17. **(behaviour)** Storefront: new locked `public/commerce/content.js`, `content-allowlist.json` / `.js` (byte copy of the platform allowlist, sha256 pinned in `tests/content.test.mjs`), `api.js` (timeout option, ETag, image origins), `checkout.js` (freezes `content`), `public-api.json`, `scripts/check-layers.mjs`. Design layer (template only): `public/app.js`, `index.html`, `styles.css`.
+18. **(behaviour)** Admin: new locked `lib/content.js`, `lib/content-schema.js`, `core/content-actions.js`, `ui/content-form.js`; changed `lib/api.js` (`apiRaw`), `core/*`, `ui/kit.js`, `styles.css`, `lib/public-api.json`, `lib/design-schema.js`, deploy files (`ADMIN_SITE_ORIGIN`), config loader; six new fixed-warning confirmations; default content screens in `design/` and `design-defaults/`.
+19. Tests: `tests/content.test.mjs`, `tests/content-guards.test.mjs`, `tests/mini-dom.mjs`, `tests/e2e/content-storefront.mjs` (fake API, no stack), `admin/scripts/test-content.mjs`, `admin/e2e/content.mjs`.
+
 ### v0.2.0 (2026-11-25, decisions in docs/DECISIONS.md)
 
 11. **(behaviour)** `public/_headers` (new, locked, hash-protected, synced): the strict storefront CSP. `scripts/check-layers.mjs`
@@ -134,7 +140,7 @@ Items 1 to 3 were decided on 2026-11-25 (docs/DECISIONS.md D5): merchants are cr
 9. **Pin `connect-src` / `img-src` of the storefront CSP per merchant** (needs the API and image origins in a merchant-owned
    copy of `public/_headers`, written by `new-merchant.mjs`; sync would then have to leave the file alone, so CSP upgrades would
    need a manual merge). Today the policy allows any `https:` origin for those two directives.
-10. **Content store roadmap (not built, do not build content fetching yet).** The platform has per-shop content schema registration
+10. **Content store: BUILT in v0.3.0 (the roadmap below is kept for history; remaining: publish hook, build-time `fetch-content` snapshot, `content_schema_registered` onboarding check).** Original roadmap text: The platform has per-shop content schema registration
     (built, human only). Still to come on the platform: content documents by key, revisions, the public `GET /shop/content*` read and
     preview endpoints, the publish hook. Then, in the template: a locked `ShopCommerce.content` loader (read with the publishable
     key, cache, fall back to `content.js` defaults), the design layer reading it instead of `content.js`, the admin core's content

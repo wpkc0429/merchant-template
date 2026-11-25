@@ -59,7 +59,7 @@ node tests/run.mjs                                        # new-merchant / sync-
 node scripts/sync-core.mjs --from <範本 checkout，HEAD 在 annotated vX.Y.Z tag> [--dry-run] [--yes]   # 人類執行，AI 絕不執行；來源只能是 tag
 ```
 
-沒有測試框架、沒有 linter、沒有 build、沒有 `package.json`。店面的驗證方式是在瀏覽器實際操作（含結帳三步驟與送出訂單、搜尋輸入時的游標保留、窄視窗下的版型切換）；`scripts/*.mjs` 與 `tests/*.mjs` 是不依賴任何套件的開發工具，不被部署。
+沒有測試框架、沒有 linter、沒有 build、沒有 `package.json`。內容相關的單元測試在 `tests/content*.test.mjs`；店面的驗證方式是在瀏覽器實際操作（含結帳三步驟與送出訂單、搜尋輸入時的游標保留、窄視窗下的版型切換）；`scripts/*.mjs` 與 `tests/*.mjs` 是不依賴任何套件的開發工具，不被部署。
 
 ## Monorepo：店面 + 後台
 
@@ -85,10 +85,10 @@ catalog/   目錄資料（import-catalog.mjs 的輸入；範本附佔位範例�
 
 規則（由 `scripts/check-layers.mjs` 強制，改完設計檔請跑它）：
 
-- 設計層**只能**透過 `window.ShopCommerce` 使用 `commerce/public-api.json` 列出的函式（`loadCatalog`、`money`、`describeApiError`、`isSkuSellable`、`cart.*`、`checkout.*`），只能讀 `SHOP_CONFIG.showPrices` / `featuredCategory`。不得出現 `fetch`、`localStorage`/`sessionStorage`、`/api/v1`、`apiBase`、`publishableKey`、`_internal`、`shopcommerce:` 開頭的儲存鍵、`import`。
-- 商務層不知道任何畫面：它回傳純資料（`{kind:'created'|'error', …}`），文案與欄位錯誤對應留在設計層。需要新的商務能力是**商務變更**（B），不要從設計層繞過去。
+- 設計層**只能**透過 `window.ShopCommerce` 使用 `commerce/public-api.json` 列出的函式（`loadCatalog`、`money`、`describeApiError`、`isSkuSellable`、`cart.*`、`checkout.*`、`content.*`），只能讀 `SHOP_CONFIG.showPrices` / `featuredCategory`。不得出現 `fetch`、`localStorage`/`sessionStorage`、`/api/v1`、`apiBase`、`publishableKey`、`_internal`、`shopcommerce:` 開頭的儲存鍵、`import`。
+- 商務層不知道任何畫面：它回傳純資料（`{kind:'created'|'error', …}`），文案與欄位錯誤對應留在設計層。需要新的商務能力是**商務變更**（B）；後台的內容編輯（`ctx.data/actions/ui` 的 content 函式、表單建構器、`registerContentSchema` 的人工確認對話框）全在核心，見 `admin/docs/DESIGN-LAYER.md`，不要從設計層繞過去。
 - 購物袋（`shopcommerce:cart:<shop hash>`）依 publishable key 分店存放；載入目錄後 `cart.reconcile()` 丟掉不屬於這個目錄的 SKU 行。購物袋行是快照，庫存為 0 的 SKU 加不進去、`reconcile` 也會移除。
-- 靜態文案（FAQ、門市資訊、品牌故事、promo、`pinfo`）集中在 `content.js`，**不要**把文案散回 `app.js`。標題欄位（`hero.title`、`storyTeaser.title`、`story.title`）是**純文字**，換行 `\n` 由 `app.js` 的 `lines()` 轉成 `<br>`（先 `esc()`，不收 HTML）。`public/content.schema.json` 是同一份內容的欄位 schema（`content.js` 的預設值要和 schema 的 `default` 一致，範本的測試會檢查）；店面**目前仍只讀 `content.js`**，平台的公開 `/shop/content` 端點還沒建，不要在設計層加任何內容抓取。商品／價格／圖片／副標／分類／精選一律來自 API，不要寫死在任何一層。
+- 靜態文案（FAQ、門市資訊、品牌故事、promo、`pinfo`）集中在 `content.js`，**不要**把文案散回 `app.js`。標題欄位（`hero.title`、`storyTeaser.title`、`story.title`）是**純文字**，換行 `\n` 由 `app.js` 的 `lines()` 轉成 `<br>`（先 `esc()`，不收 HTML）。`public/content.schema.json` 是同一份內容的欄位 schema（`content.js` 的預設值要和 schema 的 `default` 一致，範本的測試會檢查）；**自 v0.3.0 起店面讀平台內容**：鎖定核心 `ShopCommerce.content`（`public/commerce/content.js`）在執行期抓 `GET /shop/content?include=content`（ETag、快取、失敗退回預設、`?content_preview=<token>` 預覽模式），設計層在 `app.js` 的 `applyPlatformContent()` 把已發佈文件覆蓋在 `content.js` 的預設值上（首繪最多等 600 ms；沒發佈或失敗＝用預設，不是錯誤）。**設計層仍不得自己 `fetch`**；內容值只能經 `esc()` 當文字，或經核心的 `ShopCommerce.content.text/richText/link/image`（richtext 用核心依平台 allowlist 建的消毒器、link 只進 href 並檢查 scheme、image 只進 src 且限已知圖片網域），**不得 `innerHTML`**。`content.schema.json` 註冊仍只由人做。商品／價格／圖片／副標／分類／精選一律來自 API，不要寫死在任何一層。
 - **`config.js` 的注入**：範本裡是佔位值（`isTemplate: true` 時 `check-layers` 強制）；商家 repo 裡是真實值，只靠雜湊清單保護（`isTemplate: false`，佔位值殘留只是警告）。它對 AI 鎖定、對核心同步（`sync-core`）也是商家自有、不覆寫。
 
 ## 架構約束
