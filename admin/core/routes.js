@@ -23,6 +23,11 @@ export const ROUTES = [
   { id: "categories", pattern: "/categories", perm: ["category.view"], nav: "categories" },
   { id: "categoryOrder", pattern: "/categories/:id/order", perm: ["category.view"], nav: "categories" },
   { id: "shipping", pattern: "/shipping-methods", perm: ["shipping_method.view"], nav: "shipping" },
+  // Content documents (platform content store). "/content-schema" is a distinct path on purpose: "schema" is a valid document key.
+  { id: "content", pattern: "/content", perm: ["content.view"], nav: "content" },
+  { id: "contentSchema", pattern: "/content-schema", perm: ["content.manage"], nav: "content" },
+  { id: "contentRevisions", pattern: "/content/:key/revisions", perm: ["content.view"], nav: "content" },
+  { id: "contentDocument", pattern: "/content/:key", perm: ["content.view"], nav: "content" },
 ];
 
 // Navigation destinations. `perm` decides who SEES the item; the design layer can reorder, restyle or
@@ -36,5 +41,6 @@ export const NAV = [
   { key: "shipping", icon: "shippingMethods", href: "#/shipping-methods", perm: ["shipping_method.view"] },
   { key: "members", icon: "members", href: "#/members", perm: ["member.view"] },
   { key: "reports", icon: "reports", href: "#/reports", perm: ["report.view"] },
+  { key: "content", icon: "content", href: "#/content", perm: ["content.view"] },
   { key: "team", icon: "team", href: "#/team", perm: ["user.manage_members"] },
 ];

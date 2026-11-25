@@ -4,7 +4,8 @@
 #   docker build -f deploy/Dockerfile -t merchant-admin .        (run from admin/)
 #   docker run --rm -p 127.0.0.1:3001:80 \
 #     -e ADMIN_IMG_ORIGIN=https://img.example.com \
-#     -e ADMIN_UPLOAD_ORIGIN=https://<account-id>.r2.cloudflarestorage.com merchant-admin
+#     -e ADMIN_UPLOAD_ORIGIN=https://<account-id>.r2.cloudflarestorage.com \
+#     -e ADMIN_SITE_ORIGIN=https://www.example.com merchant-admin
 #
 # The CSP in deploy/nginx.conf.template is ON BY DEFAULT and REQUIRED, NOT OPTIONAL (decided 2026-11-25): there is no switch to turn it
 # off, and this image must not be changed to drop it (scripts/check-design.mjs checks both files). The same policy must be served by any
@@ -24,5 +25,6 @@ COPY vendor/ /usr/share/nginx/html/vendor/
 RUN printf '%s\n' '#!/bin/sh' \
   ': "${ADMIN_IMG_ORIGIN:?set ADMIN_IMG_ORIGIN (image public origin)}"' \
   ': "${ADMIN_UPLOAD_ORIGIN:?set ADMIN_UPLOAD_ORIGIN (R2/S3 direct-upload origin)}"' \
+  ': "${ADMIN_SITE_ORIGIN:?set ADMIN_SITE_ORIGIN (storefront origin: content preview and content.schema.json)}"' \
   > /docker-entrypoint.d/05-require-origins.sh && chmod +x /docker-entrypoint.d/05-require-origins.sh
 EXPOSE 80

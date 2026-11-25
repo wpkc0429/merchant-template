@@ -186,7 +186,9 @@ core re-checks) · `ctx.navigate(path, {replace})` (only `/...` routes) · `ctx.
 showFormError` · `input textarea select(options, value, attrs) toggle(label, checked, {onChange, hint, ariaLabel})` ·
 `badge loading emptyState errorState pageHeader card dataTable({columns, rows, onRowClick, rowAttrs, empty}) pager
 segmented copyText icon(name, size)`. Icon names: `home orders shipments products categories shippingMethods members
-reports team more logout back up down left right plus close image`.
+reports team more logout back up down left right plus close image content`.
+
+**Content form builder (core-owned, since v0.3.0).** `contentForm(schemaNode, value, {layout, readOnly})` returns `{el, read(), validate(), setErrors(fields), focusFirstError()}`; `contentField(schemaNode, pointer, value, {readOnly})` returns `{el, pointer, read(), validate(), setErrors(fields)}` for one field (`value` is the whole content, the field reads its own part). The control for each field comes from the schema's `x-editor` (`text textarea richtext image link color select list sections`); **validation is locked in the core** (required, length, pattern, enum, link scheme, image domain, number range, array limits, block types) and runs again before every save. You control LAYOUT only: `layout` is `[{title?, description?, fields: ["/hero", "/hero/title", ...]}]` (JSON Pointers into the content; array items are not addressable). A **required** field your layout leaves out is appended by the core in an extra group, so a layout can never make a required field unreachable; optional fields you omit keep their stored value. `validate()` returns `{ok, errors}` and shows the errors on the fields; `setErrors({pointer: message})` shows a 422 (`e.fields` of the action error); it returns the messages that found no field. Image fields upload through the core (permission, HEIC conversion, size limits); labels and help text come from the platform schema as plain text.
 
 ### `ctx.format`
 `money(n)` (TWD whole dollars, never scaled) · `number` · `range(min,max)` · `date` · `dateTime` (Asia/Taipei) ·
@@ -208,6 +210,9 @@ reports team more logout back up down left right plus close image`.
 | `salesReport({from,to,groupBy})`, `productReport({from,to,limit})` | `report.view` (range rules enforced) |
 | `listTeam()`, `listRoles()`, `listInvitations()` | `user.manage_members` |
 | `media()` (`{enabled, maxImages, maxBytes}`) | none (read-only facts) |
+| `getContentSchema()` (`{version, format, schema}` or `null` when none is registered), `listContentSchemaVersions()`, `listContentDocuments()` (`[{key, type, title, status, isPublished, needsAttention, declared, rev, updatedAt, publishedAt}]`), `getContentDocument(key)` (adds `draft` (hydrated), `published` (content or null), `schemaNode`, `typeTitle`, `meta`), `listContentRevisions(key)`, `getContentRevision(key, rev)` | `content.view` |
+| `dryRunContentSchema()` (**read-only**: reads the storefront's `content.schema.json` and returns the platform's report `{version, wouldRegisterVersion, changed, report, lines, hasRemovals}`; it can only ever send `?dry_run=true`) | `content.manage` |
+| `contentSite()` (`{previewEnabled}`) | none (read-only fact) |
 
 ### `ctx.logic` (pure helpers that mirror state rules, for deciding what to *offer*)
 `summarizeSkus skuForSize flattenTree remainingQty hasUnshipped canCancelOrder shipBlocker(order, shipments) -> "" |
@@ -229,6 +234,12 @@ ORDERS_PAGE_SIZE MEMBERS_PAGE_SIZE`.
 | `createShipment(orderId, {carrier, tracking, quantities})` | state rule (`shipBlocker`) + quantities checked against a fresh read; `shipment.create` |
 | `advanceShipment(orderId, shipmentId, "delivered"\|"returned")` | confirm; `shipment.update` (+ `shipment.return`) |
 | `inviteMember({email, roleId})`, `revokeInvitation(id)` (confirm), `setMemberActive(userId, active)` (confirm) | `user.manage_members`; assignable roles only; owner/self protected |
+| `saveContentDocument(key, values, {rev, create, typeKey, meta})` | `values` = `contentForm().read()`. Validates with the schema from the platform, sends `If-Match: "<rev>"` (create: `If-None-Match: *`), returns `{ok, doc}` where `doc` is **what the server stored** (rebuild the form from `doc.draft`: rich text is rewritten). Errors: `kind "stale"` (412, someone else saved first: offer a reload), `kind "invalid"` with `e.fields` (client or 422 pointers), `kind "internal"` (428, a programming error). `content.edit` |
+| `publishContentDocument(key, {rev})`, `unpublishContentDocument(key)`, `deleteContentDocument(key)` | confirm (fixed warning); a document that `needsAttention` cannot be published; `content.publish` |
+| `restoreContentRevision(key, rev, {rev})` | confirm; returns `{ok, restoredToDraft: true, restoredValid, doc}`: **only the draft changes, nothing is published** (say "restored to draft, not published yet"); `content.edit` |
+| `uploadContentImage(file, {onStage, onProgress})` | `content.edit`; normally used by the form builder itself |
+| `previewContentDocument(key)` | opens `{site}/?content_preview=<token>` in a new tab (needs the host to configure the site origin; check `data.contentSite().previewEnabled`); `content.view` |
+| `registerContentSchema()` | **Takes no arguments.** Reads the storefront's `content.schema.json`, dry-runs it, and ALWAYS shows the core's confirmation dialog (report + fixed warning); a platform 409 about removed values needs a second explicit confirmation. Nothing you pass can skip it (and AI sessions and automation never register: decisions D6). `content.manage` (store owner) |
 
 ### `ctx.auth`
 `login(email, password)` (enters the app on success; throws → `auth.loginMessage(err)`) · `logout()` · `minPassword` ·
@@ -250,6 +261,10 @@ ORDERS_PAGE_SIZE MEMBERS_PAGE_SIZE`.
 | `products` `productNew` `productEdit` | `/products` `/products/new` `/products/:id` | `product.view` / `product.create` | `products.js` `product-edit.js` |
 | `categories` `categoryOrder` | `/categories` `/categories/:id/order` | `category.view` | `categories.js` `category-order.js` |
 | `shipping` | `/shipping-methods` | `shipping_method.view` | `shipping.js` |
+| `content` `contentDocument` `contentRevisions` | `/content` `/content/:key` `/content/:key/revisions` | `content.view` | `content.js` `content-document.js` `content-revisions.js` |
+| `contentSchema` | `/content-schema` (distinct from `/content/:key`: `schema` is a valid document key) | `content.manage` | `content-schema.js` |
+
+The navigation entry `content` (icon `content`) is listed only for roles with `content.view` (owner and editor; staff see nothing); the schema screen is reached from the list for `content.manage` holders.
 
 ## 6. What you must never do
 
@@ -267,6 +282,8 @@ ORDERS_PAGE_SIZE MEMBERS_PAGE_SIZE`.
 * Use a `ctx` name that is not in `lib/public-api.json`.
 * Remove a confirmation's meaning, hide dialogs or confirmation buttons with CSS, or build a fake confirmation.
 * Try to show data the person may not see: `ctx.data.*` refuses it in the core, and an empty widget is the correct result.
+* Register a content schema, or build your own path to it: `ctx.actions.registerContentSchema()` takes no arguments and always opens the core's confirmation (report + fixed warning). An AI session only edits `public/content.schema.json` (storefront design layer) and never registers; do not hide or restyle the report (`.dlg__detail`) or the warning.
+* Drop a required content field from a screen on the assumption that it will not be sent: the form builder appends it, and the core validates the whole content before every save.
 * Edit `design-defaults/` (the pristine fallback), `lib/public-api.json`, `scripts/core.manifest.json`, or this file.
 
 ## 7. Previewing locally
@@ -352,6 +369,16 @@ Order detail actions keep working unchanged (`ctx.actions.cancelOrder` shows the
 ### "Reorder the product form sections"
 In `design/views/product-edit.js` change `const formEl = h("div", { class: "form-body" }, basics, sizeCard, catCard);` to
 `sizeCard, basics, catCard`. Everything else (validation, SKU safety, stale-save refusal) is the core's.
+
+### "Lay out a content screen" (the form builder)
+In `design/views/content-document.js` replace `ctx.ui.contentForm(doc.schemaNode, doc.draft, { readOnly: !editable })` with a layout:
+```js
+form = ctx.ui.contentForm(doc.schemaNode, doc.draft, { readOnly: !editable, layout: [
+  { title: t("content.group.hero"), fields: ["/hero"] },      // add the key content.group.hero to BOTH copy files first
+  { fields: ["/storyTeaser/title", "/storyTeaser/lede"] },
+] });
+```
+Fields your layout does not list are appended by the core when they are required; the screen still saves with `actions.saveContentDocument(key, form.read(), {rev: doc.rev})`, shows server field errors with `form.setErrors(e.fields)`, and on `e.kind === "stale"` offers a reload. Never register or publish from your own code path: those actions open the core's confirmation.
 
 ### "Add a dashboard widget" (built from existing data functions)
 In `design/views/home.js`, inside the `jobs` list:

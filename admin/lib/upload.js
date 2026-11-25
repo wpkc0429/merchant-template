@@ -135,3 +135,20 @@ export async function uploadProductImage(shopID, productID, file, { alt = "", on
   onStage?.("saving");
   return api("POST", `/admin/shops/${shopID}/products/${productID}/images`, { upload_id: intent.upload_id, alt });
 }
+
+/**
+ * Content-image upload (CMS `x-editor: image` fields): the same prepare -> presign -> PUT pipeline as product
+ * images with purpose "content_image", then POST media/content-images which converts it (WebP, EXIF removed)
+ * and returns {urls: {thumb, large}, width, height}. The field value is `urls.large`. Returns that object.
+ */
+export async function uploadContentImage(shopID, file, { onStage, onProgress } = {}) {
+  onStage?.("converting");
+  const { blob, type } = await prepareImage(file);
+  onStage?.("uploading");
+  const intent = await api("POST", `/admin/shops/${shopID}/media/uploads`, {
+    content_type: type, size_bytes: blob.size, purpose: "content_image",
+  });
+  await putWithProgress(intent.upload_url, intent.headers, blob, onProgress);
+  onStage?.("saving");
+  return api("POST", `/admin/shops/${shopID}/media/content-images`, { upload_id: intent.upload_id });
+}

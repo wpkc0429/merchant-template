@@ -31,6 +31,15 @@ createServer(async (req, res) => {
     req.pipe(up);
     return;
   }
+  // Dev stand-in for the production proxy (deploy/nginx.conf.template): the storefront's schema file, same-origin.
+  if (url.pathname === "/content.schema.json") {
+    try {
+      const body = await readFile(join(root, "..", "public", "content.schema.json"));
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(body);
+    } catch { res.writeHead(404); res.end("not found"); }
+    return;
+  }
   let path = normalize(decodeURIComponent(url.pathname));
   if (path === "/" || path === "\\") path = "/index.html";
   path = path.replace(/\\/g, "/");

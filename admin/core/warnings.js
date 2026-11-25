@@ -18,6 +18,12 @@ const W = {
   deleteCategory: "刪除後無法復原。",
   disableMember: "{email} 會立刻無法使用本店後台（他下一個動作就會被登出）。之後可以再啟用。",
   revokeInvite: "撤回後，寄給 {email} 的邀請連結會立刻失效。",
+  publishContent: "發佈後，這份內容會出現在公開的店面上（瀏覽器快取最多再延遲約 1 分鐘）。",
+  unpublishContent: "下架後，店面這一塊會改回預設文案；草稿與版本歷史仍會保留。",
+  deleteContent: "這份內容與它的版本歷史會被永久刪除，無法復原。",
+  restoreContent: "只會把這個版本放回草稿，不會發佈；目前的草稿內容會被取代。",
+  registerContentSchema: "內容結構會改成這份檔案的版本，之後所有內容文件都依它驗證。這是店主的操作，不能由 AI 或自動化代為進行。",
+  registerContentSchemaRemovals: "這份檔案會讓上面列出的欄位值不再顯示，或讓文件失去類型。值會留在版本快照裡，但店面不會再讀到它們。確認後才會送出。",
 };
 export const FIXED_WARNINGS = Object.freeze(W);
 

@@ -112,4 +112,26 @@ export default function view(root, ctx) {
   { name: "css hides the warning by test id", kind: "css", expect: "css/hides-dialog", src: `[data-testid="confirm-warning"] { font-size: 0; }` },
   { name: "css styles the fixed warning (allowed)", kind: "css", expect: null, src: `.dlg__warning { color: #b00020; font-weight: 600; }` },
   { name: "css disables dialogs", kind: "css", expect: "css/hides-dialog", src: `dialog { pointer-events: none; }` },
+
+  // ── content store (platform content documents): what a design may call, and what a hostile one cannot ──
+  { name: "valid content screen", kind: "code", expect: null, src: `export default async function view(root, ctx) {
+  const { h, button, toast } = ctx.ui;
+  const doc = await ctx.data.getContentDocument(ctx.route.params.key);
+  const form = ctx.ui.contentForm(doc.schemaNode, doc.draft, { readOnly: !ctx.can("content.edit") });
+  const field = ctx.ui.contentField(doc.schemaNode, "/title", doc.draft);
+  const dry = ctx.data.dryRunContentSchema;
+  root.append(form.el, field.el, button("x", { onClick: async () => {
+    try { const r = await ctx.actions.saveContentDocument(doc.key, form.read(), { rev: doc.rev }); form.setErrors({}); return r.doc; } catch (e) { form.setErrors(e.fields || {}); toast(ctx.errorMessage(e), "error"); }
+  } }), button("y", { onClick: () => ctx.actions.registerContentSchema() }));
+  return dry;
+}` },
+  { name: "a content function that does not exist (direct registration)", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.actions.putContentSchema({ confirm: true });`) },
+  { name: "a content function that does not exist (skip the dialog)", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.actions.registerContentSchemaNow();`) },
+  { name: "a data function that writes the schema", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.data.registerContentSchema();`) },
+  { name: "reading the schema file source from the design", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.data.readContentSchemaFile();`) },
+  { name: "unpublishing by raw publish endpoint", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.actions.publishDocumentRaw("home");`) },
+  { name: "content form builder internals", kind: "code", expect: "js/ctx-unknown", src: view(`ctx.ui.contentFormUnchecked({}, {});`) },
+  { name: "reaching the admin config (site origin) from a view", kind: "code", expect: "js/forbidden-identifier", src: view(`const o = window.ADMIN_CONFIG.siteOrigin;`) },
+  { name: "posting the content to another site", kind: "code", expect: "js/forbidden-identifier", src: view(`const f = ctx.ui.contentForm({}, {}); fetch("/x", { body: JSON.stringify(f.read()) });`) },
+  { name: "css hides the registration report", kind: "css", expect: "css/hides-dialog", src: `.dlg__detail { display: none; }` },
 ];

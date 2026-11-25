@@ -4,7 +4,7 @@ import { t } from "../lib/design.js";
 
 export class ActionError extends Error {
   /**
-   * kind: "permission" | "state" | "invalid" | "limit"
+   * kind: "permission" | "state" | "invalid" | "limit" | "stale" (412: someone else saved first, reload) | "internal" (428 and other programming errors)
    * fields: {pointer: message} for form errors; reason: a short machine code ("cancelled", "returned", ...).
    */
   constructor(kind, message, { fields, reason, status } = {}) {
@@ -14,7 +14,7 @@ export class ActionError extends Error {
     this.kind = kind;
     this.fields = fields || null;
     this.reason = reason || "";
-    this.status = status ?? ({ permission: 403, state: 409, invalid: 422, limit: 409 }[kind] || 400);
+    this.status = status ?? ({ permission: 403, state: 409, invalid: 422, limit: 409, stale: 412, internal: 500 }[kind] || 400);
   }
 }
 

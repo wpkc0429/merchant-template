@@ -11,6 +11,8 @@ import { icon } from "../ui/icons.js";
 import * as fmt from "../ui/format.js";
 import { data, logic, enums } from "./data.js";
 import { actions } from "./actions.js";
+import { contentForm, contentField } from "../ui/content-form.js";
+import { mediaConfig } from "../lib/upload.js";
 
 const UI = {
   h: kit.h, svg: kit.svg, append: kit.append, clear: kit.clear, $: kit.$, $$: kit.$$,
@@ -20,6 +22,17 @@ const UI = {
   badge: kit.badge, loading: kit.loading, emptyState: kit.emptyState, errorState: kit.errorState, pageHeader: kit.pageHeader,
   card: kit.card, dataTable: kit.dataTable, pager: kit.pager, segmented: kit.segmented, copyText: kit.copyText, icon,
 };
+
+// The content form builder, with the core's hooks bound: image uploads go through the core action (permission, media limits,
+// HEIC conversion), and the image domain comes from the platform's media config. The design layer passes only layout/readOnly.
+const contentOpts = (opts = {}) => ({
+  layout: Array.isArray(opts.layout) ? opts.layout : undefined,
+  readOnly: Boolean(opts.readOnly),
+  imagePrefix: mediaConfig().public_base_url || "",
+  upload: (file, hooks) => actions.uploadContentImage(file, hooks),
+});
+UI.contentForm = (schemaNode, value, opts) => contentForm(schemaNode, value, contentOpts(opts));
+UI.contentField = (schemaNode, pointer, value, opts) => contentField(schemaNode, pointer, value, contentOpts(opts));
 
 const FORMAT = {
   money: fmt.formatMoney, number: fmt.formatNumber, range: fmt.formatRange, date: fmt.formatDate, dateTime: fmt.formatDateTime,

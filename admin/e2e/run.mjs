@@ -1204,6 +1204,9 @@ for (const [name, path, sel] of [["home", "/", ".tiles"], ["products", "/product
 }
 await desk.context().close();
 
+// Content screens (schema registration through the confirmation dialog, editing, 412, revisions, gating): e2e/content.mjs.
+await import("./content.mjs");
+
 // Design layer: temporary copies of the design files, restored afterwards (e2e/design.mjs).
 await import("./design.mjs");
 

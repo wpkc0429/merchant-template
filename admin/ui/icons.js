@@ -19,6 +19,7 @@ const PATHS = {
   plus: "M12 5v14M5 12h14",
   close: "M6 6l12 12M18 6L6 18",
   image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M9 9h.01",
+  content: "M6 3h9l4 4v14H6zM14 3v5h5M9 12h6M9 16h6",
 };
 
 export function icon(name, size = 22) {

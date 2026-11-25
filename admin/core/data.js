@@ -13,6 +13,8 @@ import { mediaEnabled, maxImages, maxBytes } from "../lib/upload.js";
 import { t } from "../lib/design.js";
 import { need } from "./guard.js";
 import { invalid } from "./errors.js";
+import * as contentLib from "../lib/content.js";
+import { dryRunContentSchema, reads as contentReads } from "./content-actions.js";
 
 const S = () => session.shopID;
 const q = (perms, fn) => async (...args) => { need(...perms); return fn(S(), ...args); };
@@ -47,6 +49,15 @@ export const data = {
   listTeam: q(["user.manage_members"], (s) => team.listTeam(s)),
   listRoles: q(["user.manage_members"], (s) => team.listRoles(s)),
   listInvitations: q(["user.manage_members"], (s) => team.listInvitations(s)),
+  // content documents (platform content store). Reads need content.view; the schema dry run needs content.manage and never writes.
+  getContentSchema: async () => { need("content.view"); return contentReads.schema(); },
+  listContentSchemaVersions: async () => { need("content.view"); return contentReads.schemaVersions(); },
+  listContentDocuments: async () => { need("content.view"); return contentReads.documents(); },
+  getContentDocument: async (key) => { need("content.view"); return contentReads.document(key); },
+  listContentRevisions: async (key) => { need("content.view"); return contentReads.revisions(key); },
+  getContentRevision: async (key, rev) => { need("content.view"); return contentReads.revision(key, rev); },
+  dryRunContentSchema: async () => dryRunContentSchema(),
+  contentSite: () => ({ previewEnabled: Boolean(contentLib.siteOrigin()) }),
   // media limits (read-only facts)
   media: () => ({ enabled: mediaEnabled(), maxImages: maxImages(), maxBytes: maxBytes() }),
 };

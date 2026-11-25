@@ -9,12 +9,13 @@ export const ROUTE_IDS = [
   "shell", "login", "setPassword", "acceptInvite", "notFound", "noPermission", "bootError",
   "home", "orders", "orderDetail", "deliveries", "members", "tiers", "memberDetail", "reports", "team",
   "products", "productNew", "productEdit", "categories", "categoryOrder", "shipping",
+  "content", "contentDocument", "contentRevisions", "contentSchema",
 ];
 
 /** Icon names the core can draw (ui/icons.js keeps this list in sync; the guard test checks it). */
 export const ICON_NAMES = [
   "home", "orders", "shipments", "products", "categories", "shippingMethods", "members", "reports", "team",
-  "more", "logout", "back", "up", "down", "left", "right", "plus", "close", "image",
+  "more", "logout", "back", "up", "down", "left", "right", "plus", "close", "image", "content",
 ];
 
 export const LIMITS = {
@@ -40,7 +41,8 @@ export const placeholdersOf = (s) => [...String(s).matchAll(PLACEHOLDER_RE)].map
  * (core/warnings.js): it has no copy key, so copy.js can only supply the title, the lead-in `text` and the button labels.
  * Single source of truth: core/warnings.js imports this list.
  */
-export const WARNED_CONFIRM_IDS = ["cancelOrder", "shipDelivered", "shipReturned", "deleteProduct", "deleteImage", "deleteCategory", "disableMember", "revokeInvite"];
+export const WARNED_CONFIRM_IDS = ["cancelOrder", "shipDelivered", "shipReturned", "deleteProduct", "deleteImage", "deleteCategory", "disableMember", "revokeInvite",
+  "publishContent", "unpublishContent", "deleteContent", "restoreContent", "registerContentSchema", "registerContentSchemaRemovals"];
 
 const CONFIRM_KEY_RE = /^confirm\.([A-Za-z0-9]+)\.(.+)$/;
 const FIXED_WARNING_MSG = "the warning of an irreversible confirmation is FIXED by the core (core/warnings.js) and cannot be defined, reworded or removed in copy; edit only title, text and the button labels";

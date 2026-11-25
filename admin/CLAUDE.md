@@ -52,6 +52,15 @@ node e2e/parity.mjs capture <dir> | compare <a> <b>      # 390／1280 逐頁截�
 - 錯誤中文化：`ctx.errorMessage(err, {409: "…"})` 讓各動作覆寫通用訊息；核心拒絕（權限／狀態／驗證）是 `ActionError`（`isActionError`、`kind`、`fields`），訊息已本地化。
 - 首頁數字：低庫存門檻是常數 `LOW_STOCK_THRESHOLD`（`lib/dashboard.js`）；店員看不到庫存（沒有 `product.view`）。
 
+## 內容文件（平台內容儲存，v0.3.0）
+
+- 核心：`lib/content.js`（API、ETag／`If-Match`／`If-None-Match`、錯誤分類）、`lib/content-schema.js`（schema 走訪與**鎖定的驗證**，純邏輯）、`core/content-actions.js`（動作與 dry run；權限在每個函式內）、`ui/content-form.js`（schema 驅動表單建構器，`ctx.ui.contentForm`／`contentField`）。畫面在 `design/views/content*.js`（與 `design-defaults/` 同步）。
+- **儲存一律帶前置條件**：更新 `If-Match: "<draft_rev>"`、建立 `If-None-Match: *`。412 → `ActionError` `kind "stale"`（請重新載入）；428 → `kind "internal"`（程式錯誤，不給使用者看）；422 → `kind "invalid"` 與 `e.fields`（JSON Pointer → 訊息）。儲存後以**回應**重建表單（rich text 會被伺服器改寫）。
+- **註冊 schema 是人類動作**：`ctx.actions.registerContentSchema()` **不收任何參數**，永遠先 dry run、再顯示核心的確認對話框（報告 ＋ 固定警告；平台要求確認移除時還有第二次確認）；`ctx.data.dryRunContentSchema()` 只能送 `?dry_run=true`。AI／CI／腳本不得註冊（`../docs/DECISIONS.md` D6）。schema 來自同源的 `/content.schema.json`（`ADMIN_CONFIG.contentSchemaUrl`，預設即此；正式環境由 nginx 以 `ADMIN_SITE_ORIGIN` 從店面代讀，開發伺服器讀 `../public/`）。預覽分頁用 `ADMIN_CONFIG.siteOrigin`（正式環境由 `/site-config.js` 提供）。
+- **還原只放回草稿**，畫面要說「已放回草稿，尚未發佈」；發佈／下架／刪除／還原／註冊都有固定警告（`core/warnings.js`）。
+- 權限：`content.view`（清單、文件、版本）、`content.edit`（儲存、還原、上傳）、`content.publish`（發佈、下架、刪除）、`content.manage`（schema 畫面與註冊）。路由 `/content-schema` 刻意不放在 `/content/:key` 底下（`schema` 是合法的文件 key）。
+- 離線測試：`node scripts/test-content.mjs`（也由 `test-guard.mjs` 執行）；瀏覽器：`e2e/content.mjs`。
+
 ## 測試注意
 
 - 訪客結帳也有限流（`RATE_LIMIT_GUEST_CHECKOUT_*`），拋棄式 API 要調高；webhook 簽章用 `E2E_MOCK_WEBHOOK_SECRET`。

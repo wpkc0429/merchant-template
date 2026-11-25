@@ -26,4 +26,8 @@ export default {
   categories: "views/categories.js",
   categoryOrder: "views/category-order.js",
   shipping: "views/shipping.js",
+  content: "views/content.js",
+  contentDocument: "views/content-document.js",
+  contentRevisions: "views/content-revisions.js",
+  contentSchema: "views/content-schema.js",
 };

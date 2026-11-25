@@ -47,6 +47,11 @@ for (const [label, w, h] of [["desktop", 1280, 860], ["phone", 390, 844]]) {
   await shot(page, `${label}-4-orders`);
   const o = await overflow(page);
   check(`orders list: no horizontal overflow at ${w}px`, o <= 0, String(o));
+  await page.goto(SITE + "/#/content");
+  await page.locator('[data-testid="content-list"]').waitFor();
+  await shot(page, `${label}-5-content`);
+  const oc = await overflow(page);
+  check(`content list: no horizontal overflow at ${w}px`, oc <= 0, String(oc));
   check(`no console errors (${label})`, page.errors.length === 0, page.errors.join(" | "));
   await page.context().close();
 }
@@ -55,6 +60,7 @@ section("staff: no products entry");
 {
   const page = await session(1280, 860, STAFF);
   check("staff has no products nav", (await T(page, "nav-products").count()) === 0);
+  check("staff has no content nav (content.view is not granted)", (await T(page, "nav-content").count()) === 0);
   await page.context().close();
 }
 

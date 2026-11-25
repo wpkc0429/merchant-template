@@ -224,5 +224,11 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
+// ── 6. content-store core (offline unit tests: request headers, 412/428/422, permission gating, dry-run-only, registration needs the human) ──
+{
+  const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-content.mjs")], { encoding: "utf8" });
+  ok("scripts/test-content.mjs passes (content core)", r.status === 0, r.stdout + r.stderr);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

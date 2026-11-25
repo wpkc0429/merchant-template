@@ -144,10 +144,17 @@ export async function restoreSession() {
 }
 
 // ── Authenticated JSON call ────────────────────────────────────────────
-export async function api(method, path, body) {
+export async function api(method, path, body) { return (await apiRaw(method, path, body)).data; }
+
+/**
+ * Same call as api() but also returns the response headers and status: {data, headers, status}. `extraHeaders`
+ * are added to the request (If-Match / If-None-Match for the content documents). Callers that need the
+ * ETag of a response use this; everything else uses api().
+ */
+export async function apiRaw(method, path, body, extraHeaders) {
   const doFetch = () => accessAwareFetch(url(path), {
     method,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.access}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.access}`, ...(extraHeaders || {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let res = await doFetch();
@@ -190,7 +197,7 @@ export async function api(method, path, body) {
   }
   const data = await readBody(res);
   if (!res.ok) throw new ApiError(res.status, data, res.headers);
-  return data;
+  return { data, headers: res.headers, status: res.status };
 }
 
 /** Unauthenticated JSON call (password-setup, invitations, branding). */

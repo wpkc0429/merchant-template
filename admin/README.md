@@ -116,6 +116,8 @@ echo 'window.ADMIN_CONFIG.apiBase = location.origin;' > config.local.js
 
 收尾：停掉程序、`DROP DATABASE merchant_template_dev`、`FLUSHDB`（DB 1）、只清空 MinIO `ecommerce-media-e2e` 桶。**不要** `docker compose down -v`。
 
+內容畫面（`e2e/content.mjs`，由 `run.mjs` 在設計層之前執行，也可單獨跑 `node e2e/content.mjs`；需要 `config.local.js` 的 `siteOrigin`，`serve.mjs` 會把 `../public/content.schema.json` 以同源的 `/content.schema.json` 提供）：用確認對話框註冊範本的內容 schema（先 dry run、取消不註冊、固定警告）、編輯與前端驗證、儲存（以伺服器回應重建表單）、發佈（公開 `/shop/content` 立即回新內容）、清單項目新增／排序／刪除、兩個分頁同時儲存的 412 提示與重新載入、版本歷史與還原（只放回草稿、公開內容不變）、預覽分頁、editor（可編輯、無發佈／刪除／schema）與 staff（無入口、進不去）的權限，以及 390／1280 的版面與溢出檢查。
+
 另外有：`node e2e/parity.mjs capture <dir>`（390px 與 1280px 逐頁截圖，新舊各跑一次再 `compare`，確認畫面逐像素一致）、`node scripts/test-guard.mjs`（守門員測試）。**要用 http://localhost:3001 開**（MinIO 的 CORS 只登記這個 origin，圖片直傳才會成功）；全新資料庫的第一次執行，套件會自己先建一筆已付款訂單。
 
 套件涵蓋（Phase A）：登入／登出／錯誤密碼／鎖定、cookie 與 body 兩種 refresh、設定密碼與邀請連結、店員看不到商品、商品完整生命週期（含真實 HEIC 樣本、上限、重排、本季新品、下架、過期表單保護、英文副標搜尋）、分類與排序、運送方式。
@@ -139,6 +141,8 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
 - `deploy/nginx.conf.template`：靜態檔 + **必要的**嚴格 CSP + 安全標頭，網域由環境變數帶入；
 - `deploy/Dockerfile`：只複製要發布的檔案（從 `admin/` 目錄建置：`docker build -f deploy/Dockerfile -t merchant-admin .`）；
 - `deploy/cloudflared-ingress.example.yml`：tunnel ingress 範例（手動合併進你的 tunnel 設定）。
+
+`deploy/nginx.conf.template` 另需要環境變數 `ADMIN_SITE_ORIGIN`（店面的 origin）：用於內容的「預覽」按鈕（以 `/site-config.js` 提供給頁面）與 `/content.schema.json`（nginx 從店面讀取後以同源提供，後台才能 dry run／註冊內容結構，CSP 的 `connect-src` 仍只有 `'self'`）。
 
 依平台的 `docs/deploy/admin-exposure-runbook.md`（本專案不修改 tunnel／Cloudflare 設定，以下由你手動套用）：
 

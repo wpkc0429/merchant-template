@@ -50,3 +50,18 @@ export async function apiLogin({ email, password }) {
   if (r.status !== 200) throw new Error(`login failed for ${email}: ${r.status}`);
   return r.json.access_token;
 }
+
+/** An EDITOR member of shop 1 (content.view + content.edit, no publish): invited by the owner through the API and accepted. */
+export async function ensureEditor(ownerToken, tag) {
+  const email = `content-editor-${tag}@example.com`;
+  const password = "e2e-editor-pass-12";
+  const roles = (await req("GET", "/admin/shops/1/roles", { token: ownerToken })).json.roles;
+  const role = roles.find((r) => r.name === "editor");
+  if (!role) throw new Error("no editor role in the demo shop");
+  const inv = await req("POST", "/admin/shops/1/invitations", { token: ownerToken, body: { email, role_id: role.id } });
+  const token = /accept-invite\/([^/?#]+)/.exec(inv.json?.invite_url || "")?.[1];
+  if (inv.status !== 201 || !token) throw new Error(`editor invitation failed: ${inv.status}`);
+  const acc = await req("POST", "/admin/auth/invitations/accept", { body: { token, password } });
+  if (acc.status >= 300) throw new Error(`editor invitation accept failed: ${acc.status}`);
+  return { email, password };
+}

@@ -13,6 +13,7 @@ import { confirmDialog } from "../ui/kit.js";
 import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
 import { need } from "./guard.js";
+import { createContentActions } from "./content-actions.js";
 import { ActionError, invalid, blocked } from "./errors.js";
 
 const S = () => session.shopID;
@@ -21,13 +22,14 @@ const CANCELLED = Object.freeze({ cancelled: true });
 // irreversible actions (core/warnings.js; not a copy key, so a design cannot weaken or remove it). `key` is
 // "confirm.<id>"; an id in WARNED_CONFIRMS always renders its fixed warning, any other id is a plain confirm
 // whose message is the copy key `.message`.
-const ask = (key, params, { danger = true, cancelKey, textKey } = {}) => {
+const ask = (key, params, { danger = true, cancelKey, textKey, detail = "" } = {}) => {
   const id = key.split(".")[1];
   const warned = WARNED_CONFIRMS.includes(id);
   return confirmDialog({
     title: t(`${key}.title`, params),
     message: t(warned ? (textKey || `${key}.text`) : `${key}.message`, params),
     ...(warned ? { warning: fixedWarning(id, params) } : {}),
+    ...(detail ? { detail: String(detail) } : {}),
     confirmText: t(`${key}.yes`, params),
     ...(cancelKey ? { cancelText: t(cancelKey) } : {}), danger,
   });
@@ -267,7 +269,10 @@ async function setMemberActive(userId, active) {
   return { ok: true };
 }
 
+const contentActions = createContentActions({ ask });
+
 export const actions = {
+  ...contentActions,
   saveProduct, deleteProduct, createNewArrivalsCategory,
   uploadProductImage, setImageAlt, deleteImage, moveImage,
   createCategory, updateCategory, deleteCategory, moveCategory, setProductOrder,

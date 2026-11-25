@@ -6,3 +6,5 @@
    Cross-origin (API on another port):  apiBase = "http://localhost:8080"
    Same-origin through the dev proxy:   node scripts/serve.mjs --proxy http://127.0.0.1:8080  and  apiBase = location.origin */
 window.ADMIN_CONFIG.apiBase = location.origin;
+/* The storefront the content "preview" button opens (?content_preview=<token>); the e2e storefront dev server is on 8788. */
+window.ADMIN_CONFIG.siteOrigin = "http://localhost:8788";
