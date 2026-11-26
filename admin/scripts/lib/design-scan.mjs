@@ -30,7 +30,27 @@ export const BANNED_IDENTIFIERS = new Set([
 export const BANNED_BARE = new Set(["self", "top", "parent", "frames", "opener"]);
 /** String literals equal to one of these (whole value) are refused: they can only be used to reach the above by name. */
 const BANNED_STRINGS = new Set([...BANNED_IDENTIFIERS, ...BANNED_BARE, "script", "iframe", "frame", "frameset", "embed", "object", "applet", "base", "meta", "portal", "action", "formaction", "formAction", "prototype", "defaultView", "ownerDocument", "contentWindow", "contentDocument", "parentNode", "parentElement"]);
-const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal)\b/i;
+// ── v0.4.2 (D12): dialogs, popovers, synthetic input, DOM traversal ──
+// The design layer builds its screens with ctx.ui.h; the CORE owns every confirmation dialog. These rules make sure design
+// code cannot open its own top-layer UI, fake a click on a core control, or climb out of its own subtree to reach one.
+/** Dialog, popover, fullscreen and pointer-lock methods: never needed by a screen. (.show( and .close( are handled by receiver.) */
+export const DIALOG_API = new Set(["showModal", "showPopover", "hidePopover", "togglePopover", "requestFullscreen", "requestPointerLock", "exitFullscreen", "exitPointerLock", "requestClose"]);
+/** The popover and inert attributes / properties (also catches h("div", { popover: "auto" }), el.popover = ..., { inert: true }). */
+export const POPOVER_INERT = new Set(["popover", "inert", "popoverTargetElement", "popovertarget", "popovertargetaction", "popoverTargetAction"]);
+/** Programmatic input: dispatching events, requesting submits, constructing events. `.click(` / `.submit(` are handled by receiver. */
+export const SYNTHETIC_INPUT = new Set(["dispatchEvent", "requestSubmit", "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "InputEvent", "FocusEvent", "SubmitEvent", "TouchEvent", "WheelEvent", "UIEvent", "ClipboardEvent", "DragEvent"]);
+/** Ways to reach an element outside the design layer's own subtree (names that are never legitimate for a screen). */
+export const DOM_ESCAPE = new Set(["ownerDocument", "getRootNode", "parentNode", "parentElement", "offsetParent", "composedPath", "getElementById", "getElementsByClassName", "getElementsByTagName", "getElementsByName", "elementFromPoint", "elementsFromPoint", "previousSibling", "nextSibling", "previousElementSibling", "nextElementSibling", "assignedSlot"]);
+/** Selector-style methods: allowed only on an element the file created itself (see selectorAllowed). */
+const SELECTOR_METHODS = new Set(["querySelector", "querySelectorAll", "closest"]);
+/** Whole-string values that can only be used to build or reach the above by name (computed access is also refused). */
+/** "dialog" is refused only as a call argument (h("dialog")): role: "dialog" is just an ARIA value. */
+const DIALOG_STRINGS = new Set(["dialog", "popover", "inert"]);
+const NAMED_API_STRINGS = new Set([...DIALOG_API, ...SYNTHETIC_INPUT, ...DOM_ESCAPE, ...SELECTOR_METHODS]);
+/** Core confirmation controls named in a string (ids, test ids, selectors): "confirm-yes", "confirm-warning", ... */
+const CORE_CONFIRM_REF = /confirm-(yes|no|ok|cancel|warning|detail|dialog|title|text)\b/i;
+
+const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal|dialog)\b/i;
 const SCHEME_IN_STRING = /(javascript|vbscript)\s*:|data\s*:\s*text\/html|:\/\//i;
 
 const KEYWORDS_BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await", "instanceof"]);
@@ -163,9 +183,67 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
   const at = (k) => toks[k];
   const isP = (tk, val) => tk && tk.t === "punct" && tk.v === val;
 
+  // ── helpers for the v0.4.2 rules ──
+  const ctxNames = new Set(["ctx"]); // names holding ctx or something taken from it (ctx.auth.passwordSetup.submit is the core's own function)
+  const uiNames = new Set(["h"]);    // names of ctx.ui builders (the elements they return belong to this file)
+  for (let k = 1; k < toks.length; k++) {
+    if (!(toks[k].t === "id" && toks[k].v === "ctx") || !isP(toks[k - 1], "=")) continue;
+    const isUi = isP(toks[k + 1], ".") && toks[k + 2] && toks[k + 2].v === "ui" && !isP(toks[k + 3], ".");
+    if (toks[k - 2] && toks[k - 2].t === "id") { ctxNames.add(toks[k - 2].v); continue; }
+    if (isP(toks[k - 2], "}")) {
+      for (let j = k - 3; j >= 0 && !isP(toks[j], "{"); j--) if (toks[j].t === "id") { ctxNames.add(toks[j].v); if (isUi) uiNames.add(toks[j].v); }
+    }
+  }
+  for (const n of ["$", "$$", "append", "toast", "copyText", "clear", "busy", "showDialog", "confirmDialog", "applyFieldErrors", "clearFieldErrors", "setFieldError", "showFormError"]) uiNames.delete(n);
+  const own = new Set(); // const/let/var X = <ctx.ui builder>(...)
+  for (let k = 3; k < toks.length; k++) {
+    if (!isP(toks[k - 1], "=") || toks[k - 2].t !== "id" || !(toks[k - 3].t === "id" && ["const", "let", "var"].includes(toks[k - 3].v))) continue;
+    const t0 = toks[k];
+    const viaUi = t0.t === "id" && uiNames.has(t0.v) && isP(toks[k + 1], "(");
+    const viaCtxUi = t0.t === "id" && t0.v === "ctx" && isP(toks[k + 1], ".") && toks[k + 2] && toks[k + 2].v === "ui" && isP(toks[k + 3], ".") && toks[k + 4] && !["$", "$$", "showDialog", "confirmDialog"].includes(toks[k + 4].v) && isP(toks[k + 5], "(");
+    if (viaUi || viaCtxUi) own.add(toks[k - 2].v);
+  }
+  /** index of the root identifier of the member chain whose last member is toks[k] (a.b.c: k points at c), or -1 when it starts at a call/index. */
+  const chainRoot = (k) => {
+    let j = k;
+    while (isP(toks[j - 1], ".") || isP(toks[j - 1], "?.")) {
+      const before = toks[j - 2];
+      if (!before || before.t !== "id") return -1;
+      j -= 2;
+    }
+    return j;
+  };
+  const ctxRooted = (k) => { const r = chainRoot(k); return r >= 0 && r !== k && ctxNames.has(toks[r].v); };
+  const ownReceiver = (k) => isP(toks[k - 1], ".") && toks[k - 2] && toks[k - 2].t === "id" && own.has(toks[k - 2].v) && !isP(toks[k - 3], ".") && !isP(toks[k - 3], "?.");
+  const selectorAllowed = (k) => {
+    const name = toks[k].v, recv = toks[k - 2];
+    if (!recv) return false;
+    if (ownReceiver(k)) return true;
+    if (recv.t === "id" && recv.v === "root" && name !== "closest" && !isP(toks[k - 3], ".")) return true;
+    // event.target.closest("literal"): the listener sits on an element of this file; closest only returns an element, and click/dispatch are refused
+    if (name === "closest" && recv.t === "id" && recv.v === "target" && isP(toks[k - 3], ".") && toks[k - 4] && toks[k - 4].t === "id" && !isP(toks[k - 5], ".") && isP(toks[k + 1], "(") && toks[k + 2] && toks[k + 2].t === "str" && isP(toks[k + 3], ")")) return true;
+    return false;
+  };
+  const dollarAllowed = (k) => {
+    if (!isP(toks[k + 1], "(")) return false;
+    let depth = 0, j = k + 1, commaAt = -1;
+    for (; j < toks.length; j++) {
+      if (isP(toks[j], "(") || isP(toks[j], "[") || isP(toks[j], "{")) depth++;
+      else if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) { depth--; if (depth === 0) break; }
+      else if (depth === 1 && isP(toks[j], ",") && commaAt < 0) commaAt = j;
+    }
+    if (commaAt < 0) return false;
+    const arg = toks[commaAt + 1];
+    return Boolean(arg && arg.t === "id" && (arg.v === "root" || own.has(arg.v)) && isP(toks[commaAt + 2], ")"));
+  };
+
   for (let k = 0; k < toks.length; k++) {
     const tk = toks[k], prev = at(k - 1), next = at(k + 1);
     if (tk.t === "str") {
+      const sv = tk.v.trim();
+      if (DIALOG_STRINGS.has(sv.toLowerCase()) && (sv.toLowerCase() !== "dialog" || isP(prev, "("))) out.push(v("js/dialog-element", `the string "${tk.v}" names the dialog tag or a popover/inert attribute: the core owns every dialog (use ctx.ui.showDialog)`, file, tk.line));
+      else if (NAMED_API_STRINGS.has(sv)) out.push(v("js/dom-escape", `the string "${tk.v}" names a forbidden DOM API (synthetic input, a dialog method or traversal out of the design's own subtree)`, file, tk.line));
+      if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", `the string "${tk.v.slice(0, 60)}" refers to a core confirmation control`, file, tk.line));
       if (BANNED_STRINGS.has(tk.v.trim())) out.push(v("js/banned-string", `the string "${tk.v}" names a forbidden API`, file, tk.line));
       if (HTML_IN_STRING.test(tk.v) || SCHEME_IN_STRING.test(tk.v)) out.push(v("js/html-or-url-in-string", `a string contains markup, a script scheme or an external URL: ${JSON.stringify(tk.v.slice(0, 60))}`, file, tk.line));
       if (prev && prev.t === "punct" && prev.v === "+" && toks[k - 2] && toks[k - 2].t === "str") out.push(v("js/string-concat", "concatenating string literals is refused (write the string whole, or use ctx.t)", file, tk.line));
@@ -173,6 +251,8 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
       continue;
     }
     if (tk.t === "tpl") {
+      if (/<\s*\/?\s*dialog\b/i.test(tk.v) || (/<[^>]*\s(popover|inert)\b/i.test(tk.v))) out.push(v("js/dialog-element", "a template contains a <dialog> or a popover/inert attribute", file, tk.line));
+      if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", "a template refers to a core confirmation control", file, tk.line));
       if (HTML_IN_STRING.test(tk.v) || SCHEME_IN_STRING.test(tk.v)) out.push(v("js/html-or-url-in-string", `a template contains markup, a script scheme or an external URL: ${JSON.stringify(tk.v.slice(0, 60))}`, file, tk.line));
       continue;
     }
@@ -181,6 +261,15 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     const afterDot = prev && (isP(prev, ".") || isP(prev, "?."));
 
     if (BANNED_IDENTIFIERS.has(name)) { out.push(v("js/forbidden-identifier", `"${name}" is not allowed in design code`, file, tk.line)); continue; }
+    if (DIALOG_API.has(name)) { out.push(v("js/dialog-api", `"${name}" is not allowed: design code may not open dialogs, popovers, fullscreen or pointer lock (use ctx.ui.showDialog; the core owns confirmations)`, file, tk.line)); continue; }
+    if (POPOVER_INERT.has(name)) { out.push(v("js/popover-inert", `"${name}" is not allowed: the popover and inert attributes and properties are refused`, file, tk.line)); continue; }
+    if (SYNTHETIC_INPUT.has(name)) { out.push(v("js/synthetic-input", `"${name}" is not allowed: design code may not dispatch or construct events or request a submit`, file, tk.line)); continue; }
+    if (DOM_ESCAPE.has(name)) { out.push(v("js/dom-escape", `"${name}" is not allowed: design code may not reach elements outside its own subtree`, file, tk.line)); continue; }
+    if (afterDot && (name === "show" || name === "close") && isP(next, "(") && !ctxRooted(k)) { out.push(v("js/dialog-api", `.${name}( is refused (it opens or closes a dialog); close a ctx.ui.showDialog dialog through the { close } argument of its action`, file, tk.line)); continue; }
+    if (afterDot && name === "submit" && !ctxRooted(k)) { out.push(v("js/synthetic-input", ".submit is refused (it submits a form programmatically)", file, tk.line)); continue; }
+    if (afterDot && name === "click" && !ctxRooted(k) && !ownReceiver(k)) { out.push(v("js/synthetic-input", ".click is allowed only on an element this file created itself with ctx.ui (for example a hidden file input behind a button)", file, tk.line)); continue; }
+    if (afterDot && SELECTOR_METHODS.has(name) && !selectorAllowed(k)) { out.push(v("js/dom-escape", `.${name}( is allowed only on an element this file created itself (a const from ctx.ui.h or another ctx.ui builder), on root (querySelector only), or as event.target.closest("literal")`, file, tk.line)); continue; }
+    if ((name === "$" || name === "$$") && !dollarAllowed(k) && !(!isP(next, "(") && (isP(next, ",") || isP(next, "}")) && (isP(prev, "{") || isP(prev, ",")))) { out.push(v("js/dom-escape", `${name}( queries the whole document unless given an element: pass an element this file created, or root, as the second argument`, file, tk.line)); continue; }
     if (BANNED_BARE.has(name) && !afterDot && !isP(next, ":")) { out.push(v("js/forbidden-identifier", `bare "${name}" refers to a window object (rename the variable)`, file, tk.line)); continue; }
 
     if (name === "import") {
@@ -222,6 +311,7 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     let depth = 1, j = k + 1;
     while (j < toks.length && depth) { if (isP(toks[j], "[")) depth++; else if (isP(toks[j], "]")) depth--; j++; }
     const inner = toks.slice(k + 1, j - 1);
+    if (inner.length === 1 && inner[0].t === "str" && ["click", "submit", "show", "close"].includes(inner[0].v)) out.push(v("js/synthetic-input", `computed access to ["${inner[0].v}"] is refused (it can click, submit, open or close)`, file, toks[k].line));
     if (!inner.length || !SIMPLE_INDEX(inner)) out.push(v("js/computed-access", "computed member access with a non-trivial expression is refused (use a plain index, identifier or string literal)", file, toks[k].line));
   }
 

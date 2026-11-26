@@ -13,6 +13,12 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.4.2
+
+Guard hardening (decision D12, approved by the owner on 2026-11-27): the design-layer scans now refuse dialog, popover, fullscreen and pointer-lock use (rules js/dialog-api, js/dialog-element, js/popover-inert), synthetic input and auto-confirm (js/synthetic-input, js/core-ui-selector) and traversal out of the design's own subtree (js/dom-escape); the storefront scan (scripts/check-layers.mjs 5d) covers the dialog and synthetic-input rules. Human-reviewed core change; manifests re-locked with `--update` on the branch `core/guard-hardening-0.4.2`; nothing is tagged.
+
+Design-layer action: none unless the scan newly flags existing design code; list it. (Checked against this template: admin design/ and design-defaults/ and the storefront design layer pass with zero new violations, so none is listed. A merchant design that used .showModal(, popover, inert, dispatchEvent, new Event, .click( on a non-own element, closest/querySelector on a non-own element or ctx.ui.$ without an element must rewrite that code.)
+
 ## v0.4.1
 
 Banner hardening (low findings of the independent review of v0.4.0). Human-reviewed core change; manifests re-locked with `--update` on the branch `core/banner-hardening-0.4.1`; nothing is tagged.
