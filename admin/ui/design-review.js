@@ -43,7 +43,7 @@ export function showReview(initial, handlers) {
     const root = h("div", { class: "dlg-rv" }, main, panel);
     const titleOf = () => (model.canApprove ? model.approve.title : ct("rv.reviewing"));
     // A CLOSED shadow root with its own stylesheet (ui/kit.js showCoreDialog): the design layer's CSS cannot restyle, hide or rewrite anything in here.
-    const { dialog, close } = showCoreDialog({
+    const { dialog, close, sane } = showCoreDialog({
       title: titleOf(), content: root, actions: [], wide: true,
       onClose: () => { gen++; for (const id of [...urls.keys()]) revoke(id); handlers.dispose(); resolve(); },
     });
@@ -187,7 +187,7 @@ export function showReview(initial, handlers) {
 
     // ── actions panel ──
     let ack = null, approveBtn = null, ackTrusted = false, clickTrusted = false; // ackTrusted: the box was ticked by a real (isTrusted) change event
-    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || busy; };
+    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || busy || displayBad; };
     async function run(fn) {
       if (busy) return;
       busy = true; lock(true); // disabled at once, before anything is awaited
@@ -199,7 +199,14 @@ export function showReview(initial, handlers) {
       say(r.message);
       if (r.kind === "reload") { mode = "reload"; renderPanel(); } else { lock(false); syncAck(); }
     }
-    const trusted = (fn) => (ev) => { if (ev && ev.isTrusted === true) fn(); };
+    let displayBad = false;
+    // Every submitting button: a real click AND the dialog shown at its normal scale, fully on screen (a design cannot zoom or move it later).
+    // Otherwise nothing is sent, the approve button stays disabled and the person is asked to reload.
+    const trusted = (fn) => (ev) => {
+      if (!(ev && ev.isTrusted === true)) return;
+      if (sane && !sane()) { displayBad = true; say(ct("dlg.display")); if (approveBtn) approveBtn.disabled = true; return; }
+      fn();
+    };
     const back = () => { mode = "review"; say(""); renderPanel(); };
     const closeBtn = () => button(ct("rv.btn.close"), { onClick: () => { if (!busy) close(); }, "data-testid": "confirm-rv-close" });
 

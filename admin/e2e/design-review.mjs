@@ -567,6 +567,84 @@ try {
     await z.ctx.close();
   }
 
+  // ── 14b. zoom changed LATER by keyframes / a transition / a runtime style: continuously corrected; approve refused when the dialog is not at normal scale ──
+  console.log("late zoom attacks");
+  const shape = (pg) => pg.evaluate(() => {
+    const d = __dq("dialog[open]"), w = __dq('[data-testid="confirm-warning"]'), a = __dq('dialog [data-testid="confirm-yes"]');
+    const r = d.getBoundingClientRect(), wr = w.getBoundingClientRect();
+    return { dw: Math.round(r.width), dh: Math.round(r.height), warnH: Math.round(wr.height), warnW: Math.round(wr.width), inside: r.left >= -1 && r.right <= innerWidth + 1 && r.top >= -1 && r.bottom <= innerHeight + 1, inlineZoom: d.style.getPropertyValue("zoom"), approve: Boolean(a) };
+  });
+  let normal;
+  {
+    const n = await open({ width: 1280, height: 900 });
+    await clickReview(n.pg); await waitImages(n.pg, 2);
+    normal = await shape(n.pg);
+    check("normal use: no counter-zoom is applied (nothing flickers), the dialog has its normal size", normal.inlineZoom === "" && normal.dw === 980 && normal.inside, JSON.stringify(normal));
+    await n.ctx.close();
+    const m = await open({ width: 390, height: 844 });
+    await clickReview(m.pg); await waitImages(m.pg, 1);
+    const ms = await shape(m.pg);
+    check("normal use at 390: no counter-zoom and the sheet is full width", ms.inlineZoom === "" && ms.dw === 390 && ms.inside, JSON.stringify(ms));
+    await m.ctx.close();
+  }
+  const sameAsNormal = (s) => Math.abs(s.dw - normal.dw) <= 2 && s.warnH >= 20 && Math.abs(s.warnH - normal.warnH) <= 2 && s.inside;
+  for (const [name, theme] of [
+    ["keyframes zoom .12 on html after 500 ms", "@keyframes z { to { zoom: .12; } } html:has([data-core]) { animation: z 1ms 500ms forwards; }"],
+    ["keyframes zoom .12 on body after 500 ms", "@keyframes z { to { zoom: .12; } } body:has([data-core]) { animation: z 1ms 500ms forwards; }"],
+    ["keyframes zoom 3 on html", "@keyframes z { to { zoom: 3; } } html:has([data-core]) { animation: z 1ms 500ms forwards; }"],
+    ["keyframes zoom 3 on body", "@keyframes z { to { zoom: 3; } } body:has([data-core]) { animation: z 1ms 500ms forwards; }"],
+    ["transition zoom .12 on html", "html { transition: zoom 1ms 500ms; } html:has([data-core]) { zoom: .12; }"],
+    ["transition zoom .12 on body", "body { transition: zoom 1ms 500ms; } body:has([data-core]) { zoom: .12; }"],
+  ]) {
+    const a = await open({ width: 1280, height: 900, theme });
+    await a.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+    await a.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" });
+    await sleep(1600);
+    const s = await shape(a.pg);
+    check(name + ": the dialog stays at its normal size and readable (warning visible)", sameAsNormal(s), JSON.stringify([normal, s]));
+    await waitImages(a.pg, 1).catch(() => {});
+    await a.pg.locator(T("confirm-rv-ack")).click({ force: true });
+    await a.pg.locator("dialog " + T("confirm-yes")).click({ force: true });
+    await a.pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 }).catch(() => {});
+    check(name + ": a real person can still approve", S.approveCalls.length === 1);
+    await a.ctx.close();
+  }
+  {
+    const a = await open({ width: 1280, height: 900 });
+    await clickReview(a.pg); await waitImages(a.pg, 2);
+    for (const z of ["3", ".12", "0.5", "1"]) {
+      await a.pg.evaluate((zz) => { document.documentElement.style.zoom = zz; }, z);
+      await sleep(500);
+      const s = await shape(a.pg);
+      check("runtime zoom " + z + " set on html after the dialog opened: normal size, warning readable, inside the screen", sameAsNormal(s), JSON.stringify(s));
+    }
+    await a.pg.evaluate(() => { document.body.style.zoom = ".12"; }); await sleep(500);
+    check("runtime zoom .12 on body: normal size", sameAsNormal(await shape(a.pg)));
+    await a.pg.evaluate(() => { document.body.style.zoom = "1"; }); await sleep(500);
+    const back = await shape(a.pg);
+    check("once the page zoom is gone the counter-zoom is removed again", back.inlineZoom === "" && sameAsNormal(back), JSON.stringify(back));
+    await a.ctx.close();
+  }
+  {
+    // the approve-time check: the dialog is made abnormal in a way the continuous correction does not undo (the test reaches into the opened root)
+    const a = await open({ width: 1280, height: 900 });
+    await clickReview(a.pg); await waitImages(a.pg, 2);
+    await a.pg.locator(T("confirm-rv-ack")).click();
+    await a.pg.evaluate(() => { __dq("dialog[open]").style.setProperty("width", "180px", "important"); });
+    await a.pg.locator("dialog " + T("confirm-yes")).click({ force: true });
+    await sleep(500);
+    check("approve is REFUSED when the dialog is not shown at its normal size: nothing sent, message, approve stays disabled", S.approveCalls.length === 0 && /顯示被改動/.test(await a.pg.locator(T("confirm-rv-alert")).innerText()) && (await a.pg.locator("dialog " + T("confirm-yes")).isDisabled()), String(S.approveCalls.length));
+    await a.ctx.close();
+    const b = await open({ width: 1280, height: 900 });
+    await b.pg.evaluate(() => document.querySelector('[data-testid="go-revert"]').click());
+    await b.pg.waitForSelector("dialog[open]", { state: "attached" }); await sleep(400);
+    await b.pg.evaluate(() => { __dq("dialog[open]").style.setProperty("width", "180px", "important"); });
+    await b.pg.locator("dialog " + T("confirm-yes")).click({ force: true });
+    await sleep(400);
+    check("the shared confirm dialog refuses too: no revert request, a message, the confirm button disabled", S.revertCalls.length === 0 && (await b.pg.locator(T("confirm-display-error")).count()) === 1 && (await b.pg.locator("dialog " + T("confirm-yes")).isDisabled()));
+    await b.ctx.close();
+  }
+
   // ── 15. only a real person approves: scripted ticks and scripted clicks send nothing ──
   console.log("trusted input");
   {

@@ -86,6 +86,7 @@ export const CORE_TEXT = Object.freeze({
   "cf.cancelDesign.title": "取消這次改版？", "cf.cancelDesign.yes": "取消這次改版",
   "cf.revertDesign.title": "改成「{tag}」這個版本？", "cf.revertDesign.yes": "建立還原請求",
   "cf.no": "先不要",
+  "dlg.display": "這個視窗的顯示被改動了（縮放或位置不正常），為了安全沒有送出。請重新載入頁面後再操作。",
   "cf.cancelTarget": "要取消的請求（核心讀取）",
   "cf.cancelTarget.line": "需求：{prompt}｜狀態：{status}｜版本：{sha}",
   "cf.noPrompt": "（沒有需求原文）", "cf.noVersion": "（無）",

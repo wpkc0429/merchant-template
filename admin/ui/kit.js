@@ -6,6 +6,7 @@
 // URLs that are not same-origin / relative / an allowed image origin. Refusals are dropped with a warning.
 import { t } from "../lib/design.js";
 import { CORE_DIALOG_CSS } from "./core-dialog-css.js";
+import { coreText } from "../lib/fixed-text.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -197,17 +198,42 @@ export function showCoreDialog(opts) {
   let counted = true;
   const release = () => { if (counted) { counted = false; coreDialogsOpen--; } };
   try {
-    const r = buildDialog({ ...opts, onClose: (v) => { release(); host.remove(); opts.onClose?.(v); } }, (dialog) => { root.append(dialog); document.body.append(host); });
-    // A CSS `zoom` on html / body compounds into the dialog whatever the host says: measure it (layout width vs painted width) and cancel it out.
-    try {
-      const { dialog } = r, w = dialog.offsetWidth, painted = dialog.getBoundingClientRect().width;
-      if (w > 0 && painted > 0 && Math.abs(painted / w - 1) > 0.02) dialog.style.setProperty("zoom", String(w / painted), "important");
-    } catch { /* no layout (a test DOM) */ }
+    let sane = () => true;
+    const probe = document.createElement("div"); // 100 px wide, invisible: painted width / layout width = the zoom that html / body / any ancestor puts on the host
+    probe.className = "zprobe";
+    root.append(probe);
+    const r = buildDialog({ ...opts, check: () => sane(), onClose: (v) => { release(); clearInterval(timer); cancelAnimationFrame(raf); host.remove(); opts.onClose?.(v); } }, (dialog) => { root.append(dialog); document.body.append(host); });
+    // A CSS `zoom` on html / body (also animated or changed LATER by a transition or keyframes) compounds into the dialog whatever the host says. It is
+    // measured with the probe and cancelled out with a counter-zoom on the dialog, on EVERY animation frame (rAF) and every 250 ms while the dialog is open.
+    const { dialog } = r;
+    const ancestorZoom = () => { const w = probe.offsetWidth, q = probe.getBoundingClientRect().width; return w > 0 && q > 0 ? q / w : 1; };
+    const correct = () => {
+      try {
+        const q = ancestorZoom();
+        if (Math.abs(q - 1) > 0.005) dialog.style.setProperty("zoom", String(1 / q), "important");
+        else if (dialog.style.getPropertyValue("zoom")) dialog.style.removeProperty("zoom");
+      } catch { /* no layout (a test DOM) */ }
+    };
+    let raf = 0, timer = 0;
+    const loop = () => { correct(); if (counted) raf = requestAnimationFrame(loop); };
+    correct();
+    if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
+    timer = setInterval(correct, 250);
+    // At the moment of a confirmation: is the dialog really shown at its normal scale, fully inside the screen? Otherwise nothing is submitted.
+    sane = () => {
+      try {
+        correct();
+        const rc = dialog.getBoundingClientRect(), w = dialog.offsetWidth;
+        return dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
+          && rc.left >= -1 && rc.top >= -1 && rc.right <= innerWidth + 1 && rc.bottom <= innerHeight + 1;
+      } catch { return true; }
+    };
+    r.sane = sane;
     return r;
   } catch (e) { release(); host.remove(); throw e; }
 }
 
-function buildDialog({ title, content, actions = [], onClose, wide = false }, mount) {
+function buildDialog({ title, content, actions = [], onClose, wide = false, check }, mount) {
   const dialog = document.createElement("dialog");
   dialog.className = `dlg${wide ? " dlg--wide" : ""}`;
   const close = (result) => { dialog.close(result); };
@@ -219,6 +245,11 @@ function buildDialog({ title, content, actions = [], onClose, wide = false }, mo
       onClick: async (ev) => {
         // D12: only a real person confirms. A synthetic click (el.click(), dispatchEvent) has isTrusted === false and is ignored.
         if (!ev || ev.isTrusted !== true) return;
+        if (a.guard && check && !check()) { // the dialog is not shown at its normal scale / inside the screen: refuse, keep the button disabled
+          b.disabled = true;
+          if (!dialog.querySelector('[data-testid="confirm-display-error"]')) foot.before(h("p", { class: "dlg__warning", role: "alert", "data-testid": "confirm-display-error" }, coreText("dlg.display")));
+          return;
+        }
         const keep = a.onClick ? await busy(b, () => a.onClick({ close })) : undefined;
         if (keep !== false && a.close !== false) close(a.label);
       },
@@ -245,7 +276,7 @@ export function confirmDialog({ title, message, warning = "", detail = "", confi
       content: h("div", {}, h("p", { class: "dlg__msg" }, message, warning ? h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, warning) : ""), detail ? h("pre", { class: "dlg__detail", "data-testid": "confirm-detail" }, detail) : ""),
       actions: [
         { label: cancelText, kind: "ghost" },
-        { label: confirmText, kind: danger ? "danger" : "primary", testid: "confirm-yes", onClick: () => { answer = true; } },
+        { label: confirmText, kind: danger ? "danger" : "primary", testid: "confirm-yes", guard: true, onClick: () => { answer = true; } },
       ],
       onClose: () => resolve(answer),
     });

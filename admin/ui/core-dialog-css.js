@@ -12,6 +12,7 @@ dialog::backdrop { background: rgba(28, 28, 30, .45); }
 .dlg--wide { width: min(640px, calc(100vw - 32px)); }
 .dlg--review { width: min(980px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); }
 [hidden] { display: none !important; }
+.zprobe { position: absolute; left: 0; top: 0; width: 100px; height: 1px; visibility: hidden; pointer-events: none; }
 p, h2, h3, dl, dd, ul, figure, pre { margin: 0; }
 .dlg__body { padding: 22px; display: grid; gap: 14px; overflow-y: auto; max-height: calc(100dvh - 120px); }
 .dlg--review .dlg__body { height: 100%; max-height: none; overflow: hidden; display: flex; flex-direction: column; gap: 10px; padding: 18px 20px 14px; }
