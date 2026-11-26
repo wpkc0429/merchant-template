@@ -19,7 +19,7 @@ const SITE = process.env.E2E_STOREFRONT_URL || 'http://localhost:8788';
 const API = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:8180';
 const KEY = process.env.E2E_PUBLISHABLE_KEY || 'pk_demoseedstorefrontkeynotsecret';
 const OUT = process.env.E2E_OUT || resolve(tmpdir(), 'merchant-template-content-stack');
-const ECOM = process.env.ECOMMERCE_DIR || resolve(import.meta.dirname, '../../../ecommerce');
+const ECOM = process.env.PLATFORM_DIR || resolve(import.meta.dirname, '../../../ecommerce');
 mkdirSync(OUT, { recursive: true });
 const { chromium } = createRequire(resolve(ECOM, 'e2e/package.json'))('playwright');
 

@@ -2,7 +2,7 @@
 
 > **這個目錄是商家 repo（或範本）的 `admin/`。** 店面在上層 `public/`，部署目標不同：店面由推上 `main` 自動部署到 Cloudflare；**後台不會被那個部署發布**（`wrangler.jsonc` 只發布 `public/`），而是與 API 同源、置於 Cloudflare Access 之後（見「部署」，hosting 檔案在 `deploy/`）。本文所有指令都在 `admin/` 目錄下執行。
 
-繁體中文的商家後台，外觀沿用[店面](../public/styles.css)的設計語彙（中性灰階加一個強調色、系統字型、膠囊按鈕），透過電商平台（`ecommerce` repo）的後台 API 管理商店。平台自己的後台（`ecommerce/admin`）仍用於平台管理，不在這裡。
+繁體中文的商家後台，外觀沿用[店面](../public/styles.css)的設計語彙（中性灰階加一個強調色、系統字型、膠囊按鈕），透過電商平台的後台 API 管理商店。平台自己的後台仍用於平台管理，不在這裡。
 
 無建置步驟：純 HTML／CSS／原生 ES modules，沒有打包器、沒有框架、沒有 npm 相依。
 
@@ -92,6 +92,8 @@ cp config.local.js.example config.local.js     # apiBase = location.origin（搭
 node scripts/serve.mjs
 ```
 
+**主機名稱規則（預覽設定）：** 後台只把 `localhost`、`127.0.0.1`、`[::1]` 當成本機開發。其他任何主機名稱都視為「已部署的主機」，必須由官方 nginx 映像提供 `preview-config.js`（映像啟動時寫入）。若用 `serve.mjs`（或其他靜態伺服器）在內網 IP 或自訂主機名稱上開，就沒有這個檔案，會被當成「預覽設定未載入」：頁面鎖成唯讀、顯示「預覽設定未載入（唯讀，已停止）」並停止執行 app。正確做法：開發伺服器一律用 `http://localhost:3001`（或 `127.0.0.1`）開；要用其他主機名稱或給別人看，請用官方 nginx 映像（它會產生 `preview-config.js`）；不要為了繞過它而自己偽造 `preview-config.js`。
+
 非 localhost 時 API base 一律是 `location.origin`（`config.local.js` 不會被載入、也會被忽略）。
 
 跨源（上面的設定）使用 body 模式 refresh：refresh token 存在 sessionStorage（僅本機開發）。要在本機測**正式的同源＋cookie 模式**：
@@ -107,14 +109,14 @@ echo 'window.ADMIN_CONFIG.apiBase = location.origin;' > config.local.js
 
 端對端測試用 headless Chromium，**只在拋棄式環境跑**（絕不碰主資料庫、tunnel、Cloudflare）：
 
-1. 在 ecommerce：`CREATE DATABASE merchant_template_dev`，用覆寫的 `DATABASE_URL` 跑 `go run ./cmd/migrate` 與 `go run ./cmd/seed -demo`。
-2. 起拋棄式 API：`API_ADDR=127.0.0.1:8180 REDIS_DB=1 PAYMENT_DEFAULT_PROVIDER=mock`、同一個 `DATABASE_URL`、`R2_BUCKET=ecommerce-media-e2e`、`IMAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/ecommerce-media-e2e`（其餘 MinIO／R2 變數用 `.env`），並把 `RATE_LIMIT_LOGIN_BROAD_LIMIT`、`RATE_LIMIT_LOGIN_TIGHT_LIMIT`、`RATE_LIMIT_GUEST_CHECKOUT_BROAD_LIMIT`、`RATE_LIMIT_GUEST_CHECKOUT_TIGHT_LIMIT`、`RATE_LIMIT_REFRESH_LIMIT` 調高（套件登入與下單次數多）；`PAYMENT_MOCK_WEBHOOK_SECRET` 設成 `e2e-mock-webhook-secret-for-throwaway-stack-only-0001`（或用環境變數 `E2E_MOCK_WEBHOOK_SECRET` 告訴測試）。
+1. 在平台 checkout：`CREATE DATABASE merchant_template_dev`，用覆寫的 `DATABASE_URL` 跑 `go run ./cmd/migrate` 與 `go run ./cmd/seed -demo`。
+2. 起拋棄式 API：`API_ADDR=127.0.0.1:8180 REDIS_DB=1 PAYMENT_DEFAULT_PROVIDER=mock`、同一個 `DATABASE_URL`、`R2_BUCKET=<測試用桶>`、`IMAGE_PUBLIC_BASE_URL=http://127.0.0.1:9000/<測試用桶>`（其餘 MinIO／R2 變數用 `.env`），並把 `RATE_LIMIT_LOGIN_BROAD_LIMIT`、`RATE_LIMIT_LOGIN_TIGHT_LIMIT`、`RATE_LIMIT_GUEST_CHECKOUT_BROAD_LIMIT`、`RATE_LIMIT_GUEST_CHECKOUT_TIGHT_LIMIT`、`RATE_LIMIT_REFRESH_LIMIT` 調高（套件登入與下單次數多）；`PAYMENT_MOCK_WEBHOOK_SECRET` 設成 `e2e-mock-webhook-secret-for-throwaway-stack-only-0001`（或用環境變數 `E2E_MOCK_WEBHOOK_SECRET` 告訴測試）。
 3. `node scripts/serve.mjs --proxy http://127.0.0.1:8180`，`config.local.js` 設 `apiBase = location.origin`。
-4. `node e2e/setup.mjs`（登記 admin origin；超級管理員帳密從 `../../ecommerce/.env` 讀取，不會印出）。
+4. `node e2e/setup.mjs`（登記 admin origin；超級管理員帳密從 平台 checkout 的 `.env`（`$PLATFORM_DIR/.env`） 讀取，不會印出）。
    另外要先用 `../scripts/import-catalog.mjs ../catalog/catalog.sample.json`（從 `admin/` 執行）灌入 8 款範例商品（S/M/L SKU、標題含「｜」、運送方式「宅配到府」，套件靠這些辨識測試商品）、分類、運送方式與圖片（環境變數 `IMPORT_API_BASE=http://127.0.0.1:8180`、`IMPORT_ADMIN_EMAIL`、`IMPORT_ADMIN_PASSWORD`，帳密用 demo 店主，不放進任何檔案）。套件自己會透過公開的訪客結帳 API 建立真實訂單（mock 付款＋簽章 webhook）、會員等級、低庫存 SKU，不需手動造資料。
 5. 每次跑之前清 Redis DB 1（`FLUSHDB`，只有 DB 1），然後 `E2E_OUT=<截圖目錄> node e2e/run.mjs`。
 
-收尾：停掉程序、`DROP DATABASE merchant_template_dev`、`FLUSHDB`（DB 1）、只清空 MinIO `ecommerce-media-e2e` 桶。**不要** `docker compose down -v`。
+收尾：停掉程序、`DROP DATABASE merchant_template_dev`、`FLUSHDB`（DB 1）、只清空 MinIO 測試用桶。**不要** `docker compose down -v`。
 
 內容畫面（`e2e/content.mjs`，由 `run.mjs` 在設計層之前執行，也可單獨跑 `node e2e/content.mjs`；需要 `config.local.js` 的 `siteOrigin`，`serve.mjs` 會把 `../public/content.schema.json` 以同源的 `/content.schema.json` 提供）：用確認對話框註冊範本的內容 schema（先 dry run、取消不註冊、固定警告）、編輯與前端驗證、儲存（以伺服器回應重建表單）、發佈（公開 `/shop/content` 立即回新內容）、清單項目新增／排序／刪除、兩個分頁同時儲存的 412 提示與重新載入、版本歷史與還原（只放回草稿、公開內容不變）、預覽分頁、editor（可編輯、無發佈／刪除／schema）與 staff（無入口、進不去）的權限，以及 390／1280 的版面與溢出檢查。
 
@@ -126,9 +128,9 @@ echo 'window.ADMIN_CONFIG.apiBase = location.origin;' > config.local.js
 
 Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁、新到舊）、訂單詳情與卡片訊息、今日配送與首頁數字、全部／部分出貨→送達→退貨、退貨與取消的權限（店員無按鈕、強送 API 回 403）、顧客與會員等級、報表（預設、空狀態、範圍上限）、成員管理（邀請、新帳號接受、既有帳號接受、撤回、停用／啟用、被停用者下一個請求即登出、店主與自己不可操作）、店員導覽，以及 390px 手機逐頁溢出檢查與截圖、桌機截圖。
 
-### 預覽橫幅的真瀏覽器測試（v0.4.0）
+### 預覽橫幅的真瀏覽器測試（v0.4.0，v0.4.1 加強）
 
-`node e2e/preview-banner.mjs`（在 `admin/`）：不需要平台，用內建的 stub 伺服器在真的 Chromium 驗證預覽橫幅（不 fail closed、文字完整、設計層隱藏／覆蓋會剛好 fail closed 一次、非預覽頁沒有橫幅），並在 390／1280 截圖（`BANNER_SHOTS`，預設 `e2e/out/banner`）。Playwright 取自 `$PLAYWRIGHT_DIR` 或同層 `ecommerce/e2e`；找不到就印 `SKIP` 並以 0 結束。`tests/preview-banner-browser.test.mjs` 會呼叫它。
+`node e2e/preview-banner.mjs`（在 `admin/`）：不需要平台，用內建的 stub 伺服器在真的 Chromium 驗證預覽橫幅（不 fail closed、文字完整、設計層隱藏／覆蓋會剛好 fail closed 一次、非預覽頁沒有橫幅），並在 390／1280 截圖（`BANNER_SHOTS`，預設 `e2e/out/banner`）。Playwright 取自 `$PLAYWRIGHT_DIR`（含 `node_modules/playwright` 的資料夾，例如平台 checkout 的 e2e 目錄）；找不到就印 `SKIP` 並以 0 結束。`tests/preview-banner-browser.test.mjs` 會呼叫它。v0.4.1：橫幅改用 Popover API（`popover="manual"`）放在瀏覽器的 top layer，任何 z-index、`position:fixed` 或 `body::after` 的覆蓋（含 `pointer-events:none`，`elementFromPoint` 看不到）都蓋不住它；不支援 Popover API 的瀏覽器退回舊行為並加掃描固定／絕對定位元素與 body／html 偽元素。測試涵蓋這兩條路徑、`hidePopover()`／移除 `popover` 屬性（會被修復，反覆發生則 fail closed 一次）與開啟 modal 對話框。
 
 注意：版本預覽（`/design/:id/version-preview`）在歷史清單與還原流程（T1-T4）完成前，使用者沒有入口；預設畫面不顯示「改成這個版本」。
 
