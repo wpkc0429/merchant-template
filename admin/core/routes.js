@@ -28,6 +28,8 @@ export const ROUTES = [
   { id: "contentSchema", pattern: "/content-schema", perm: ["content.manage"], nav: "content" },
   { id: "contentRevisions", pattern: "/content/:key/revisions", perm: ["content.view"], nav: "content" },
   { id: "contentDocument", pattern: "/content/:key", perm: ["content.view"], nav: "content" },
+  // Version preview of a past published design (platform change design-history, D25). No nav entry: the history screen links here.
+  { id: "designVersionPreview", pattern: "/design/:id/version-preview", perm: ["design.view"], nav: "" },
 ];
 
 // Navigation destinations. `perm` decides who SEES the item; the design layer can reorder, restyle or

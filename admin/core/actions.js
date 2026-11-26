@@ -12,7 +12,8 @@ import { t } from "../lib/design.js";
 import { confirmDialog } from "../ui/kit.js";
 import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
-import { need } from "./guard.js";
+import { need, readOnlyGuarded } from "./guard.js";
+import { requestVersionPreview } from "./version-preview.js";
 import { createContentActions } from "./content-actions.js";
 import { ActionError, invalid, blocked } from "./errors.js";
 
@@ -271,8 +272,11 @@ async function setMemberActive(userId, active) {
 
 const contentActions = createContentActions({ ask });
 
-export const actions = {
+// EVERY function in this table is wrapped by readOnlyGuarded(): on a preview host (lib/preview.js) each one throws ActionError
+// reason "read_only" before doing anything. requestVersionPreview is in the table too (no preview from inside a preview).
+export const actions = readOnlyGuarded({
   ...contentActions,
+  requestVersionPreview,
   saveProduct, deleteProduct, createNewArrivalsCategory,
   uploadProductImage, setImageAlt, deleteImage, moveImage,
   createCategory, updateCategory, deleteCategory, moveCategory, setProductOrder,
@@ -280,4 +284,4 @@ export const actions = {
   createMemberTier, updateMemberTier,
   cancelOrder, createShipment, advanceShipment,
   inviteMember, revokeInvitation, setMemberActive,
-};
+});

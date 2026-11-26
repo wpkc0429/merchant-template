@@ -15,6 +15,7 @@ import { need } from "./guard.js";
 import { invalid } from "./errors.js";
 import * as contentLib from "../lib/content.js";
 import { dryRunContentSchema, reads as contentReads } from "./content-actions.js";
+import { getVersionPreview } from "./version-preview.js";
 
 const S = () => session.shopID;
 const q = (perms, fn) => async (...args) => { need(...perms); return fn(S(), ...args); };
@@ -58,6 +59,8 @@ export const data = {
   getContentRevision: async (key, rev) => { need("content.view"); return contentReads.revision(key, rev); },
   dryRunContentSchema: async () => dryRunContentSchema(),
   contentSite: () => ({ previewEnabled: Boolean(contentLib.siteOrigin()) }),
+  // version preview of a past design (needs design.view; read-only fact: its state, and the origin only for the person who asked)
+  getVersionPreview,
   // media limits (read-only facts)
   media: () => ({ enabled: mediaEnabled(), maxImages: maxImages(), maxBytes: maxBytes() }),
 };

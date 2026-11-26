@@ -3,7 +3,8 @@
 // A real-nginx run was done by hand when this was written (see docs/CORE-CHANGELOG.md v0.3.0); these tests keep the properties.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { TEMPLATE } from './helpers.mjs';
@@ -22,7 +23,7 @@ function location(conf, head) {
   for (; j < conf.length; j++) { if (conf[j] === '{') depth++; else if (conf[j] === '}' && --depth === 0) break; }
   return conf.slice(start + 1, j);
 }
-const REQUIRED = ['Content-Security-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Strict-Transport-Security', 'Permissions-Policy', 'Cross-Origin-Opener-Policy', 'Cross-Origin-Resource-Policy', 'Cache-Control'];
+const REQUIRED = ['X-Robots-Tag', 'Content-Security-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Strict-Transport-Security', 'Permissions-Policy', 'Cross-Origin-Opener-Policy', 'Cross-Origin-Resource-Policy', 'Cache-Control'];
 const headers = (block) => [...block.matchAll(/add_header\s+([A-Za-z-]+)\s/g)].map((m) => m[1]);
 
 describe('nginx.conf.template after envsubst', () => {
@@ -91,6 +92,20 @@ describe('start-up checks (deploy/require-origins.sh)', () => {
       for (const v of ['https://a.b; script-src *', "https://a.b'", 'https://a.b/path', 'https://a.b"']) assert.notEqual(run({ ...base, [k]: v }).status, 0, `${k}=${v}`);
       assert.notEqual(run({ ...base, [k]: '' }).status, 0);
     }
+  });
+  test('preview hosts: the Dockerfile installs preview-config.sh; it writes null on a normal host, a frozen-shape config on a preview host, and rejects bad values', { skip }, () => {
+    const d = readFileSync(path.join(DEPLOY, 'Dockerfile'), 'utf8');
+    assert.match(d, /COPY deploy\/preview-config\.sh \/docker-entrypoint\.d\/07-preview-config\.sh/);
+    const script = readFileSync(path.join(DEPLOY, 'preview-config.sh'), 'utf8').replace('/usr/share/nginx/html/preview-config.js', '$OUTFILE');
+    const dir = mkdtempSync(path.join(tmpdir(), 'pvc-'));
+    const f = path.join(dir, 'preview-config.js');
+    const go = (env) => spawnSync('sh', ['-c', script], { env: { PATH: process.env.PATH, OUTFILE: f, ...env }, encoding: 'utf8' });
+    try {
+      assert.equal(go({}).status, 0); assert.match(readFileSync(f, 'utf8'), /preview = null;/);
+      assert.equal(go({ ADMIN_PREVIEW_MODE: 'version', ADMIN_PREVIEW_TAG: 'design-2026-10-01', ADMIN_PREVIEW_EXPIRES: '2026-11-27T12:00:00Z' }).status, 0);
+      assert.match(readFileSync(f, 'utf8'), /preview = \{"kind":"version","tag":"design-2026-10-01","expiresAt":"2026-11-27T12:00:00Z"\};/);
+      for (const bad of [{ ADMIN_PREVIEW_MODE: 'x' }, { ADMIN_PREVIEW_MODE: 'change', ADMIN_PREVIEW_TAG: 'a"; alert(1)' }, { ADMIN_PREVIEW_MODE: 'change', ADMIN_PREVIEW_EXPIRES: 'tomorrow' }]) assert.notEqual(go(bad).status, 0, JSON.stringify(bad));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test('the Dockerfile installs the check and the resolver script', () => {
     const d = readFileSync(path.join(DEPLOY, 'Dockerfile'), 'utf8');

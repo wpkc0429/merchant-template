@@ -40,6 +40,7 @@ server {
     # below that sets one repeats this whole block (tests/nginx-config.test.mjs checks that each location has all of them).
     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
     add_header Referrer-Policy "no-referrer" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -57,6 +58,7 @@ server {
         default_type application/javascript;
         add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
         add_header Referrer-Policy "no-referrer" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -101,6 +103,7 @@ server {
         add_header Content-Type "application/json" always;
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
         add_header Referrer-Policy "no-referrer" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;

@@ -13,6 +13,21 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.4.0
+
+Version preview (platform change design-history, D25; decision D11 in docs/DECISIONS.md). Human-reviewed core change: the manifests were re-locked with `--update` on the branch `core/version-preview-0.4.0`; nothing is tagged. The owner approved exactly two new ctx functions (option A); nothing else was added to ctx.
+
+Design-layer action: adopt the new default history view: admin/design/routes.js add the route designVersionPreview (views/design-version-preview.js and parts/version-preview-section.js, copied from admin/design-defaults/); without it the built-in screen is used. Embed versionPreviewSection(ctx, {requestId, tag, onRevert}) next to each past published design in your history screen.
+Design-layer action: admin/design/copy.js: add the new copy keys (vp.*, err.readOnly) from admin/design-defaults/copy.js; vp.limits is FIXED by the core and any override is ignored.
+Design-layer action: ctx additions: ctx.actions.requestVersionPreview(requestId) and ctx.data.getVersionPreview(previewId) (permission design.view). In preview mode every ctx.actions function throws ActionError reason read_only: show ctx.errorMessage(e) and do not work around it.
+Design-layer action: deploy (host, not design layer): a preview host must start with ADMIN_PREVIEW_MODE=version or change (optional ADMIN_PREVIEW_TAG, ADMIN_PREVIEW_EXPIRES); every response now also carries X-Robots-Tag noindex.
+
+* New ctx: `ctx.actions.requestVersionPreview(requestId)` (POST .../design/requests/{id}/version-preview; design.view; ids checked for shape; 409 revert_below_core_floor / already_current / invalid_state / site_state_unknown and 429 hourly_cap_reached / daily_cap_reached with Retry-After become ActionErrors with `reason`, `detail`, `retryAfter`) and `ctx.data.getVersionPreview(previewId)` (GET .../design/version-previews/{id}; state waiting / ready / failed with failureRuleIds / expired; `origin` only as the platform gives it to the initiator and only if a plain https origin; no token or shop id).
+* Read-only preview mode (core-enforced): `lib/preview.js` (mode read once from `window.ADMIN_CONFIG.preview`, frozen), `core/guard.js` `readOnlyGuarded` wraps the whole `ctx.actions` table (also requestVersionPreview and previewContentDocument), `lib/api.js` refuses non-GET requests. Sign-in, refresh and sign-out are unaffected.
+* Core banner on preview hosts: `ui/preview-banner.js` (kind, tag, expiry; outside #app; CSSOM `!important` styles; load-time check, MutationObserver and timer rebuild it; fails closed). `config-loader.js` loads `preview-config.js`; `deploy/preview-config.sh` writes it from ADMIN_PREVIEW_MODE / _TAG / _EXPIRES (bad values stop the container); nginx adds `X-Robots-Tag: noindex, nofollow` to every response (strict CSP and no framing unchanged).
+* Default views: route `designVersionPreview` (`/design/:id/version-preview`, design.view), `views/design-version-preview.js`, `parts/version-preview-section.js` (waiting / ready / failed with rule ids / expired, the FIXED limits text `vp.limits` in `lib/fixed-text.js`, the revert button only for design.revert). The history list and detail screens (platform tasks T1-T4) do not exist in the template yet: the section is built to be embedded, and the revert button navigates to `/design/:id`, the request screen T4 will add.
+* Tests: `admin/scripts/test-preview.mjs` (run by test-guard: permission gating, id checks, error mapping, origin rules, read-only for every action in version and change mode, banner rebuild), `tests/nginx-config.test.mjs` (X-Robots-Tag, preview-config.sh). No guard rule was changed.
+
 ## v0.3.0
 
 The template can now CONSUME and EDIT the platform content store (platform change `headless-content-store`, slices 1 and 2; decisions D6-D10 below in docs/DECISIONS.md). Human-reviewed core change (new locked functions and `ctx` surface): the manifests were re-locked with `--update` on the branch `core/content-store-0.3.0` by the preparing maintainer session because the core-change skill requires a human to review before merge; nothing is tagged.

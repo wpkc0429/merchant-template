@@ -213,6 +213,7 @@ reports team more logout back up down left right plus close image content`.
 | `getContentSchema()` (`{version, format, schema}` or `null` when none is registered), `listContentSchemaVersions()`, `listContentDocuments()` (`[{key, type, title, status, isPublished, needsAttention, declared, rev, updatedAt, publishedAt}]`), `getContentDocument(key)` (adds `draft` (hydrated), `published` (content or null), `schemaNode`, `typeTitle`, `meta`), `listContentRevisions(key)`, `getContentRevision(key, rev)` | `content.view` |
 | `dryRunContentSchema()` (**read-only**: reads the storefront's `content.schema.json` and returns the platform's report `{version, wouldRegisterVersion, changed, report, lines, hasRemovals}`; it can only ever send `?dry_run=true`) | `content.manage` |
 | `contentSite()` (`{previewEnabled}`) | none (read-only fact) |
+| `getVersionPreview(previewId)` -> `{id, requestId, tag, state: "waiting"/"ready"/"failed"/"expired", status, superseded, failureCode, failureDetail, failureRuleIds[], coreVersion, createdAt, readyAt, expiresAt, readOnly: true, origin}`. `origin` is set only for the person who asked, only while `ready` and not expired, and only if it is a plain https origin (no path); `failureDetail` / `failureRuleIds` are DATA (render as text). Errors are ActionErrors (see `requestVersionPreview`) | `design.view` |
 
 ### `ctx.logic` (pure helpers that mirror state rules, for deciding what to *offer*)
 `summarizeSkus skuForSize flattenTree remainingQty hasUnshipped canCancelOrder shipBlocker(order, shipments) -> "" |
@@ -239,12 +240,21 @@ ORDERS_PAGE_SIZE MEMBERS_PAGE_SIZE`.
 | `restoreContentRevision(key, rev, {rev})` | confirm; returns `{ok, restoredToDraft: true, restoredValid, doc}`: **only the draft changes, nothing is published** (say "restored to draft, not published yet"); `content.edit` |
 | `uploadContentImage(file, {onStage, onProgress})` | `content.edit`; normally used by the form builder itself |
 | `previewContentDocument(key)` | opens `{site}/?content_preview=<token>` in a new tab (needs the host to configure the site origin; check `data.contentSite().previewEnabled`); `content.view` |
+| `requestVersionPreview(requestId)` -> the same object as `data.getVersionPreview` (state `waiting`; poll `data.getVersionPreview(result.id)` every few seconds). Asks for a **version preview**: a past published design on the CURRENT core, short-lived and read-only, not part of any request, not an approval. `requestId` must be a request id (checked for shape before any request). Failures are ActionErrors: `reason` `revert_below_core_floor` (older than a core sync that needs design changes; `e.detail` has the platform's explanation), `already_current`, `invalid_state`, `site_state_unknown` (kind `state`), `hourly_cap_reached` / `daily_cap_reached` (kind `limit`, `e.retryAfter` seconds, the wait is in the message). `design.view`. **Refused in a preview** (see below) |
 | `registerContentSchema()` | **Takes no arguments.** Reads the storefront's `content.schema.json`, dry-runs it, and ALWAYS shows the core's confirmation dialog (report + fixed warning); a platform 409 about removed values needs a second explicit confirmation. Nothing you pass can skip it (and AI sessions and automation never register: decisions D6). `content.manage` (store owner) |
 
 ### `ctx.auth`
 `login(email, password)` (enters the app on success; throws → `auth.loginMessage(err)`) · `logout()` · `minPassword` ·
 `passwordSetup.inspect()` / `.submit(password, confirm)` · `invitation.inspect()` / `.acceptNew(password, confirm)` /
 `.loginAndJoin(email, password)` · `loginMessage(err)`. Tokens never reach you.
+
+### Preview mode is read-only (core-enforced)
+
+On a preview host (a version preview or a change preview of the AI edit service; `deploy/preview-config.sh` writes `window.ADMIN_CONFIG.preview`) the core is READ-ONLY: **every** `ctx.actions` function (also `requestVersionPreview` and `previewContentDocument`) throws an ActionError with `reason: "read_only"` before anything else (no permission check, no dialog, no request), and `lib/api.js` refuses any non-GET request as a backstop. Show the error (`ctx.errorMessage(e)`); do not try to work around it. Reads and navigation work. The core also puts its own banner (preview kind, tag, expiry) at the top of the page: it lives outside your container, is rebuilt if removed or hidden, and cannot be changed from the design layer.
+
+### The version preview section
+
+`design/parts/version-preview-section.js` (`versionPreviewSection(ctx, {requestId, tag, onRevert})`) is the default "preview this version" block for the design history: the button, the waiting / ready (link to the preview) / failed (with `failureRuleIds`) / expired states, the limits text and the revert button. Embed it next to each past published design. Rules the core enforces regardless of your view: the limits sentence `t("vp.limits")` is **fixed** (an override in `copy.js` is ignored with a console warning; always show it next to the button), and the revert button is offered only to people with `can("design.revert")` and only leads INTO the existing revert flow (`onRevert`); a preview is not an approval and skips nothing.
 
 ## 5. Routes (fixed by the core)
 
@@ -262,6 +272,7 @@ ORDERS_PAGE_SIZE MEMBERS_PAGE_SIZE`.
 | `categories` `categoryOrder` | `/categories` `/categories/:id/order` | `category.view` | `categories.js` `category-order.js` |
 | `shipping` | `/shipping-methods` | `shipping_method.view` | `shipping.js` |
 | `content` `contentDocument` `contentRevisions` | `/content` `/content/:key` `/content/:key/revisions` | `content.view` | `content.js` `content-document.js` `content-revisions.js` |
+| `designVersionPreview` | `/design/:id/version-preview` (no nav entry; the history screen links here) | `design.view` | `design-version-preview.js` |
 | `contentSchema` | `/content-schema` (distinct from `/content/:key`: `schema` is a valid document key) | `content.manage` | `content-schema.js` |
 
 The navigation entry `content` (icon `content`) is listed only for roles with `content.view` (owner and editor; staff see nothing); the schema screen is reached from the list for `content.manage` holders.
