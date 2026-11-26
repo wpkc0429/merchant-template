@@ -4,7 +4,7 @@
 // its view: the core mounts "noPermission" instead.
 
 // perm: nodes that must ALL be granted. public: reachable without a session (auth screens).
-export const ROUTES = [
+const BASE_ROUTES = [
   { id: "login", pattern: "/login", public: true },
   { id: "setPassword", pattern: "/set-password/:token", public: true },
   { id: "acceptInvite", pattern: "/accept-invite/:token", public: true },
@@ -31,6 +31,18 @@ export const ROUTES = [
   // Version preview of a past published design (platform change design-history, D25). No nav entry: the history screen links here.
   { id: "designVersionPreview", pattern: "/design/:id/version-preview", perm: ["design.view"], nav: "" },
 ];
+// Design history routes (T1-T4, docs/DECISIONS.md D13). DEFINED here (ids, patterns, permission) but NOT registered and NOT in ROUTES / NAV /
+// lib/design-schema.js ROUTE_IDS until the default views exist (PR3): a registered route without a view would make mountView throw for a
+// legitimate user, and a nav item would be a dead link. PR3 flips `ready` to true and adds the views, the ROUTE_IDS and the NAV entry together
+// (tests/design-history-read-layer.test.mjs fails if only part of that happens).
+export const DESIGN_HISTORY_ROUTES = [
+  { id: "design", pattern: "/design", perm: ["design.view"], nav: "design", ready: false },
+  { id: "designRequest", pattern: "/design/:id", perm: ["design.view"], nav: "design", ready: false },
+];
+export const DESIGN_HISTORY_READY = DESIGN_HISTORY_ROUTES.every((r) => r.ready);
+
+/** The routes the app registers: the base table plus every design-history route whose views exist (none yet). */
+export const ROUTES = [...BASE_ROUTES, ...DESIGN_HISTORY_ROUTES.filter((r) => r.ready).map(({ ready, ...r }) => r)];
 
 // Navigation destinations. `perm` decides who SEES the item; the design layer can reorder, restyle or
 // omit items but can never add one the permissions do not allow (the core filters before the shell sees them).

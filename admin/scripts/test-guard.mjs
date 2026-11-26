@@ -253,6 +253,12 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
   ok("scripts/test-content.mjs passes (content core)", r.status === 0, r.stdout + r.stderr);
 }
 
+// ── 7b. design history read layer (D13, PR1): the three ctx.data functions, routes defined but not registered (offline; 3 modes) ──
+{
+  const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-design-history.mjs")], { encoding: "utf8" });
+  ok("scripts/test-design-history.mjs passes (design history read layer)", r.status === 0, r.stdout + r.stderr);
+}
+
 // ── 7. version preview core + preview-mode read-only + the core banner (offline; runs itself as a normal page and as a preview host) ──
 {
   const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-preview.mjs")], { encoding: "utf8" });

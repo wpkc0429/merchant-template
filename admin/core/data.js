@@ -16,6 +16,7 @@ import { invalid } from "./errors.js";
 import * as contentLib from "../lib/content.js";
 import { dryRunContentSchema, reads as contentReads } from "./content-actions.js";
 import { getVersionPreview } from "./version-preview.js";
+import { listDesignRequests, getDesignRequest, getDesignState } from "./design-history.js";
 
 const S = () => session.shopID;
 const q = (perms, fn) => async (...args) => { need(...perms); return fn(S(), ...args); };
@@ -61,6 +62,8 @@ export const data = {
   contentSite: () => ({ previewEnabled: Boolean(contentLib.siteOrigin()) }),
   // version preview of a past design (needs design.view; read-only fact: its state, and the origin only for the person who asked)
   getVersionPreview,
+  // design history (read layer, D13; needs design.view; GETs, so they also work on a read-only preview host)
+  listDesignRequests, getDesignRequest, getDesignState,
   // media limits (read-only facts)
   media: () => ({ enabled: mediaEnabled(), maxImages: maxImages(), maxBytes: maxBytes() }),
 };
