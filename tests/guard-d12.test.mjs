@@ -61,13 +61,68 @@ test('D12 admin: the real design and design-defaults trees pass the tightened sc
   assert.equal(r.status, 0, r.out);
 });
 
+test('docs/DECISIONS.md is structurally intact: one title, unique headings, no repeated paragraph, D12 whole', () => {
+  const dec = readFileSync(path.join(TEMPLATE, 'docs/DECISIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const lines = dec.split('\n');
+  assert.equal(lines[0], '# Decisions');
+  const heads = lines.filter((l) => /^#{1,3} /.test(l));
+  assert.equal(heads.filter((l) => l === '# Decisions').length, 1, 'exactly one title');
+  assert.equal(new Set(heads).size, heads.length, 'every heading is unique: ' + heads.filter((h, i) => heads.indexOf(h) !== i).join(' | '));
+  const ids = heads.map((h) => /^### (D\d+)\./.exec(h)).filter(Boolean).map((m) => m[1]);
+  assert.deepEqual(ids.slice(0, 3), ['D12', 'D11', 'D10'], 'newest first');
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.includes('D12') && ids.includes('D11') && ids.includes('D10'));
+  const paras = dec.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 80);
+  assert.equal(new Set(paras).size, paras.length, 'no paragraph appears twice');
+  // D12 is whole: between its heading and the next ## heading: the three numbered items (complete paragraphs) and the T1-T4 paragraph
+  const start = lines.findIndex((l) => l.startsWith('### D12.'));
+  let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
+  const body = lines.slice(start + 1, end);
+  const items = body.filter((l) => /^[1-3]\. \*\*/.test(l));
+  assert.equal(items.length, 3, 'three numbered items');
+  for (const it of items) assert.match(it, /[.)]\s*$/, 'item ends in a full stop: ' + it.slice(0, 40));
+  assert.ok(items[0].includes('js/dialog-api') && items[1].includes('js/synthetic-input') && items[2].includes('js/dom-escape'));
+  assert.match(items[2], /items 1 and 2\.$/, 'item 3 is complete (not cut off at the $ of ctx.ui.$)');
+  assert.ok(items[2].includes('`ctx.ui.$` and `$$`'), 'item 3 keeps its ctx.ui.$ text');
+  assert.equal(body.filter((l) => l.startsWith('**Follow-up T1-T4 plan')).length, 1);
+  assert.equal(body.filter((l) => l.startsWith('**Guard rule tightening')).length, 1);
+  // no line starts mid-sentence (the symptom of a replace that swallowed text)
+  for (const l of body) assert.ok(l === '' || /^[A-Z0-9*\-|`#>(\[]/.test(l) || /^\s/.test(l), 'a line starts mid-sentence: ' + l.slice(0, 50));
+});
+
 test('D12 is recorded in docs/DECISIONS.md and the v0.4.2 changelog and template.json agree', () => {
   const dec = readFileSync(path.join(TEMPLATE, 'docs/DECISIONS.md'), 'utf8');
   assert.match(dec, /^### D12\. /m);
   assert.match(dec, /2026-11-27/);
   for (const id of ['listDesignRequests', 'getDesignRequest', 'getDesignState', 'openDesignReview', 'requestDesignRevert', 'cancelDesignRequest', 'approveDesign', 'approveRevert', 'rejectDesign', 'cancelDesign', 'revertDesign', 'WARNED_CONFIRM_IDS']) assert.ok(dec.includes(id), id);
-  assert.match(dec, /checkbox/); assert.match(dec, /fetch->blob|fetch → blob|fetch-to-blob/);
+  assert.match(dec, /checkbox/); assert.match(dec, /fetch->blob/);
   const log = readFileSync(path.join(TEMPLATE, 'docs/CORE-CHANGELOG.md'), 'utf8');
   assert.match(log, /^## v0\.4\.2$/m);
+  assert.match(log, /^Design-layer action: the stricter scan newly flags/m);
   assert.equal(JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')).version, '0.4.2');
+});
+
+test('D12 runtime restrictions exist in the core: untrusted events ignored, h() throws, ctx.ui.$ scoped, showDialog hands back only close', () => {
+  const kit = readFileSync(path.join(TEMPLATE, 'admin/ui/kit.js'), 'utf8');
+  assert.match(kit, /ev\.isTrusted !== true/);
+  assert.match(kit, /class DesignError/);
+  assert.match(kit, /name === "dialog"\) throw new DesignError/);
+  assert.match(kit, /TOP_LAYER_ATTRS/);
+  assert.match(kit, /export function designQuery\b/);
+  assert.match(kit, /return \{ close \}/);
+  assert.doesNotMatch(kit, /h\("dialog"/);
+  const ctx = readFileSync(path.join(TEMPLATE, 'admin/core/context.js'), 'utf8');
+  assert.match(ctx, /\$: kit\.designQuery, \$\$: kit\.designQueryAll/);
+  assert.match(ctx, /showDialog: kit\.designShowDialog/);
+});
+
+test('check-layers 5d scans code forms of popover / inert, not the word in copy text', () => {
+  const d = fresh();
+  const orig = read(d, 'public/app.js');
+  write(d, 'public/app.js', orig + "\nvar copy = 'The inert gas and the popover menu are described here';\n");
+  assert.equal(layers(d).status, 0, layers(d).out);
+  for (const code of ["var o = { popover: 'auto' };", "var x = {}; x.inert = true;", "var s = '<p popover=auto>x</p>';", "var x = {}; x.setAttribute('inert', '');"]) {
+    write(d, 'public/app.js', orig + '\n' + code + '\n');
+    assert.equal(layers(d).status, 1, code);
+  }
 });

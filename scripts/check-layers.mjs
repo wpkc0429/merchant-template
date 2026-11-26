@@ -237,7 +237,8 @@ for (const f of designFiles) {
 const D12_RULES = [
   [/\b(showModal|showPopover|hidePopover|togglePopover|requestFullscreen|requestPointerLock|exitFullscreen|exitPointerLock)\b/, 'dialog/popover/fullscreen/pointer-lock API (D12)'],
   [/<\s*dialog\b|createElement\(\s*['"]dialog['"]/i, 'the dialog tag (D12)'],
-  [/\b(popover|inert|popovertarget)\b/i, 'the popover / inert attribute (D12)'],
+  // attribute / property forms only (a tag attribute, .popover, { popover: ... }, setAttribute('popover')), not the word inside copy text
+  [/<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)|\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i, 'the popover / inert attribute (D12)'],
   [/\.\s*(click|submit|requestSubmit|dispatchEvent)\s*\(/, 'programmatic click / submit / dispatchEvent (D12)'],
   [/\bnew\s+(Mouse|Keyboard|Pointer|Input|Focus|Touch|Wheel|Custom|UI|Submit)?Event\b/, 'constructing a synthetic event (D12)'],
   [/confirm-(yes|no|ok|cancel|warning|detail)\b/i, 'a core confirmation control id (D12)']

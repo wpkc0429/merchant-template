@@ -9,6 +9,11 @@ import { t } from "../lib/design.js";
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
 const BLOCKED_ATTRS = new Set(["innerhtml", "outerhtml", "srcdoc", "action", "formaction", "ping", "http-equiv", "is", "xlink:href"]);
+// D12 (v0.4.2): the design layer can neither create its own dialog / popover / inert region nor wire a control to one. The tag and these
+// attributes make h() THROW (a design error: the view fails to mount and the core shows the built-in view), they are not silently dropped.
+// Only the core creates dialogs, with document.createElement in showDialog below, never through h().
+const TOP_LAYER_ATTRS = new Set(["popover", "popovertarget", "popovertargetaction", "inert", "commandfor", "command", "interestfor"]);
+export class DesignError extends Error { constructor(msg) { super(msg); this.name = "DesignError"; } }
 const URL_ATTRS = new Set(["src", "href", "poster", "srcset", "data", "cite"]);
 const allowedOrigins = new Set();
 
@@ -36,12 +41,16 @@ function urlOK(v, attr = "") {
 }
 
 export function h(tag, attrs, ...kids) {
-  const name = String(tag).toLowerCase();
+  if (typeof tag !== "string") throw new DesignError("h(): the tag must be a string literal name");
+  const name = tag.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new DesignError(`h(): "${tag}" is not a plain lower-case tag name`);
+  if (name === "dialog") throw new DesignError("h(): <dialog> is created by the core only (use ctx.ui.showDialog)");
   if (BLOCKED_TAGS.has(name)) { refuse(`<${name}> element`); return document.createComment(`blocked <${name}>`); }
-  const el = document.createElement(tag);
+  const el = document.createElement(name);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
     const lk = k.toLowerCase();
+    if (TOP_LAYER_ATTRS.has(lk)) throw new DesignError(`h(): the "${k}" attribute is refused (popover / inert / command attributes)`);
     if (lk.startsWith("on")) {
       if (typeof v === "function") el.addEventListener(lk.slice(2), v); else refuse(`string event handler "${k}"`);
       continue;
@@ -89,6 +98,28 @@ export function clear(el) { el.replaceChildren(); return el; }
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+// ── What the design layer gets (ctx.ui.$, $$, showDialog): restricted views of the helpers above ──
+const isCoreNode = (el) => Boolean(el.closest("dialog") || el.closest("#toasts") || el.closest("[data-core]") || el.closest("#core-preview-banner, #core-preview-banner-spacer"));
+/** True when `root` is an element the design layer may search: not the document, html, body, or anything inside / containing core UI. */
+function searchableRoot(root) {
+  if (!(root instanceof Element)) return false;
+  if (root === document.documentElement || root === document.body) return false;
+  if (root.closest("dialog")) return false; // a dialog's content is built by the dialog's owner; design code searches its own screen
+  return !(root.querySelector("dialog, #toasts, [data-core], #core-preview-banner, #core-preview-banner-spacer"));
+}
+/** ctx.ui.$: needs an explicit root element; never reaches outside it and never returns a node of a core dialog, toast or banner. */
+export function designQuery(sel, root) {
+  if (!searchableRoot(root)) { console.warn("[design] ui.$ refused: pass an element you created (not document, body or a container of core UI)"); return null; }
+  const el = root.querySelector(String(sel));
+  return el && !isCoreNode(el) ? el : null;
+}
+export function designQueryAll(sel, root) {
+  if (!searchableRoot(root)) { console.warn("[design] ui.$$ refused: pass an element you created (not document, body or a container of core UI)"); return []; }
+  return [...root.querySelectorAll(String(sel))].filter((el) => !isCoreNode(el));
+}
+/** ctx.ui.showDialog for design code: the same dialog, but only {close} comes back (no element to click, query or edit). */
+export function designShowDialog(opts) { const { close } = showDialog(opts); return { close }; }
+
 // ── Branding (data from lib/session.js -> CSS variables; core applies it after every screen mount) ─
 const HEX = /^#[0-9a-fA-F]{6}$/;
 export function applyBranding(branding, name) {
@@ -135,14 +166,17 @@ export function toast(message, kind = "ok") {
 // ── Dialogs (native <dialog>; a bottom sheet on phones) ────────────────
 /** Returns {dialog, close}. `content` is a Node; actions are [{label, kind, onClick}] (onClick may return false to stay open). */
 export function showDialog({ title, content, actions = [], onClose, wide = false }) {
-  const dialog = h("dialog", { class: `dlg${wide ? " dlg--wide" : ""}` });
+  const dialog = document.createElement("dialog");
+  dialog.className = `dlg${wide ? " dlg--wide" : ""}`;
   const close = (result) => { dialog.close(result); };
   const foot = h("div", { class: "dlg__foot" });
   for (const a of actions) {
     const b = button(a.label, {
       kind: a.kind || "ghost",
       type: "button",
-      onClick: async () => {
+      onClick: async (ev) => {
+        // D12: only a real person confirms. A synthetic click (el.click(), dispatchEvent) has isTrusted === false and is ignored.
+        if (!ev || ev.isTrusted !== true) return;
         const keep = a.onClick ? await busy(b, () => a.onClick({ close })) : undefined;
         if (keep !== false && a.close !== false) close(a.label);
       },

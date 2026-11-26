@@ -414,6 +414,15 @@ is simply absent; for any new wording add keys by reusing existing ones or write
 
 ## 11. Known limits (be honest with the merchant)
 
+### Dialogs, input and DOM reach (decision D12, v0.4.2)
+
+The core owns every dialog, every confirmation and the fixed warnings. The scan and the runtime therefore refuse the following in design code (rule ids in `check-design.mjs` output; fixes in `.claude/skills/admin-design/references/guard-failures.md`):
+
+- **No dialog, popover, fullscreen or pointer lock of your own** (`js/dialog-api`, `js/dialog-element`, `js/popover-inert`): no `h("dialog")`, no `popover` / `inert` attributes, no `showModal()` / `show()` / `close()` / `requestFullscreen()`. Use `ctx.ui.showDialog` (it returns only `{ close }`; its action buttons also receive `{ close }`). At runtime `h()` throws a design error for the dialog tag and these attributes, and the screen falls back to the built-in one.
+- **No programmatic clicks, events or submits** (`js/synthetic-input`, `js/core-ui-selector`): no `dispatchEvent`, `new Event` / `MouseEvent` / `KeyboardEvent`, `requestSubmit`, `.submit()`, no `.click()` except on a hidden file input you built with `h("input", { type: "file" })`, no strings naming the core's confirm controls. At runtime every core dialog button ignores events that are not real user input, so a confirmation cannot be answered by code.
+- **Stay inside your own subtree** (`js/dom-escape`): no `ownerDocument`, `getRootNode`, `parentNode`, `parentElement`, `closest`, `firstChild` / `lastChild` / `childNodes` / `first|lastElementChild`, siblings, `getElementById`, `relatedTarget`; `querySelector(All)` only on `root` or an element built in the same file; `ctx.ui.$` / `$$` need that element as the second argument (at runtime they refuse `document`, `body` and anything near a dialog, and never return a core node). `children` is allowed (it only walks down).
+- **`ctx` is the module's own argument** (`js/ctx-shadow`, `js/ctx-unknown`): do not shadow or re-assign it, do not index it (`ctx.ui["$"]`), spread it or enumerate it (`Object.values(ctx.ui)`).
+
 Static scanning is conservative defence in depth, not a sandbox: design views are JavaScript running in the admin
 origin. A determined, obfuscated payload could in theory evade the scan; the real controls are (1) the core never
 puts tokens or the network in `ctx`, (2) the safe builder `ctx.ui.h`, (3) a strict CSP when serving (README

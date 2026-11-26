@@ -33,7 +33,7 @@ export default async function reports(root, ctx) {
   let seq = 0;
   async function load() {
     const my = ++seq;
-    const prev = [...out.childNodes];
+    const prev = [...out.children];
     clear(out).append(loading());
     let sales, products = null, prodErr = null;
     try {

@@ -72,11 +72,12 @@ export function imagesSection(ctx, { product, canEdit }) {
     }
     uploadBtn.disabled = true;
     const items = take.map((file) => {
-      const bar = h("div", { class: "bar" }, h("span", {}));
+      const barFill = h("span", {});
+      const bar = h("div", { class: "bar" }, barFill);
       const status = h("span", { class: "upl__status" }, t("img.queue.waiting"));
       const row = h("div", { class: "upl", "data-testid": "upload-item" }, h("div", { class: "upl__name" }, file.name), status, bar);
       queue.append(row);
-      return { file, row, bar: bar.firstChild, status };
+      return { file, row, bar: barFill, status };
     });
     for (const it of items) {
       try {
