@@ -1,9 +1,12 @@
 {
   "public/_headers": "f4b1f53c26d9ec04972ecb1d20ea1f78a0f6ee7814c462f17abaaafb9844b48f",
-  "public/commerce/api.js": "a60b0e4ccbe50fd9e8fb26797b4c108213d16b3c67727cc53f2657cf64bccc8c",
+  "public/commerce/api.js": "d00e9d9080eb0e2a58463e83a71d63da9601a814d41cdca33dd2a53d6555edc7",
   "public/commerce/cart.js": "aa5ab43a491146bdd0d5c1479f47df61989745182bd3795bd1da6748823835b2",
-  "public/commerce/checkout.js": "8c532e0e0daef344353dab9c433dadc119dbc065304235c8afb319b33a2cce94",
+  "public/commerce/checkout.js": "8aef89443f4a3bea2b73e0cb071a70fb4e6fdc82d1723b50d362247ca5337abe",
+  "public/commerce/content-allowlist.js": "c23ab8736a8ecc30301035827890a73bc654b805fb6457498c2cbca8e449fc4d",
+  "public/commerce/content-allowlist.json": "61b53075c279364f7d1382f877c6a8d0d3d23e50b837e5c3c80d337e1c528541",
+  "public/commerce/content.js": "e8b0da291eb951c579d5f1fb7ce7bdbdf65b850e0dde0b2519fcb4db7ea25cda",
   "public/commerce/local-config.js": "d248837ecb68d3e9156609e479868971fe9a63a40640afbf805007e4191904a5",
-  "public/commerce/public-api.json": "dcf33cbb9711adaf6aa918c81fcc8eb285a09dd2f742262d9b1e2507a4740dde",
+  "public/commerce/public-api.json": "8e7feac1413d9db421d108c50e9ae3351b80ca81520ad706917111dd694c512e",
   "public/config.js": "108165659b2539663ed89e188b3d1077a5475404429d682348b806eff4e7915d"
 }
