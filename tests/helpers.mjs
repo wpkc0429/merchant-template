@@ -56,6 +56,9 @@ export function makeTemplateCopy(version, mutate = () => {}, { tag = true, dirty
   const tj = JSON.parse(read(dir, 'template.json'));
   tj.version = version;
   write(dir, 'template.json', JSON.stringify(tj, null, 2) + '\n');
+  // The stand-in models a hypothetical NEXT release: the real in-progress section (## vX.Y.Z (UNRELEASED ...)) of the changelog is not part of it
+  // (its Design-layer action lines would block every fixture sync until acknowledged).
+  write(dir, 'docs/CORE-CHANGELOG.md', read(dir, 'docs/CORE-CHANGELOG.md').replace(/^## v\d+\.\d+\.\d+ \(UNRELEASED[\s\S]*?(?=^## v\d)/m, ''));
   mutate(dir);
   const a = node(['scripts/check-layers.mjs', '--update'], dir);
   const b = node(['scripts/check-design.mjs', '--update'], path.join(dir, 'admin'));
