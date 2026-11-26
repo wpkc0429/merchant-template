@@ -34,7 +34,7 @@ export default function shell(root, ctx) {
       h("div", { class: "sheet-who" }, ctx.session.userEmail),
       h("button", { class: "sheet-link", type: "button", "data-testid": "logout-sheet", onclick: () => ctx.auth.logout() }, icon("logout"), h("span", {}, t("nav.logout"))));
     const { close } = showDialog({ title: t("nav.more"), content: list, actions: [{ label: t("nav.close"), kind: "ghost" }] });
-    list.addEventListener("click", (e) => { if (e.target.closest("a")) close(); });
+    for (const a of list.querySelectorAll("a")) a.addEventListener("click", () => close());
   }
 
   function setActive(key) {

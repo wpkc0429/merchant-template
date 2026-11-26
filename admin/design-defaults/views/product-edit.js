@@ -36,6 +36,7 @@ export default async function productEdit(root, ctx) {
     active.input.disabled = dis;
     active.input.dataset.testid = "f-active";
 
+    const slugField = field(t("product.slug"), slug, { pointer: "/slug", hint: t("product.slugHint") });
     let slugTouched = Boolean(product);
     slug.addEventListener("input", () => { slugTouched = true; });
     subtitle.addEventListener("input", () => {
@@ -45,7 +46,7 @@ export default async function productEdit(root, ctx) {
     const basics = card(h("div", { class: "card__head" }, h("h2", {}, t("product.basics"))),
       field(t("product.title"), title, { pointer: "/title" }),
       field(t("product.subtitle"), subtitle, { pointer: "/subtitle", hint: t("product.subtitleHint") }),
-      field(t("product.slug"), slug, { pointer: "/slug", hint: t("product.slugHint") }),
+      slugField,
       field(t("product.description"), desc, { pointer: "/description" }),
       active.el);
 
@@ -118,12 +119,13 @@ export default async function productEdit(root, ctx) {
     } else {
       catCard.append(naToggle.el);
       const list = h("div", { class: "cat-pick", "data-testid": "cat-pick" });
-      for (const c of cats.filter((x) => x.slug !== NEW_ARRIVALS_SLUG)) {
+      const pickable = cats.filter((x) => x.slug !== NEW_ARRIVALS_SLUG);
+      for (const c of pickable) {
         const box = h("input", { type: "checkbox", checked: picked.has(c.id), disabled: dis, "data-cat-id": c.id });
         catBoxes.push({ id: c.id, box });
         list.append(h("label", { class: "check", style: { paddingLeft: `${c.depth * 18}px` } }, box, h("span", {}, c.name)));
       }
-      catCard.append(list.childNodes.length ? list : h("p", { class: "muted" }, t("product.categories.none")));
+      catCard.append(pickable.length ? list : h("p", { class: "muted" }, t("product.categories.none")));
     }
 
     // ── Collect / save ─────────────────────────────────────────────────
@@ -164,7 +166,7 @@ export default async function productEdit(root, ctx) {
               actions: [{ label: t("product.stale.later"), kind: "ghost" }, { label: t("product.stale.reload"), kind: "primary", onClick: () => { ctx.navigate(`/products/${product.id}`, { replace: true }); } }],
             });
           } else if (e.status === 422 || e.status === 409) {
-            if (e.status === 409) { setFieldError(slug.closest(".field"), t("product.err.dup")); toast(t("product.err.dupToast"), "error"); }
+            if (e.status === 409) { setFieldError(slugField, t("product.err.dup")); toast(t("product.err.dupToast"), "error"); }
             else showFormError(formEl, e);
           } else toast(errorMessage(e), "error");
         }

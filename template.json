@@ -1,6 +1,6 @@
 {
   "name": "merchant-template",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "isTemplate": true,
   "description": "Default merchant template: storefront (repo root) + admin (admin/). See README.md and docs/TEMPLATE-NOTES.md.",
   "sites": {

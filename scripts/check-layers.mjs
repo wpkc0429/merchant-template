@@ -27,6 +27,8 @@
         config.js holds the real apiBase / publishableKey, is protected only by
         its hash in the manifest, and leftover placeholders are just a warning.
      5. Strict CSP: public/_headers must exist and carry a strict Content-Security-Policy (script-src 'self' only, object-src/base-uri/frame-ancestors locked down); an inline <script>/on*= in index.html is an error in the template, a warning in a merchant repo.
+     5d. (D12, v0.4.2) No dialog tag, popover/inert attribute, dialog/popover/fullscreen/pointer-lock
+        method, programmatic click/submit/dispatchEvent or synthetic Event in the design layer.
      6. Prints a sha256 manifest of public/commerce/, public/config.js and public/_headers.
    ============================================================ */
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
@@ -224,6 +226,27 @@ for (const f of designFiles) {
   const src = stripComments(readFileSync(f, 'utf8'));
   if (/\b(eval|Function)\s*\(|\bdocument\.write(ln)?\s*\(|\bcreateContextualFragment\b/.test(src)) fail(`${rel(f)}: eval / new Function / document.write / createContextualFragment are forbidden in the design layer`);
   if (/(innerHTML|outerHTML)\s*[+]?=[^;\n]*\bcontent\.(get|all)\(|insertAdjacentHTML\([^;\n]*\bcontent\.(get|all)\(/.test(src)) fail(`${rel(f)}: content values must not be assigned to innerHTML; use ShopCommerce.content.text/richText/link/image or esc()`);
+}
+
+/* ---------- 5d: no dialogs, popovers, fullscreen or synthetic input in the design layer (D12, v0.4.2) ---------- */
+
+// The storefront design layer builds its screens as strings and uses querySelector / closest on its own #app (its event
+// delegation depends on them), so DOM traversal is NOT scanned here (the admin scan, which has an own-element rule, does).
+// What no storefront screen needs: the dialog tag, the popover / inert attributes, the dialog / popover / fullscreen /
+// pointer-lock methods, and programmatic clicks, events or submits. Comments are stripped; strings are scanned on purpose.
+const D12_RULES = [
+  [/\b(showModal|showPopover|hidePopover|togglePopover|requestFullscreen|requestPointerLock|exitFullscreen|exitPointerLock)\b/, 'dialog/popover/fullscreen/pointer-lock API (D12)'],
+  [/<\s*dialog\b|createElement\(\s*['"]dialog['"]/i, 'the dialog tag (D12)'],
+  // attribute / property forms only (a tag attribute, .popover, { popover: ... }, setAttribute('popover')), not the word inside copy text
+  [/<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)|\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i, 'the popover / inert attribute (D12)'],
+  [/\.\s*(click|submit|requestSubmit|dispatchEvent)\s*\(/, 'programmatic click / submit / dispatchEvent (D12)'],
+  [/\bnew\s+(Mouse|Keyboard|Pointer|Input|Focus|Touch|Wheel|Custom|UI|Submit)?Event\b/, 'constructing a synthetic event (D12)'],
+  [/confirm-(yes|no|ok|cancel|warning|detail)\b/i, 'a core confirmation control id (D12)']
+];
+for (const f of designFiles) {
+  // comments blanked with their newlines kept, so the reported line numbers are the real ones
+  const lines = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/(^|[\s;{}(),])\/\/[^\n]*/g, '$1').split('\n');
+  lines.forEach((ln, i) => { for (const [re, label] of D12_RULES) if (re.test(ln)) fail(`${rel(f)}:${i + 1}: forbidden in design layer: ${label}`); });
 }
 
 /* ---------- 6: hash manifest ---------- */

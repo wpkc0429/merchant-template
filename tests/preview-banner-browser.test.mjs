@@ -11,3 +11,9 @@ test('preview banner in a real Chromium (skips cleanly without Playwright)', { t
   process.stdout.write(r.stdout || '');
   assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
 });
+
+test('D12 runtime restrictions in a real Chromium: synthetic input never confirms a core dialog, h() refuses dialog / popover / inert, ctx.ui.$ is scoped (skips cleanly without Playwright)', { timeout: 280000 }, () => {
+  const r = spawnSync(process.execPath, [path.join(TEMPLATE, 'admin', 'e2e', 'd12-runtime.mjs')], { encoding: 'utf8', timeout: 270000 });
+  process.stdout.write(r.stdout || '');
+  assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
+});

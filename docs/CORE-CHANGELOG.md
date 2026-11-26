@@ -13,6 +13,12 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.4.2
+
+Guard hardening (decision D12, approved by the owner on 2026-11-27) in two layers. Static: the design-layer scans refuse dialog, popover, fullscreen and pointer-lock use (rules js/dialog-api, js/dialog-element, js/popover-inert), synthetic input and auto-confirm (js/synthetic-input, js/core-ui-selector) and traversal out of the design's own subtree, ctx shadowing and enumeration (js/dom-escape, js/ctx-shadow, js/ctx-unknown); the storefront scan (scripts/check-layers.mjs 5d) covers the dialog and synthetic-input rules. Runtime (admin core, only restrictions, no new ctx function): h() throws on the dialog tag and the popover / inert / command attributes, core dialogs (confirmations and fixed warnings) ignore untrusted (synthetic) events, ctx.ui.$ / $$ are scoped to an element root and never return core dialog, toast or banner nodes, ctx.ui.showDialog returns only { close }. Human-reviewed core change; manifests re-locked with `--update` on the branch `core/guard-hardening-0.4.2`; nothing is tagged.
+
+Design-layer action: the stricter scan newly flags existing design code, listed here: this template's own design and design-defaults needed four small rewrites that a merchant design copied from them needs too: views/shell.js (e.target.closest("a") replaced by a listener per link), views/product-edit.js (slug.closest(".field") replaced by the field wrapper variable; list.childNodes.length replaced by a count), parts/images-section.js (bar.firstChild replaced by a variable), views/reports.js (out.childNodes replaced by out.children). Any merchant design that uses .closest(, firstChild / lastChild / childNodes / firstElementChild / lastElementChild, ctx.ui.$ without an element, .click( on anything but a hidden file input, h("dialog"), popover / inert, dispatchEvent or new Event must rewrite that code.
+
 ## v0.4.1
 
 Banner hardening (low findings of the independent review of v0.4.0). Human-reviewed core change; manifests re-locked with `--update` on the branch `core/banner-hardening-0.4.1`; nothing is tagged.

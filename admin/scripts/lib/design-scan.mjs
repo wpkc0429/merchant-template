@@ -30,7 +30,31 @@ export const BANNED_IDENTIFIERS = new Set([
 export const BANNED_BARE = new Set(["self", "top", "parent", "frames", "opener"]);
 /** String literals equal to one of these (whole value) are refused: they can only be used to reach the above by name. */
 const BANNED_STRINGS = new Set([...BANNED_IDENTIFIERS, ...BANNED_BARE, "script", "iframe", "frame", "frameset", "embed", "object", "applet", "base", "meta", "portal", "action", "formaction", "formAction", "prototype", "defaultView", "ownerDocument", "contentWindow", "contentDocument", "parentNode", "parentElement"]);
-const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal)\b/i;
+// ── v0.4.2 (D12): dialogs, popovers, synthetic input, DOM traversal ──
+// The design layer builds its screens with ctx.ui.h; the CORE owns every confirmation dialog. These rules make sure design
+// code cannot open its own top-layer UI, fake a click on a core control, or climb out of its own subtree to reach one.
+/** Dialog, popover, fullscreen and pointer-lock methods: never needed by a screen. (.show( and .close( are handled by receiver.) */
+export const DIALOG_API = new Set(["showModal", "showPopover", "hidePopover", "togglePopover", "requestFullscreen", "requestPointerLock", "exitFullscreen", "exitPointerLock", "requestClose"]);
+/** The popover and inert attributes / properties (also catches h("div", { popover: "auto" }), el.popover = ..., { inert: true }). */
+export const POPOVER_INERT = new Set(["popover", "inert", "popoverTargetElement", "popovertarget", "popovertargetaction", "popoverTargetAction"]);
+/** Programmatic input: dispatching events, requesting submits, constructing events. `.click(` / `.submit(` are handled by receiver. */
+export const SYNTHETIC_INPUT = new Set(["dispatchEvent", "requestSubmit", "Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "InputEvent", "FocusEvent", "SubmitEvent", "TouchEvent", "WheelEvent", "UIEvent", "ClipboardEvent", "DragEvent"]);
+/** Ways to reach an element outside the design layer's own subtree (names that are never legitimate for a screen). */
+export const DOM_ESCAPE = new Set(["ownerDocument", "getRootNode", "parentNode", "parentElement", "offsetParent", "composedPath", "getElementById", "getElementsByClassName", "getElementsByTagName", "getElementsByName", "elementFromPoint", "elementsFromPoint", "previousSibling", "nextSibling", "previousElementSibling", "nextElementSibling", "assignedSlot", "firstChild", "lastChild", "childNodes", "firstElementChild", "lastElementChild", "relatedTarget", "srcElement", "originalTarget", "explicitOriginalTarget"]);
+/** Escapes that are only a problem as a PROPERTY (the bare word is a normal variable or data key). */
+const DOM_ESCAPE_DOT = new Set(["view"]);
+/** Selector-style methods: allowed only on an element the file created itself (see selectorAllowed). */
+const SELECTOR_METHODS = new Set(["querySelector", "querySelectorAll"]);
+/** .closest( climbs OUT of the design's subtree (to body, to core dialogs): refused everywhere; keep a reference to the element you need instead. */
+const CLIMB_METHODS = new Set(["closest"]);
+/** Whole-string values that can only be used to build or reach the above by name (computed access is also refused). */
+/** "dialog" is refused only as a call argument (h("dialog")): role: "dialog" is just an ARIA value. */
+const DIALOG_STRINGS = new Set(["dialog", "popover", "inert"]);
+const NAMED_API_STRINGS = new Set([...DIALOG_API, ...SYNTHETIC_INPUT, ...DOM_ESCAPE, ...SELECTOR_METHODS, ...CLIMB_METHODS, "showDialog", "confirmDialog"]);
+/** Core confirmation controls named in a string (ids, test ids, selectors): "confirm-yes", "confirm-warning", ... */
+const CORE_CONFIRM_REF = /confirm-(yes|no|ok|cancel|warning|detail|dialog|title|text)\b/i;
+
+const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal|dialog)\b/i;
 const SCHEME_IN_STRING = /(javascript|vbscript)\s*:|data\s*:\s*text\/html|:\/\//i;
 
 const KEYWORDS_BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await", "instanceof"]);
@@ -163,9 +187,115 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
   const at = (k) => toks[k];
   const isP = (tk, val) => tk && tk.t === "punct" && tk.v === val;
 
+  // ── helpers for the v0.4.2 rules ──
+  // ctxNames: names that are PURE aliases of ctx, ctx.actions, ctx.data or ctx.auth (never ctx.ui, never computed / spread / called). The only
+  // member of those namespaces the scan needs to treat specially is ctx.auth.passwordSetup.submit (the core's own function).
+  const ctxNames = new Set(["ctx"]);
+  const uiNames = new Set(["h"]);    // names of ctx.ui builders (the elements they return belong to this file)
+  const PURE_NS = new Set(["actions", "data", "auth"]);
+  const authNames = new Set();
+  const uiNs = new Set(["ui"]);      // names that hold the whole ctx.ui object
+  for (let k = 1; k < toks.length; k++) {
+    if (!(toks[k].t === "id" && toks[k].v === "ctx") || !isP(toks[k - 1], "=")) continue;
+    let seg = null, end = k + 1;
+    if (isP(toks[k + 1], ".") && toks[k + 2] && toks[k + 2].t === "id") { seg = toks[k + 2].v; end = k + 3; }
+    const pure = !isP(toks[end], ".") && !isP(toks[end], "?.") && !isP(toks[end], "[") && !isP(toks[end], "(");
+    const isUi = seg === "ui" && pure;
+    const okNs = seg === null || PURE_NS.has(seg);
+    if (isUi && toks[k - 2] && toks[k - 2].t === "id") uiNs.add(toks[k - 2].v);
+    if (toks[k - 2] && toks[k - 2].t === "id" && pure && okNs) { ctxNames.add(toks[k - 2].v); if (seg === "auth") authNames.add(toks[k - 2].v); continue; }
+    if (isP(toks[k - 2], "}") && pure) {
+      for (let j = k - 3; j >= 0 && !isP(toks[j], "{"); j--) {
+        if (toks[j].t !== "id") continue;
+        if (isUi) uiNames.add(toks[j].v);
+        else if (okNs && (seg === "auth" || (seg === null && toks[j].v === "auth") ? authNames.add(toks[j].v) || true : true) && !(seg === null && (toks[j].v === "ui" || (isP(toks[j - 1], ":") && toks[j - 2] && toks[j - 2].v === "ui")))) ctxNames.add(toks[j].v);
+        if (seg === null && ((toks[j].v === "ui" && !isP(toks[j - 1], ":")) || (isP(toks[j - 1], ":") && toks[j - 2] && toks[j - 2].v === "ui"))) uiNs.add(toks[j].v);
+      }
+    }
+  }
+  for (const n of ["$", "$$", "append", "toast", "copyText", "clear", "busy", "showDialog", "confirmDialog", "applyFieldErrors", "clearFieldErrors", "setFieldError", "showFormError"]) uiNames.delete(n);
+  const own = new Set(); // const/let/var X = <ctx.ui builder>(...)
+  for (let k = 3; k < toks.length; k++) {
+    if (!isP(toks[k - 1], "=") || toks[k - 2].t !== "id" || !(toks[k - 3].t === "id" && ["const", "let", "var"].includes(toks[k - 3].v))) continue;
+    const t0 = toks[k];
+    const viaUi = t0.t === "id" && uiNames.has(t0.v) && isP(toks[k + 1], "(");
+    const viaCtxUi = t0.t === "id" && t0.v === "ctx" && isP(toks[k + 1], ".") && toks[k + 2] && toks[k + 2].v === "ui" && isP(toks[k + 3], ".") && toks[k + 4] && !["$", "$$", "showDialog", "confirmDialog"].includes(toks[k + 4].v) && isP(toks[k + 5], "(");
+    if (viaUi || viaCtxUi) own.add(toks[k - 2].v);
+  }
+  // fileInputs: X = h("input", { ..., type: "file", ... }) (const, let, var or a plain assignment): the hidden file input behind an upload button
+  const fileInputs = new Set();
+  for (let k = 2; k < toks.length; k++) {
+    if (!isP(toks[k - 1], "=") || toks[k - 2].t !== "id") continue;
+    const t0 = toks[k];
+    const viaH = t0.t === "id" && uiNames.has(t0.v) && isP(toks[k + 1], "(") && toks[k + 2] && toks[k + 2].t === "str" && toks[k + 2].v === "input" && isP(toks[k + 3], ",") && isP(toks[k + 4], "{");
+    if (!viaH) continue;
+    let depth = 0;
+    for (let j = k + 4; j < toks.length; j++) {
+      if (isP(toks[j], "{") || isP(toks[j], "(") || isP(toks[j], "[")) depth++;
+      else if (isP(toks[j], "}") || isP(toks[j], ")") || isP(toks[j], "]")) { depth--; if (depth <= 0) break; }
+      else if (depth === 1 && toks[j].t === "id" && toks[j].v === "type" && isP(toks[j + 1], ":") && toks[j + 2] && toks[j + 2].t === "str" && toks[j + 2].v === "file") { fileInputs.add(toks[k - 2].v); break; }
+    }
+  }
+  /** index of the root identifier of the member chain whose last member is toks[k] (a.b.c: k points at c), or -1 when it starts at a call/index. */
+  const chainRoot = (k) => {
+    let j = k;
+    while (isP(toks[j - 1], ".") || isP(toks[j - 1], "?.")) {
+      const before = toks[j - 2];
+      if (!before || before.t !== "id") return -1;
+      j -= 2;
+    }
+    return j;
+  };
+  const ctxRooted = (k) => { const r = chainRoot(k); return r >= 0 && r !== k && ctxNames.has(toks[r].v); };
+  const coreSubmit = (k) => { const r = chainRoot(k); return r >= 0 && r !== k && ((toks[r].v === "ctx" && toks[r + 2] && toks[r + 2].v === "auth") || authNames.has(toks[r].v)); };
+  // { parentNode: 1 } as a plain object literal key is harmless data; as a destructuring pattern ({ parentNode: p } = el) it is an escape
+  const isObjectLiteralKey = (k) => {
+    if (!(isP(toks[k + 1], ":") && (isP(toks[k - 1], "{") || isP(toks[k - 1], ",")))) return false;
+    let d = 0, o = -1;
+    for (let j = k - 1; j >= 0; j--) {
+      if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) d++;
+      else if (isP(toks[j], "(") || isP(toks[j], "[")) { if (d === 0) return false; d--; }
+      else if (isP(toks[j], "{")) { if (d === 0) { o = j; break; } d--; }
+    }
+    if (o < 0) return false;
+    let c = -1; d = 0;
+    for (let j = o; j < toks.length; j++) { if (isP(toks[j], "{")) d++; else if (isP(toks[j], "}") && --d === 0) { c = j; break; } }
+    if (c < 0) return false;
+    const a1 = toks[c + 1], a2 = toks[c + 2];
+    if (isP(a1, "=") || isP(a1, "=>")) return false;
+    if (isP(a1, ")") && isP(a2, "=>")) return false;
+    const before = toks[o - 1];
+    return Boolean(before && (isP(before, "=") || isP(before, "(") || isP(before, ",") || isP(before, ":") || isP(before, "[") || isP(before, "?") || (before.t === "id" && ["return", "yield", "await", "of", "in"].includes(before.v))));
+  };
+  const ownReceiver = (k) => isP(toks[k - 1], ".") && toks[k - 2] && toks[k - 2].t === "id" && own.has(toks[k - 2].v) && !isP(toks[k - 3], ".") && !isP(toks[k - 3], "?.");
+  const fileInputReceiver = (k) => isP(toks[k - 1], ".") && toks[k - 2] && toks[k - 2].t === "id" && fileInputs.has(toks[k - 2].v) && !isP(toks[k - 3], ".") && !isP(toks[k - 3], "?.");
+  const selectorAllowed = (k) => {
+    const recv = toks[k - 2];
+    if (!recv) return false;
+    if (ownReceiver(k)) return true;
+    if (recv.t === "id" && recv.v === "root" && !isP(toks[k - 3], ".")) return true;
+    return false;
+  };
+  const dollarAllowed = (k) => {
+    if (!isP(toks[k + 1], "(")) return false;
+    let depth = 0, j = k + 1, commaAt = -1;
+    for (; j < toks.length; j++) {
+      if (isP(toks[j], "(") || isP(toks[j], "[") || isP(toks[j], "{")) depth++;
+      else if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) { depth--; if (depth === 0) break; }
+      else if (depth === 1 && isP(toks[j], ",") && commaAt < 0) commaAt = j;
+    }
+    if (commaAt < 0) return false;
+    const arg = toks[commaAt + 1];
+    return Boolean(arg && arg.t === "id" && (arg.v === "root" || own.has(arg.v)) && isP(toks[commaAt + 2], ")"));
+  };
+
   for (let k = 0; k < toks.length; k++) {
     const tk = toks[k], prev = at(k - 1), next = at(k + 1);
     if (tk.t === "str") {
+      const sv = tk.v.trim();
+      if (DIALOG_STRINGS.has(sv.toLowerCase()) && (sv.toLowerCase() !== "dialog" || isP(prev, "("))) out.push(v("js/dialog-element", `the string "${tk.v}" names the dialog tag or a popover/inert attribute: the core owns every dialog (use ctx.ui.showDialog)`, file, tk.line));
+      else if (NAMED_API_STRINGS.has(sv)) out.push(v("js/dom-escape", `the string "${tk.v}" names a forbidden DOM API (synthetic input, a dialog method or traversal out of the design's own subtree)`, file, tk.line));
+      if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", `the string "${tk.v.slice(0, 60)}" refers to a core confirmation control`, file, tk.line));
       if (BANNED_STRINGS.has(tk.v.trim())) out.push(v("js/banned-string", `the string "${tk.v}" names a forbidden API`, file, tk.line));
       if (HTML_IN_STRING.test(tk.v) || SCHEME_IN_STRING.test(tk.v)) out.push(v("js/html-or-url-in-string", `a string contains markup, a script scheme or an external URL: ${JSON.stringify(tk.v.slice(0, 60))}`, file, tk.line));
       if (prev && prev.t === "punct" && prev.v === "+" && toks[k - 2] && toks[k - 2].t === "str") out.push(v("js/string-concat", "concatenating string literals is refused (write the string whole, or use ctx.t)", file, tk.line));
@@ -173,6 +303,8 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
       continue;
     }
     if (tk.t === "tpl") {
+      if (/<\s*\/?\s*dialog\b/i.test(tk.v) || (/<[^>]*\s(popover|inert)\b/i.test(tk.v))) out.push(v("js/dialog-element", "a template contains a <dialog> or a popover/inert attribute", file, tk.line));
+      if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", "a template refers to a core confirmation control", file, tk.line));
       if (HTML_IN_STRING.test(tk.v) || SCHEME_IN_STRING.test(tk.v)) out.push(v("js/html-or-url-in-string", `a template contains markup, a script scheme or an external URL: ${JSON.stringify(tk.v.slice(0, 60))}`, file, tk.line));
       continue;
     }
@@ -181,6 +313,17 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     const afterDot = prev && (isP(prev, ".") || isP(prev, "?."));
 
     if (BANNED_IDENTIFIERS.has(name)) { out.push(v("js/forbidden-identifier", `"${name}" is not allowed in design code`, file, tk.line)); continue; }
+    if (DIALOG_API.has(name)) { out.push(v("js/dialog-api", `"${name}" is not allowed: design code may not open dialogs, popovers, fullscreen or pointer lock (use ctx.ui.showDialog; the core owns confirmations)`, file, tk.line)); continue; }
+    if (POPOVER_INERT.has(name)) { out.push(v("js/popover-inert", `"${name}" is not allowed: the popover and inert attributes and properties are refused`, file, tk.line)); continue; }
+    if (SYNTHETIC_INPUT.has(name)) { out.push(v("js/synthetic-input", `"${name}" is not allowed: design code may not dispatch or construct events or request a submit`, file, tk.line)); continue; }
+    if (DOM_ESCAPE.has(name) && !isObjectLiteralKey(k)) { out.push(v("js/dom-escape", `"${name}" is not allowed: design code may not reach elements outside its own subtree`, file, tk.line)); continue; }
+    if (afterDot && (name === "show" || name === "close") && isP(next, "(")) { out.push(v("js/dialog-api", `.${name}( is refused (it opens or closes a dialog); close a ctx.ui.showDialog dialog through the { close } argument of its action`, file, tk.line)); continue; }
+    if (afterDot && name === "submit" && !coreSubmit(k)) { out.push(v("js/synthetic-input", ".submit is refused (it submits a form programmatically)", file, tk.line)); continue; }
+    if (afterDot && name === "click" && !fileInputReceiver(k)) { out.push(v("js/synthetic-input", ".click is allowed only on a hidden file input this file created itself: const f = h('input', { type: 'file' }); f.click()", file, tk.line)); continue; }
+    if (afterDot && CLIMB_METHODS.has(name)) { out.push(v("js/dom-escape", `.${name}( climbs out of the design's own subtree and is refused: keep a reference to the element you need`, file, tk.line)); continue; }
+    if (afterDot && DOM_ESCAPE_DOT.has(name)) { out.push(v("js/dom-escape", `.${name} reaches the window and is refused`, file, tk.line)); continue; }
+    if (afterDot && SELECTOR_METHODS.has(name) && !selectorAllowed(k)) { out.push(v("js/dom-escape", `.${name}( is allowed only on an element this file created itself (a const from ctx.ui.h or another ctx.ui builder) or on root`, file, tk.line)); continue; }
+    if ((name === "$" || name === "$$") && !dollarAllowed(k) && !(!isP(next, "(") && (isP(next, ",") || isP(next, "}")) && (isP(prev, "{") || isP(prev, ",")))) { out.push(v("js/dom-escape", `${name}( queries the whole document unless given an element: pass an element this file created, or root, as the second argument`, file, tk.line)); continue; }
     if (BANNED_BARE.has(name) && !afterDot && !isP(next, ":")) { out.push(v("js/forbidden-identifier", `bare "${name}" refers to a window object (rename the variable)`, file, tk.line)); continue; }
 
     if (name === "import") {
@@ -222,6 +365,7 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     let depth = 1, j = k + 1;
     while (j < toks.length && depth) { if (isP(toks[j], "[")) depth++; else if (isP(toks[j], "]")) depth--; j++; }
     const inner = toks.slice(k + 1, j - 1);
+    if (inner.length === 1 && inner[0].t === "str" && ["click", "submit", "show", "close", "$", "$$", "showDialog", "confirmDialog", "closest"].includes(inner[0].v)) out.push(v("js/synthetic-input", `computed access to ["${inner[0].v}"] is refused (it can click, submit, open or close)`, file, toks[k].line));
     if (!inner.length || !SIMPLE_INDEX(inner)) out.push(v("js/computed-access", "computed member access with a non-trivial expression is refused (use a plain index, identifier or string literal)", file, toks[k].line));
   }
 
@@ -242,6 +386,54 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     if (!resolved.startsWith(root + "/") || resolved.includes("..")) out.push(v("js/import", `import "${s}" leaves ${root}/`, file, spec.line));
   }
 
+  // ── ctx must be the module's own argument: no shadowing, no re-assignment, no Object.* or spread over ctx ──
+  {
+    const braceDepth = new Array(toks.length).fill(0);
+    let d = 0;
+    toks.forEach((t, i) => { if (isP(t, "{")) d++; braceDepth[i] = d; if (isP(t, "}")) d--; });
+    const closeOf = (i) => { let dd = 0; for (let j = i; j < toks.length; j++) { if (isP(toks[j], "(")) dd++; else if (isP(toks[j], ")") && --dd === 0) return j; } return -1; };
+    for (let k = 0; k < toks.length; k++) {
+      const tk = toks[k];
+      if (tk.t === "id" && tk.v === "ctx" && !isP(toks[k - 1], ".") && !isP(toks[k - 1], "?.")) {
+        const p = toks[k - 1];
+        if (p && p.t === "id" && ["const", "let", "var", "function", "class"].includes(p.v)) out.push(v("js/ctx-shadow", "declaring another `ctx` hides the real one from the scan; use another name", file, tk.line));
+        else if (isP(toks[k + 1], "=") && !isP(toks[k + 1], "==")) out.push(v("js/ctx-shadow", "assigning to `ctx` is refused", file, tk.line));
+        else if (isP(toks[k + 1], "=>")) out.push(v("js/ctx-shadow", "an arrow parameter named `ctx` hides the real one; use another name", file, tk.line));
+        else if (p && p.t === "id" && p.v === "catch") out.push(v("js/ctx-shadow", "a catch parameter named ctx is refused", file, tk.line));
+      }
+      if (isP(tk, "(") && braceDepth[k] > 0) {
+        const c = closeOf(k), pv = toks[k - 1];
+        if (c > 0 && pv && !(pv.t === "id" && ["if", "for", "while", "switch", "with", "catch", "return", "typeof", "await", "in", "of", "void", "new", "throw", "else", "yield"].includes(pv.v)) && (isP(toks[c + 1], "=>") || isP(toks[c + 1], "{")) && (pv.t === "id" || isP(pv, "=") || isP(pv, ",") || isP(pv, "(") || isP(pv, ":") || isP(pv, "=>"))) {
+          // a nested function's parameter list (a top-level function is the module's own and may take ctx)
+          if (isP(toks[c + 1], "=>") || pv.t === "id") {
+            for (let j = k + 1; j < c; j++) if (toks[j].t === "id" && toks[j].v === "ctx" && !isP(toks[j - 1], ".")) out.push(v("js/ctx-shadow", "a nested function parameter named `ctx` hides the real one; use another name", file, toks[j].line));
+          }
+        }
+      }
+      // an operand that IS a ctx namespace object (not a call result, not plain data): ctx, ctx.ui, ctx.actions, or a bare alias of one
+      const nsOperand = (i) => {
+        const t0 = toks[i];
+        if (!t0 || t0.t !== "id") return false;
+        let j = i + 1, path = t0.v;
+        while ((isP(toks[j], ".") || isP(toks[j], "?.")) && toks[j + 1] && toks[j + 1].t === "id") { path += "." + toks[j + 1].v; j += 2; }
+        if (isP(toks[j], "(") || isP(toks[j], "[")) return false;
+        if (t0.v === "ctx") return Boolean(api && api[path]);
+        return path === t0.v && ((ctxNames.has(t0.v) && t0.v !== "t") || uiNs.has(t0.v));
+      };
+      if (tk.t === "id" && tk.v === "Object" && isP(toks[k + 1], ".") && toks[k + 2] && ["values", "entries", "assign", "fromEntries", "keys", "getOwnPropertyNames", "getOwnPropertyDescriptors", "getOwnPropertyDescriptor", "getPrototypeOf", "create", "defineProperty", "defineProperties"].includes(toks[k + 2].v) && isP(toks[k + 3], "(")) {
+        const c = closeOf(k + 3);
+        let dd = 0;
+        for (let j = k + 4; j < c; j++) {
+          if (isP(toks[j], "(") || isP(toks[j], "[") || isP(toks[j], "{")) dd++;
+          else if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) dd--;
+          const argStart = dd === 0 && (j === k + 4 || isP(toks[j - 1], ","));
+          if (argStart && nsOperand(j)) { out.push(v("js/ctx-unknown", `Object.${toks[k + 2].v} over ctx or one of its namespaces is refused (it can enumerate functions the guard cannot see by name)`, file, tk.line)); break; }
+        }
+      }
+      if (isP(tk, "...") && nsOperand(k + 1)) out.push(v("js/ctx-unknown", "spreading ctx or one of its namespaces is refused", file, tk.line));
+    }
+  }
+
   if (api) checkCtx(toks, api, file, out);
   return out;
 }
@@ -258,6 +450,7 @@ function checkCtx(toks, api, file, out) {
     while (j < toks.length && (isP(toks[j], ".") || isP(toks[j], "?.")) && toks[j + 1] && toks[j + 1].t === "id") { segs.push({ name: toks[j + 1].v, line: toks[j + 1].line }); j += 2; }
     return { segs, end: j };
   };
+  let afterIdx = 0;
   const checkSegs = (base, segs, line) => {
     let ns = base;
     for (const s of segs) {
@@ -266,6 +459,7 @@ function checkCtx(toks, api, file, out) {
       if (!list.includes(s.name)) { out.push(v("js/ctx-unknown", `${ns}.${s.name} is not in lib/public-api.json`, file, s.line || line)); return; }
       ns = `${ns}.${s.name}`;
     }
+    if (isP(toks[afterIdx], "[") && known(ns)) out.push(v("js/ctx-unknown", `computed access on ${ns} is refused`, file, line));
   };
 
   // pass 1: destructuring  const { a, b: c } = ctx[.ns]
@@ -307,11 +501,13 @@ function checkCtx(toks, api, file, out) {
     if (isP(toks[k - 1], ".") || isP(toks[k - 1], "?.")) continue;
     if (tk.v === "ctx") {
       if (isP(toks[k + 1], "[")) { out.push(v("js/ctx-unknown", "computed access on ctx is refused", file, tk.line)); continue; }
-      const { segs } = readChain(k);
+      const { segs, end } = readChain(k);
+      afterIdx = end;
       checkSegs("ctx", segs, tk.line);
     } else if (aliases.has(tk.v) && !isP(toks[k + 1], ":")) {
       if (isP(toks[k + 1], "[")) { out.push(v("js/ctx-unknown", `computed access on ${tk.v} is refused`, file, tk.line)); continue; }
-      const { segs } = readChain(k);
+      const { segs, end } = readChain(k);
+      afterIdx = end;
       checkSegs(aliases.get(tk.v), segs, tk.line);
     }
   }

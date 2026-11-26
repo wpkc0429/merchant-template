@@ -15,8 +15,8 @@ import { contentForm, contentField } from "../ui/content-form.js";
 import { mediaConfig } from "../lib/upload.js";
 
 const UI = {
-  h: kit.h, svg: kit.svg, append: kit.append, clear: kit.clear, $: kit.$, $$: kit.$$,
-  button: kit.button, busy: kit.busy, toast: kit.toast, showDialog: kit.showDialog, confirmDialog: kit.confirmDialog,
+  h: kit.h, svg: kit.svg, append: kit.append, clear: kit.clear, $: kit.designQuery, $$: kit.designQueryAll,
+  button: kit.button, busy: kit.busy, toast: kit.toast, showDialog: kit.designShowDialog, confirmDialog: kit.confirmDialog,
   field: kit.field, setFieldError: kit.setFieldError, clearFieldErrors: kit.clearFieldErrors, applyFieldErrors: kit.applyFieldErrors,
   showFormError: kit.showFormError, input: kit.input, textarea: kit.textarea, select: kit.select, toggle: kit.toggle,
   badge: kit.badge, loading: kit.loading, emptyState: kit.emptyState, errorState: kit.errorState, pageHeader: kit.pageHeader,
