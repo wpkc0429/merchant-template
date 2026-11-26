@@ -13,6 +13,17 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.2.1
+
+Security headers fix (audit findings H2 and M7 of the ecommerce launch checklist). Proposed, needs the owner's approval (docs/DECISIONS.md D1 amendment).
+
+Design-layer action: none
+
+* `public/_headers`: `form-action` now allows the ECPay payment hosts (production and stage), so the checkout form POST (`public/commerce/checkout.js`) is not blocked; added Strict-Transport-Security, Permissions-Policy and Cross-Origin-Opener-Policy. script-src and the rest of the CSP are unchanged. `connect-src` / `img-src` stay `https:` (pinning per merchant is a documented follow-up, see the file header).
+* `admin/deploy/nginx.conf.template`: added HSTS, Permissions-Policy and COOP; the CSP is unchanged.
+* `scripts/check-layers.mjs`: the CSP check also requires a `form-action` directive without a wildcard or bare scheme.
+* `scripts/commerce.manifest.json` and `admin/scripts/core.manifest.json` re-locked by the maintainer procedure.
+
 ## v0.2.0
 
 Decisions of 2026-11-25 (see docs/DECISIONS.md), all decided by the user. Core changes in short: strict CSP as a deployment

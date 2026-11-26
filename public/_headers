@@ -16,14 +16,32 @@
 #                               (imgCss in app.js). Style ATTRIBUTES cannot run code; style elements stay blocked.
 #   img-src 'self' data: https: product photos come from the platform's public image host (origin differs per platform
 #                               deployment) and the favicon is a data: URI.
-#   connect-src 'self' https:   the platform API (apiBase). Known limitation: not pinned to one origin because this
-#                               file is identical in every repo; pinning it per merchant is a possible follow-up.
-#   frame-ancestors 'none', object-src 'none', base-uri 'none', form-action 'self': no framing, plugins, <base> hijack.
+#   connect-src 'self' https:   the platform API (apiBase). Known limitation, deliberately kept (v0.2.1): this file is a
+#                               LOCKED, hash-protected file that sync-core overwrites with the template's copy, so
+#                               new-merchant cannot write per-merchant origins into it without every sync reverting
+#                               them (and without a per-merchant hash in commerce.manifest.json). Pinning needs a design
+#                               decision first (e.g. a merchant-owned, unlocked headers fragment merged at deploy time,
+#                               or per-merchant manifest handling in sync-core); until then the same applies to img-src.
+#   form-action 'self' + ECPay  checkout builds a <form method=POST> and submits it to the ECPay payment host returned by
+#                               the platform (public/commerce/checkout.js submitPaymentForm). Only the two ECPay payment
+#                               hosts are added (production and stage); everything else stays blocked. Chromium also
+#                               applies form-action to the redirect chain after the POST, so a 302 from ECPay to another
+#                               host would be blocked: verify with the ECPay sandbox before go-live and add that host if
+#                               it ever appears (Firefox does not check redirects). The return from ECPay to the shop is
+#                               a navigation initiated by ECPay's page, not governed by this policy.
+#   frame-ancestors 'none', object-src 'none', base-uri 'none': no framing, plugins, <base> hijack.
+#
+# Other headers: HSTS (1 year, includeSubDomains; no preload, a human decision), Permissions-Policy (all powerful features
+# off; the storefront needs none), COOP same-origin (no window.opener link to or from other origins; ECPay is reached by a
+# top-level navigation, not a popup, so payment is unaffected).
 #
 # An AI-edit PREVIEW environment must serve the same policy (it may add its own preview/API origins to connect-src and
 # img-src, never 'unsafe-inline' or 'unsafe-eval' for scripts).
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw; object-src 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin

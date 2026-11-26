@@ -203,6 +203,20 @@ test('storefront CSP: the template ships public/_headers (locked, hash-protected
   assert.doesNotMatch(idx, /<script(?![^>]*\bsrc=)/);
 });
 
+test('storefront CSP: form-action allows the ECPay payment hosts only, no inline-script allowance, and the extra security headers are present', () => {
+  const h = tplFile('public/_headers');
+  const csp = h.split(/\r?\n/).find((l) => /^\s+Content-Security-Policy:/.test(l));
+  const dirs = Object.fromEntries(csp.replace(/^\s+Content-Security-Policy:\s*/, '').split(';').map((p) => p.trim().split(/\s+/)).filter((a) => a[0]).map(([n, ...v]) => [n, v]));
+  assert.deepEqual(dirs['form-action'], ["'self'", 'https://payment.ecpay.com.tw', 'https://payment-stage.ecpay.com.tw']);
+  assert.deepEqual(dirs['script-src'], ["'self'"]);
+  assert.doesNotMatch(csp, /unsafe-eval|script-src[^;]*unsafe-inline|style-src 'self'[^;]*unsafe-inline/);
+  assert.match(h, /^\s+Strict-Transport-Security: max-age=\d{8,}/m);
+  assert.match(h, /^\s+Permissions-Policy: .*camera=\(\)/m);
+  assert.match(h, /^\s+Cross-Origin-Opener-Policy: same-origin/m);
+  const ng = tplFile('admin/deploy/nginx.conf.template');
+  for (const n of ['Strict-Transport-Security', 'Permissions-Policy', 'Cross-Origin-Opener-Policy']) assert.match(ng, new RegExp(`^\\s+add_header ${n} ".*" always;`, 'm'));
+});
+
 test('storefront CSP guard: a missing, CSP-less or weakened _headers fails check-layers; an inline script fails in the template and warns in a merchant repo', () => {
   const m = makeMerchant(); const d = m.dir;
   const orig = read(d, 'public/_headers');

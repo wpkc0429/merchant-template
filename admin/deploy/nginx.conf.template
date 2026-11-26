@@ -32,6 +32,11 @@ server {
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
+    # Transport and browser-feature hardening (the CSP above is unchanged). HSTS is only honoured over https, which
+    # Cloudflare terminates in front of this server.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
     # No filename hashes, so no long caching: browsers revalidate and a publish takes effect at once.
     add_header Cache-Control "no-cache" always;
 

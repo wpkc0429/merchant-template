@@ -179,6 +179,8 @@ function checkCsp(headersText, indexHtml, tpl = true) {
       need('base-uri', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
       need('frame-ancestors', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
       if (!dirs.has('default-src')) errors.push('CSP lacks default-src');
+      if (!dirs.has('form-action')) errors.push('CSP lacks form-action');
+      else if ((dirs.get('form-action') || []).some((v) => /^\*$|^https?:$|^data:$/i.test(v))) errors.push('CSP form-action must list explicit hosts (no wildcard or bare scheme)');
     }
   }
   const html = String(indexHtml || '').replace(/<!--[\s\S]*?-->/g, '');

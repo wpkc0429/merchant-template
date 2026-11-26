@@ -22,6 +22,10 @@ Production and every AI-edit preview environment must serve a strict CSP. It is 
   `on*=` attribute in `public/index.html` is an error in the template and a warning in a merchant repo) and exercised by the
   storefront browser test (`tests/e2e/serve-storefront.mjs` sends the real policy).
   The optional localhost override is loaded from `public/commerce/local-config.js`, not from an inline script.
+* **v0.2.1 amendment (PROPOSED, awaiting the owner's approval; branch `fix/csp-form-action-and-headers`)**: `form-action` is `'self'` plus the two ECPay payment hosts
+  (`https://payment.ecpay.com.tw`, `https://payment-stage.ecpay.com.tw`) because checkout POSTs a form to ECPay; HSTS, Permissions-Policy and
+  COOP are added to `public/_headers` and `admin/deploy/nginx.conf.template`. Pinning `connect-src` / `img-src` per merchant stays a follow-up: the file is
+  locked and overwritten by every sync, so per-merchant values need a design decision first (see the comments in `public/_headers`).
 * **Admin**: `admin/deploy/nginx.conf.template` sends the CSP on every response and `admin/deploy/Dockerfile` installs it; it is on by
   default, there is no switch to turn it off. Enforced by `admin/scripts/check-design.mjs` (step "deploy") and tested in
   `admin/scripts/test-guard.mjs`; the design e2e (D8) runs the admin under the policy.
