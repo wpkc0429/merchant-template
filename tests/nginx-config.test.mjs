@@ -22,7 +22,7 @@ function location(conf, head) {
   for (; j < conf.length; j++) { if (conf[j] === '{') depth++; else if (conf[j] === '}' && --depth === 0) break; }
   return conf.slice(start + 1, j);
 }
-const REQUIRED = ['Content-Security-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Strict-Transport-Security', 'Permissions-Policy', 'Cross-Origin-Opener-Policy', 'Cache-Control'];
+const REQUIRED = ['Content-Security-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Frame-Options', 'Strict-Transport-Security', 'Permissions-Policy', 'Cross-Origin-Opener-Policy', 'Cross-Origin-Resource-Policy', 'Cache-Control'];
 const headers = (block) => [...block.matchAll(/add_header\s+([A-Za-z-]+)\s/g)].map((m) => m[1]);
 
 describe('nginx.conf.template after envsubst', () => {

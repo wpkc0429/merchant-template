@@ -146,6 +146,48 @@ export function deployChecks(root) {
       if (!dirs.has("frame-ancestors") || dirs.get("frame-ancestors").join(" ") !== "'none'") bad("CSP frame-ancestors must be 'none'");
     }
   }
+  if (nginx !== null) {
+    // nginx does NOT inherit add_header into a location that defines its own add_header, so the server level must carry a CSP
+    // and every such location must repeat the full security header set with a CSP at least as strict as the server-level one.
+    const live = nginx.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    const locs = [];
+    let server = "", pos = 0;
+    const re = /\blocation\s+([^{;]*?)\s*\{/g;
+    for (let mm; (mm = re.exec(live)); ) {
+      let depth = 0, j = mm.index + mm[0].length - 1;
+      for (; j < live.length; j++) { if (live[j] === "{") depth++; else if (live[j] === "}" && --depth === 0) break; }
+      server += live.slice(pos, mm.index);
+      locs.push({ name: mm[1], body: live.slice(mm.index + mm[0].length, j) });
+      pos = j + 1; re.lastIndex = pos;
+    }
+    server += live.slice(pos);
+    const hdrs = (t) => [...t.matchAll(/add_header\s+([A-Za-z-]+)\s+"([^"]*)"\s*(always)?\s*;/gi)].map((x) => ({ n: x[1].toLowerCase(), val: x[2], always: !!x[3] }));
+    const parse = (p) => { const d = new Map(); for (const part of p.split(";")) { const [n, ...rest] = part.trim().split(/\s+/); if (n) d.set(n.toLowerCase(), rest.join(" ")); } return d; };
+    const serverCsp = hdrs(server).find((h) => h.n === "content-security-policy");
+    if (!serverCsp) v("deploy/csp-missing", "deploy/nginx.conf.template has no server-level `add_header Content-Security-Policy` (outside the location blocks)", "deploy/nginx.conf.template");
+    const REQUIRED = ["Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Permissions-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy", "Cache-Control"];
+    for (const loc of locs) {
+      if (!/add_header\b/.test(loc.body)) continue;
+      const hs = hdrs(loc.body);
+      const name = `location ${loc.name}`;
+      const lack = REQUIRED.filter((r) => !hs.some((h) => h.n === r.toLowerCase()));
+      if (lack.length) v("deploy/loc-headers", `${name} defines add_header but lacks the security headers: ${lack.join(", ")} (nginx does not inherit them)`, "deploy/nginx.conf.template");
+      const c = hs.find((h) => h.n === "content-security-policy");
+      if (!c) continue;
+      const weak = (msg) => v("deploy/csp-weak", `${name}: ${msg}`, "deploy/nginx.conf.template");
+      if (!c.always) v("deploy/csp-always", `${name}: the CSP add_header must end with \`always\``, "deploy/nginx.conf.template");
+      if (serverCsp && c.val.trim() === serverCsp.val.trim()) continue;
+      // not identical: it must still be at least as strict (default-src 'none' is the strictest base)
+      const d = parse(c.val);
+      const script = d.get("script-src");
+      const defNone = d.get("default-src") === "'none'";
+      if (script !== undefined ? script !== "'self'" && script !== "'none'" : !defNone) weak(`CSP script-src must be 'self' or 'none' (or absent under default-src 'none') (found: ${script ?? "not set"})`);
+      if (!d.has("default-src")) weak("CSP has no default-src");
+      for (const [n, val] of d) if (val.split(" ").some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) weak(`CSP ${n} must not contain unsafe-inline, unsafe-eval or a wildcard`);
+      for (const n of ["base-uri", "frame-ancestors"]) if (d.get(n) !== "'none'") weak(`CSP ${n} must be 'none'`);
+      if (!defNone && d.get("object-src") !== "'none'") weak("CSP object-src must be 'none'");
+    }
+  }
   if (docker === null) v("deploy/csp-missing", "deploy/Dockerfile is missing", "deploy/Dockerfile");
   else {
     if (!/COPY\s+deploy\/nginx\.conf\.template\s+\/etc\/nginx\/templates\/default\.conf\.template/.test(docker)) v("deploy/csp-dockerfile", "deploy/Dockerfile must install deploy/nginx.conf.template as /etc/nginx/templates/default.conf.template (the CSP is on by default and not optional)", "deploy/Dockerfile");

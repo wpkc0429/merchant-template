@@ -12,9 +12,16 @@ Decided by the owner on 2026-11-26. **Policy**: a locked-core change no longer n
 
 **v0.3.0 direction (decided by the owner, approved 2026-11-26)**: the design layer may READ the content store and DRY-RUN schemas, but must NOT register schemas or write content (save, publish, restore and so on stay core-owned actions behind permissions and human confirmation).
 
+**Owner approval, as recorded in chat on 2026-11-26** (verbatim):
+* Policy approval: "「可以」,政策改成擬建議的版本"
+* Tightening approval (guard rule, the `check-design` deploy rule: server-level CSP required, and every location that sets its own add_header must repeat the full security header set with a CSP at least as strict): "建議收緊 就收緊"
+* UX rule: "會影響到用戶體驗的再問我" (anything that changes the user experience goes back to the owner first).
+
+Approval was given in chat to the maintainer assistant. A human can contest or revoke it at any time by editing this decision.
+
 ## v0.3.0 (PROPOSED on branch core/content-store-0.3.0; become standing decisions when the human reviewer merges)
 
-Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, D10 template follow-up T1-T5) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and need the reviewer's approval.
+Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, platform template follow-up T1-T5 (platform label "D10", unrelated to this repo's D10)) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and need the reviewer's approval.
 
 ### D7. The storefront reads platform content at runtime; `content.js` stays the default copy
 

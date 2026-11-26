@@ -151,6 +151,19 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
     ok("deploy: CSP without `always` -> csp-always", /deploy\/csp-always/.test(dep(ng.replace("object-src 'none'\" always;", "object-src 'none'\";"))));
     ok("deploy: a Dockerfile that does not install the template -> csp-dockerfile", /deploy\/csp-dockerfile/.test(dep(ng, dk.replace(/^COPY deploy\/nginx\.conf\.template.*$/m, ""))));
     ok("deploy: a Dockerfile that strips the CSP -> csp-dockerfile", /deploy\/csp-dockerfile/.test(dep(ng, dk + "RUN sed -i '/Content-Security-Policy/d' /etc/nginx/templates/default.conf.template\n")));
+    // per-location rules: nginx does not inherit add_header into a location that sets its own
+    const locMsgs = (nginx) => { dep(nginx); return deployChecks(dir).map((x) => `${x.rule} ${x.msg}`).join("\n"); };
+    const inLoc = (head, fn) => { const i = ng.indexOf(`location ${head} {`); const j = ng.indexOf("\n    }", i); return ng.slice(0, i) + fn(ng.slice(i, j)) + ng.slice(j); };
+    ok("deploy: no server-level CSP (locations keep theirs) -> csp-missing", /deploy\/csp-missing/.test(dep(ng.replace(/^ {4}add_header Content-Security-Policy .*$/m, ""))));
+    ok("deploy: /site-config.js CSP weakened (unsafe-inline) -> csp-weak naming the location", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")))));
+    ok("deploy: /site-config.js CSP weakened (default-src *) -> csp-weak", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace("default-src 'self'", "default-src *")))));
+    ok("deploy: /site-config.js CSP without frame-ancestors -> csp-weak", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(" frame-ancestors 'none';", "")))));
+    ok("deploy: /content.schema.json CSP weakened (default-src *) -> csp-weak naming the location", /csp-weak location = \/content\.schema\.json/.test(locMsgs(inLoc("= /content.schema.json", (b) => b.replace("default-src 'none'", "default-src *")))));
+    ok("deploy: /content.schema.json CSP with script-src 'unsafe-inline' -> csp-weak", /csp-weak location = \/content\.schema\.json/.test(locMsgs(inLoc("= /content.schema.json", (b) => b.replace("default-src 'none';", "default-src 'none'; script-src 'unsafe-inline';")))));
+    ok("deploy: /content.schema.json without its CSP -> loc-headers naming the location", /loc-headers location = \/content\.schema\.json.*Content-Security-Policy/.test(locMsgs(inLoc("= /content.schema.json", (b) => b.replace(/^\s*add_header Content-Security-Policy .*$/m, "")))));
+    ok("deploy: a location without the full header set -> loc-headers naming the location", /loc-headers location = \/site-config\.js.*X-Frame-Options/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(/^\s*add_header X-Frame-Options .*$/m, "")))));
+    ok("deploy: a location CSP without `always` -> csp-always", /csp-always location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace("object-src 'none'\" always;", "object-src 'none'\";")))));
+    ok("deploy: the current template still passes (strict /content.schema.json CSP is accepted)", (dep(ng), deployChecks(dir).length === 0), JSON.stringify(deployChecks(dir)));
     ok("deploy: a missing deploy/ directory -> csp-missing", (rmSync(path.join(dir, "deploy"), { recursive: true }), /deploy\/csp-missing/.test(deployChecks(dir).map((x) => x.rule).join())));
     cpSync(path.join(ROOT, "deploy"), path.join(dir, "deploy"), { recursive: true });
     ok("deploy: restored -> passes", deployChecks(dir).length === 0);
