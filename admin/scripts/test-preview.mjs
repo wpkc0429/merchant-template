@@ -71,7 +71,7 @@ g.fetch = async (url, init = {}) => {
 const on = (method, match, reply) => routes.unshift({ method, match, ...reply });
 const reset = () => { calls.length = 0; routes = []; };
 
-const { tokens } = await imp("lib/api.js");
+const { tokens, ApiError } = await imp("lib/api.js");
 const { session } = await imp("lib/session.js");
 const { setPermissions } = await imp("lib/perm.js");
 const { loadDesign, t } = await imp("lib/design.js");
@@ -122,6 +122,17 @@ if (!PREVIEW) {
     const b = await rejects(() => data.getVersionPreview(bad));
     ok(`bad id ${JSON.stringify(bad)} refused before any request`, a instanceof ActionError && b instanceof ActionError && calls.length === 0);
   }
+  // ── an unmapped failure is the generic ActionError: no ApiError, no response body, no raw network text ──
+  as("editor");
+  for (const [label, reply] of [["500", { status: 500, body: { error: { code: "x", message: "SECRET RAW BODY" } } }], ["418", { status: 418, body: { error: { code: "x", message: "SECRET RAW BODY" } } }]]) {
+    reset(); on("GET", `/design/version-previews/${PID}`, reply); on("POST", "/version-preview", reply);
+    for (const [n, fn] of [["getVersionPreview", () => data.getVersionPreview(PID)], ["requestVersionPreview", () => actions.requestVersionPreview(RID)]]) {
+      const e = await rejects(fn);
+      ok(`${n} ${label}: a generic ActionError with fixed wording (no ApiError, no body)`, e instanceof ActionError && !(e instanceof ApiError) && !("body" in e) && !/SECRET/.test(e.message + JSON.stringify(e)), e && e.message);
+    }
+  }
+  reset(); { const o = g.fetch; g.fetch = async () => { throw new TypeError("Failed to fetch https://x.example/?sig=SECRET"); }; const e = await rejects(() => data.getVersionPreview(PID)); g.fetch = o;
+    ok("a network failure is generic too (no raw message)", e instanceof ActionError && e.reason === "network" && !/SECRET/.test(e.message)); }
   // ── request + read ──
   reset(); on("POST", `/admin/shops/7/design/requests/${RID}/version-preview`, { status: 202, body: apiPreview() });
   const p = await actions.requestVersionPreview(RID);

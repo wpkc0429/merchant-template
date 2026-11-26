@@ -5,6 +5,7 @@
 // raw HTML (innerHTML/outerHTML/srcdoc), string event handlers, script-like tags, form actions and
 // URLs that are not same-origin / relative / an allowed image origin. Refusals are dropped with a warning.
 import { t } from "../lib/design.js";
+import { CORE_DIALOG_CSS } from "./core-dialog-css.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -117,8 +118,13 @@ export function designQueryAll(sel, root) {
   if (!searchableRoot(root)) { console.warn("[design] ui.$$ refused: pass an element you created (not document, body or a container of core UI)"); return []; }
   return [...root.querySelectorAll(String(sel))].filter((el) => !isCoreNode(el));
 }
-/** ctx.ui.showDialog for design code: the same dialog, but only {close} comes back (no element to click, query or edit). */
-export function designShowDialog(opts) { const { close } = showDialog(opts); return { close }; }
+/** ctx.ui.showDialog for design code: the same dialog, but only {close} comes back (no element to click, query or edit).
+ *  While a CORE dialog (a confirmation or the design review) is open nothing is opened: a design cannot stack a decoy above or beside it. */
+export function designShowDialog(opts) {
+  if (coreDialogsOpen > 0) { console.warn("[design] ui.showDialog refused: a core dialog is open"); return { close() {} }; }
+  const { close } = showDialog(opts);
+  return { close };
+}
 
 // ── Branding (data from lib/session.js -> CSS variables; core applies it after every screen mount) ─
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -165,7 +171,43 @@ export function toast(message, kind = "ok") {
 
 // ── Dialogs (native <dialog>; a bottom sheet on phones) ────────────────
 /** Returns {dialog, close}. `content` is a Node; actions are [{label, kind, onClick}] (onClick may return false to stay open). */
-export function showDialog({ title, content, actions = [], onClose, wide = false }) {
+export function showDialog(opts) { return buildDialog(opts, (dialog) => { document.body.append(dialog); }); }
+
+// ── CORE dialogs: confirmations and the design review live in a CLOSED shadow root ──
+// The design layer's CSS (selectors, universal rules, ::before / ::after, filters, fonts, positions) cannot cross a shadow boundary, and the
+// HOST carries inline `all: initial !important` so nothing INHERITED from the page (font-size, color, text-indent, visibility, ...) reaches the text.
+// The stylesheet is constructed from ui/core-dialog-css.js (adoptedStyleSheets: allowed by style-src 'self') and uses no design token.
+// The root is closed: no document.querySelector, no shadowRoot property, no event retargeting trick reaches in. Native <dialog>.showModal() is kept.
+let coreDialogsOpen = 0;
+/** True while a core dialog is open (ctx.ui.showDialog refuses meanwhile). */
+export const coreDialogOpen = () => coreDialogsOpen > 0;
+let coreSheet = null;
+const supportsShadow = () => { try { return typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype && typeof Element.prototype.attachShadow === "function"; } catch { return false; } };
+const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "static"], ["visibility", "visible"], ["opacity", "1"], ["filter", "none"], ["transform", "none"],
+  ["clip-path", "none"], ["mask", "none"], ["direction", "ltr"], ["unicode-bidi", "normal"], ["zoom", "1"], ["pointer-events", "auto"], ["contain", "none"]];
+export function showCoreDialog(opts) {
+  if (!supportsShadow()) return showDialog(opts); // an old browser: the light dialog (styled by styles.css), without the isolation
+  const host = document.createElement("div");
+  host.setAttribute("data-core", "dialog");
+  for (const [k, v] of HOST_STYLE) host.style.setProperty(k, v, "important"); // CSSOM, so it is allowed by style-src 'self' and beats any author !important
+  const root = host.attachShadow({ mode: "closed" });
+  if (!coreSheet) { coreSheet = new CSSStyleSheet(); coreSheet.replaceSync(CORE_DIALOG_CSS); }
+  root.adoptedStyleSheets = [coreSheet];
+  coreDialogsOpen++;
+  let counted = true;
+  const release = () => { if (counted) { counted = false; coreDialogsOpen--; } };
+  try {
+    const r = buildDialog({ ...opts, onClose: (v) => { release(); host.remove(); opts.onClose?.(v); } }, (dialog) => { root.append(dialog); document.body.append(host); });
+    // A CSS `zoom` on html / body compounds into the dialog whatever the host says: measure it (layout width vs painted width) and cancel it out.
+    try {
+      const { dialog } = r, w = dialog.offsetWidth, painted = dialog.getBoundingClientRect().width;
+      if (w > 0 && painted > 0 && Math.abs(painted / w - 1) > 0.02) dialog.style.setProperty("zoom", String(w / painted), "important");
+    } catch { /* no layout (a test DOM) */ }
+    return r;
+  } catch (e) { release(); host.remove(); throw e; }
+}
+
+function buildDialog({ title, content, actions = [], onClose, wide = false }, mount) {
   const dialog = document.createElement("dialog");
   dialog.className = `dlg${wide ? " dlg--wide" : ""}`;
   const close = (result) => { dialog.close(result); };
@@ -186,7 +228,7 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
   }
   dialog.append(h("div", { class: "dlg__body" }, h("h2", { class: "dlg__title" }, title), content), actions.length ? foot : "");
   dialog.addEventListener("close", () => { dialog.remove(); onClose?.(dialog.returnValue); });
-  document.body.append(dialog);
+  mount(dialog);
   dialog.showModal();
   return { dialog, close };
 }
@@ -195,7 +237,7 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
 export function confirmDialog({ title, message, warning = "", detail = "", confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
-    showDialog({
+    showCoreDialog({
       title,
       // `warning` is the core's FIXED text (core/warnings.js) for an irreversible action: it is always rendered, in its
       // own element, and is never taken from the design layer's copy.

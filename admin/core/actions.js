@@ -11,6 +11,7 @@ import * as upload from "../lib/upload.js";
 import { t } from "../lib/design.js";
 import { confirmDialog, toast } from "../ui/kit.js";
 import { showReview } from "../ui/design-review.js";
+import { coreText, CORE_CONFIRM_IDS } from "../lib/fixed-text.js";
 import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
 import { need, readOnlyGuarded } from "./guard.js";
@@ -27,14 +28,17 @@ const CANCELLED = Object.freeze({ cancelled: true });
 // whose message is the copy key `.message`.
 const ask = (key, params, { danger = true, cancelKey, textKey, detail = "" } = {}) => {
   const id = key.split(".")[1];
+  // The design-history confirmations (approve / reject / cancel / revert) have CORE-OWNED title, button labels and decline label: no copy key
+  // exists for them (lib/fixed-text.js), so a design cannot relabel the real button or retitle the dialog.
+  const core = CORE_CONFIRM_IDS.includes(id);
   const warned = WARNED_CONFIRMS.includes(id);
   return confirmDialog({
-    title: t(`${key}.title`, params),
-    message: t(warned ? (textKey || `${key}.text`) : `${key}.message`, params),
+    title: core ? coreText(`cf.${id}.title`, params) : t(`${key}.title`, params),
+    message: core ? "" : t(warned ? (textKey || `${key}.text`) : `${key}.message`, params),
     ...(warned ? { warning: fixedWarning(id, params) } : {}),
     ...(detail ? { detail: String(detail) } : {}),
-    confirmText: t(`${key}.yes`, params),
-    ...(cancelKey ? { cancelText: t(cancelKey) } : {}), danger,
+    confirmText: core ? coreText(`cf.${id}.yes`, params) : t(`${key}.yes`, params),
+    ...(core ? { cancelText: coreText("cf.no") } : cancelKey ? { cancelText: t(cancelKey) } : {}), danger,
   });
 };
 const must = (fields) => { if (Object.keys(fields).length) throw invalid(fields); };

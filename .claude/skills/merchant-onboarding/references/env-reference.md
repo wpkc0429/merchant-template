@@ -57,5 +57,5 @@ Optional: `R2_ENDPOINT` (MinIO only), `IMAGE_EXTRA_ALLOWED_ORIGINS`, `MEDIA_MAX_
 ## Merchant template variables (not platform env)
 
 - Storefront `public/config.js` (`SHOP_CONFIG`): `apiBase`, `publishableKey`, `showPrices`, `featuredCategory`. Local overrides only in the gitignored `public/config.local.js`.
-- Catalogue importer `scripts/import-catalog.mjs`: `IMPORT_API_BASE`, `IMPORT_ADMIN_EMAIL`, `IMPORT_ADMIN_PASSWORD` (required for a real run), `IMPORT_SHOP_ID`, `IMPORT_ORIGIN`. Admin container (`admin/deploy/Dockerfile`): `ADMIN_IMG_ORIGIN`, `ADMIN_UPLOAD_ORIGIN`.
+- Catalogue importer `scripts/import-catalog.mjs`: `IMPORT_API_BASE`, `IMPORT_ADMIN_EMAIL`, `IMPORT_ADMIN_PASSWORD` (required for a real run), `IMPORT_SHOP_ID`, `IMPORT_ORIGIN`. Admin container (`admin/deploy/Dockerfile`): `ADMIN_IMG_ORIGIN`, `ADMIN_UPLOAD_ORIGIN` (must also cover the signed design-review screenshot host = the object-storage account endpoint, D14).
 - Admin: gitignored `admin/config.local.js` sets `ADMIN_CONFIG.apiBase` on localhost only; off localhost the base is always `location.origin`.

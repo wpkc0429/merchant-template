@@ -36,6 +36,7 @@ export const CORE_TEXT = Object.freeze({
   "rv.shots.diff": "差異約 {pct}%（服務自報）",
   "rv.shots.loading": "載入截圖中…", "rv.shots.imageLoading": "圖片載入中…",
   "rv.shots.expired": "圖片已過期，按重試", "rv.shots.failed": "圖片載入失敗，按重試", "rv.shots.retry": "重試",
+  "rv.shots.blocked": "無法載入截圖：網路問題，或截圖主機未被後台的安全設定（CSP）允許（需要管理員檢查 ADMIN_UPLOAD_ORIGIN）。按重試。",
   "rv.shots.purged": "此截圖已依保存期限清除", "rv.shots.missing": "這一側沒有截圖",
   "rv.shots.none": "還沒有可看的截圖（可能尚未上傳，或已超過保存期限）。",
   "rv.shots.notConfigured": "截圖儲存尚未設定，目前看不到截圖。",
@@ -77,7 +78,20 @@ export const CORE_TEXT = Object.freeze({
   "rv.done.cancelled": "已取消這次改版。",
   "rv.done.revert": "已建立還原請求。它還要通過檢查、預覽，並由你再次核准才會上線。",
   "rv.unknownTag": "（未知）",
+  // The title and button labels of the five design-history confirmations (T1-T4, D14 hardening). CORE-OWNED, NO copy key at all:
+  // a design layer that could set these could label the real approve button "Cancel" or the title "Reject this version?".
+  "cf.approveDesign.title": "核准這個設計？", "cf.approveDesign.yes": "核准並上線",
+  "cf.approveRevert.title": "核准還原到「{tag}」？", "cf.approveRevert.yes": "核准並上線",
+  "cf.rejectDesign.title": "拒絕這個版本？", "cf.rejectDesign.yes": "拒絕這個版本",
+  "cf.cancelDesign.title": "取消這次改版？", "cf.cancelDesign.yes": "取消這次改版",
+  "cf.revertDesign.title": "改成「{tag}」這個版本？", "cf.revertDesign.yes": "建立還原請求",
+  "cf.no": "先不要",
+  "cf.cancelTarget": "要取消的請求（核心讀取）",
+  "cf.cancelTarget.line": "需求：{prompt}｜狀態：{status}｜版本：{sha}",
+  "cf.noPrompt": "（沒有需求原文）", "cf.noVersion": "（無）",
 });
+/** Confirmation ids whose title and button labels are CORE text (above), not copy. They have no copy key at all. */
+export const CORE_CONFIRM_IDS = Object.freeze(["approveDesign", "approveRevert", "rejectDesign", "cancelDesign", "revertDesign"]);
 /** CORE_TEXT lookup with {name} placeholders. Throws on an unknown key (a programming error). */
 export function coreText(key, params) {
   const s = CORE_TEXT[key];

@@ -88,7 +88,8 @@ const detail = (o = {}) => ({
   preview_origin: "https://p-1.preview.example", approved_by_name: null, ...o,
 });
 const onGet = (o = {}, etag = '"5"') => on("GET", `/requests/${RID}`, { body: detail(o), headers: { ETag: etag } });
-const png = () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+// a PNG start (signature + IHDR) with the given size; the rest is filler (the core only reads the header)
+const png = (w = 390, h = 800) => { const b = new Uint8Array(40); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]); const dv = new DataView(b.buffer); dv.setUint32(16, w); dv.setUint32(20, h); return b; };
 const shotRow = (o = {}) => ({ id: "99999999-9999-4999-8999-999999999991", request_id: RID, phase: "before", site: "admin", role: "owner", viewport: 390, view_key: "home", attempt: 1, commit_sha: SHA, content_type: "image/png", byte_size: 10, width: 390, height: 800, sha256: "x", diff_ppm: 1500, capture_manifest: null, purged_at: null, created_at: "2026-11-27T10:00:00Z", url: SIGNED, url_expires_at: new Date(Date.now() + 300000).toISOString(), object_key: "secret/key", ...o });
 
 // A fake dialog: records the model and handlers the core hands to the UI, and answers like a person would.
@@ -311,7 +312,7 @@ for (const [label, status, code, key] of [["head_moved", 409, "head_moved", "hea
     ok("loadShots: one GET so far", calls.filter((c) => c.url.includes("/screenshots")).length === 1);
     const blob = await h.image(list.items[0].id);
     const imgCall = calls.find((c) => c.url.includes("shots.example.com"));
-    ok("image: a PNG blob; fetched with no cache, no referrer, no cookies, no redirects", blob.size === 12 && blob.type === "image/png" && imgCall.init.cache === "no-store" && imgCall.init.referrerPolicy === "no-referrer" && imgCall.init.credentials === "omit" && imgCall.init.redirect === "error" && !("Authorization" in (imgCall.headers || {})));
+    ok("image: a PNG blob; fetched with no cache, no referrer, no cookies, no redirects", blob.size === 40 && blob.type === "image/png" && imgCall.init.cache === "no-store" && imgCall.init.referrerPolicy === "no-referrer" && imgCall.init.credentials === "omit" && imgCall.init.redirect === "error" && !("Authorization" in (imgCall.headers || {})));
     ok("image: still one list GET (no refresh needed)", calls.filter((c) => c.url.includes("/screenshots")).length === 1);
     const pe = await rejects(() => h.image(list.items[2].id));
     ok("a purged screenshot: ImageError purged, no fetch", pe && pe.kind === "purged" && calls.filter((c) => c.url.includes("shots.example.com")).length === 1);
@@ -330,7 +331,7 @@ for (const [label, status, code, key] of [["head_moved", 409, "head_moved", "hea
   f.seen.script = async (m, h) => {
     const list = await h.loadShots();
     const blob = await h.image(list.items[0].id);
-    ok("expired URL: retried ONCE with a fresh URL and then shown", blob.size === 12 && lists === 2 && imgs === 2, `${lists}/${imgs}`);
+    ok("expired URL: retried ONCE with a fresh URL and then shown", blob.size === 40 && lists === 2 && imgs === 2, `${lists}/${imgs}`);
   };
   await f.api.openDesignReview(RID);
   reset(); onGet(); lists = 0; imgs = 0;
@@ -454,6 +455,82 @@ as("owner");
   reset(); const origFetch = g.fetch; g.fetch = async () => { throw new TypeError("Failed to fetch"); };
   const e3 = await rejects(() => data.getDesignRequest(RID)); g.fetch = origFetch;
   ok("the read layer: a network failure is a generic ActionError", e3 instanceof ActionError && e3.reason === "network");
+}
+// ── review hardening (adversarial review of PR #6) ──
+{
+  const { CORE_TEXT, CORE_CONFIRM_IDS, coreText } = await imp("lib/fixed-text.js");
+  const { readFileSync } = await import("node:fs");
+  const copyFiles = ["design/copy.js", "design-defaults/copy.js"].map((f) => readFileSync(path.join(ROOT, f), "utf8")).join(String.fromCharCode(10));
+  for (const id of CORE_CONFIRM_IDS) {
+    ok(`${id}: title and button label are core text and NO copy key exists`, typeof CORE_TEXT[`cf.${id}.title`] === "string" && typeof CORE_TEXT[`cf.${id}.yes`] === "string" && !copyFiles.includes(`"confirm.${id}.`));
+    const r = validateCopy({ [`confirm.${id}.title`]: "Reject this version?", [`confirm.${id}.yes`]: "Cancel", [`confirm.${id}.text`]: "x" }, { "confirm.deleteImage.title": "x" });
+    ok(`${id}: a design that defines its copy keys is ignored`, Object.keys(r.copy).length === 0);
+  }
+  // the model the dialog is drawn from carries the core text, whatever the design copy says
+  reset(); as("owner"); onGet(); on("GET", "/screenshots", { body: { screenshots: [] } });
+  const f = mk(); await f.api.openDesignReview(RID);
+  ok("review model: approve title / label / reject label are the core's", f.seen.model.approve.title === coreText("cf.approveDesign.title") && f.seen.model.approve.yes === coreText("cf.approveDesign.yes") && f.seen.model.reject.yes === coreText("cf.rejectDesign.yes") && f.seen.model.approve.text === "");
+}
+{ // ONE review at a time: a second / eighth call returns busy at once, with no request
+  reset(); as("owner"); onGet(); on("GET", "/screenshots", { body: { screenshots: [] } });
+  const f = mk(); let inner = null, n = 0;
+  f.seen.script = async () => { n = calls.length; inner = await Promise.all(Array.from({ length: 7 }, () => f.api.openDesignReview(RID))); inner.push(await f.api.cancelDesignRequest(RID), await f.api.requestDesignRevert(TARGET)); };
+  await f.api.openDesignReview(RID);
+  ok("7 more openDesignReview calls while one is open: all busy, no dialog, no request", f.seen.count === 1 && inner.slice(0, 7).every((r) => r.outcome === "closed" && r.busy === true) && calls.length === n);
+  ok("cancel / revert while a review is open: busy results, no request", inner[7].cancelled === true && inner[7].busy === true && inner[8].cancelled === true && inner[8].busy === true && calls.length === n);
+  reset(); onGet(); on("GET", "/screenshots", { body: { screenshots: [] } }); f.seen.script = null;
+  const again = await f.api.openDesignReview(RID);
+  ok("after the review closed a new one opens again", again.outcome === "closed" && !again.busy && f.seen.count === 2);
+}
+{ // cancel: the dialog names the request (excerpt, status, short sha) read by the core
+  reset(); confirmations.length = 0; answer = false; as("owner");
+  on("GET", `/requests/${RID}`, { body: detail({ status: "previewing", prompt_excerpt: "make the banner pink", candidate_sha: SHA, head_sha: SHA }) });
+  const f = mk();
+  const slow = f.api.cancelDesignRequest(RID);
+  const second = await f.api.cancelDesignRequest(RID);
+  await slow;
+  ok("cancel: a second call while one confirmation is in flight is busy (no second dialog)", second.cancelled === true && second.busy === true && confirmations.length === 1);
+  const d = confirmations[0].opts.detail;
+  ok("cancel: the confirmation shows the prompt, the status and the 7-char sha", /make the banner pink/.test(d) && /預覽中/.test(d) && d.includes(SHA.slice(0, 7)) && !d.includes(SHA.slice(0, 8)), d);
+  answer = true;
+}
+{ // an approve can never be re-sent: the `spent` flag. A later read of the same request pins the SAME basis again; the spent review still refuses.
+  reset(); as("owner"); onGet(); on("GET", "/screenshots", { body: { screenshots: [] } }); on("POST", "/approve", { body: detail({ status: "approved" }) });
+  const f = mk(); let second = null, n1 = 0;
+  f.seen.script = async (m, h) => {
+    await h.approve({ acknowledged: true });
+    await dh.fetchRequest(7, RID); // the design layer reads the request again: the core remembers the same ETag / sha
+    n1 = posts().length;
+    second = await h.approve({ acknowledged: true });
+  };
+  await f.api.openDesignReview(RID);
+  ok("a spent review does not approve again even when the same basis is remembered again", n1 === 1 && posts().length === 1 && second.kind === "reload", JSON.stringify(second));
+}
+{ // cleanText: invisible fillers and tag characters
+  const U = (...c) => String.fromCodePoint(...c);
+  for (const [name, ch] of [["U+3164", U(0x3164)], ["U+115F", U(0x115f)], ["U+1160", U(0x1160)], ["U+2800", U(0x2800)], ["U+00AD", U(0xad)], ["U+034F", U(0x34f)], ["U+17B4", U(0x17b4)], ["U+17B5", U(0x17b5)], ["tag char", U(0xe0041)], ["tag block", U(0xe0000, 0xe007f)], ["variation selector", U(0xfe0f)], ["VS supplement", U(0xe0100)]]) {
+    ok(`cleanText strips ${name}`, dh.cleanText(`a${ch}b`, 50) === "ab" && dh.cleanText(ch, 50) === "");
+  }
+  ok("cleanText: a whitespace-only result is empty (the neutral fallback shows)", dh.cleanText("  　  	 ", 50) === "" && dh.cleanText(U(0x3164) + " " + U(0x2800), 50, true) === "" && dh.cleanText("a b", 50) === "a b");
+}
+{ // PNG header limits (width <= 8000, height <= 40000, area <= 1e8); a signature followed by garbage is not an image the core hands out
+  const hdr = (w, h) => png(w, h);
+  const one = async (bytes) => { reset(); on("GET", "shots.example.com", { bytes }); return rejects(() => rvlib.fetchImageBlob("https://shots.example.com/a.png?sig=1")); };
+  ok("a normal size passes", (await one(hdr(1280, 6000))) === null);
+  for (const [w, h2] of [[8001, 100], [100, 40001], [8000, 40000], [0, 10], [10, 0]]) { const e = await one(hdr(w, h2)); ok(`size ${w}x${h2} is refused`, e instanceof rvlib.ImageError && e.kind === "bad"); }
+  const sig = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const e = await one(sig); ok("a signature without an IHDR is refused", e instanceof rvlib.ImageError && e.kind === "bad");
+}
+{ // resource timings are cleared after each blob fetch
+  reset(); on("GET", "shots.example.com", { bytes: png() });
+  let cleared = 0; const orig = performance.clearResourceTimings.bind(performance);
+  performance.clearResourceTimings = () => { cleared++; return orig(); };
+  await rvlib.fetchImageBlob("https://shots.example.com/a.png?sig=1");
+  ok("performance.clearResourceTimings runs after the image fetch (the signed URL is not left in the timing buffer)", cleared >= 1);
+  reset(); on("GET", "shots.example.com", { status: 403, bytes: new Uint8Array([1]) });
+  cleared = 0; await rejects(() => rvlib.fetchImageBlob("https://shots.example.com/a.png?sig=1"));
+  ok("... also when the fetch is refused", cleared >= 1);
+  performance.clearResourceTimings = orig;
 }
 ok("no log line during the whole run held a signed URL, token, ETag or key", !logs.some((l) => /X-Amz|secret-access-token|deadbeef|secret\/key/.test(l)), logs.join("|").slice(0, 200));
 process.stdout.write(`test-design-review [${MODE}]: ${pass} passed, ${fail} failed

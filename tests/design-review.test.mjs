@@ -41,7 +41,7 @@ test('ctx: exactly the three actions were added; ctx.ui and every other namespac
   for (const n of ['openDesignReview(requestId)', 'requestDesignRevert(requestId', 'cancelDesignRequest(requestId)']) assert.ok(doc.includes('`' + n), n);
 });
 
-test('the five fixed warnings carry the approved texts, are in WARNED_CONFIRM_IDS, and copy has title / text / yes only', async () => {
+test('the five fixed warnings carry the approved texts, are in WARNED_CONFIRM_IDS, and the dialog title / button labels are core text with no copy key', async () => {
   const { FIXED_WARNINGS } = await import('../admin/core/warnings.js');
   const { WARNED_CONFIRM_IDS } = await import('../admin/lib/design-schema.js');
   const want = {
@@ -54,7 +54,7 @@ test('the five fixed warnings carry the approved texts, are in WARNED_CONFIRM_ID
   for (const [id, text] of Object.entries(want)) {
     assert.equal(FIXED_WARNINGS[id], text, id);
     assert.ok(WARNED_CONFIRM_IDS.includes(id), id);
-    for (const part of ['title', 'text', 'yes']) { const k = `confirm.${id}.${part}`; assert.ok(f('admin/design-defaults/copy.js').includes(`"${k}"`) && f('admin/design/copy.js').includes(`"${k}"`), k); }
+    for (const part of ['title', 'text', 'yes']) { const k = `confirm.${id}.${part}`; assert.ok(!f('admin/design-defaults/copy.js').includes(`"${k}"`) && !f('admin/design/copy.js').includes(`"${k}"`), `${k} must NOT be a copy key (core text)`); }
     assert.ok(!new RegExp(`confirm\\.${id}\\.(warn|message)`).test(f('admin/design-defaults/copy.js') + f('admin/design/copy.js')), `${id} has no warning or message copy key`);
   }
   assert.equal(WARNED_CONFIRM_IDS.length, 14 + 5);
@@ -79,4 +79,28 @@ test('design review in a real Chromium (skips cleanly without Playwright)', { ti
   const r = spawnSync(process.execPath, [path.join(TEMPLATE, 'admin', 'e2e', 'design-review.mjs')], { encoding: 'utf8', timeout: 280000 });
   process.stdout.write(r.stdout || '');
   assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
+});
+
+test('hardening: the five confirmations have CORE titles and labels; the core dialogs are closed shadow roots; showDialog is refused meanwhile', async () => {
+  const { CORE_TEXT, CORE_CONFIRM_IDS } = await import('../admin/lib/fixed-text.js');
+  for (const id of ['approveDesign', 'approveRevert', 'rejectDesign', 'cancelDesign', 'revertDesign']) {
+    assert.ok(CORE_CONFIRM_IDS.includes(id), id);
+    assert.equal(typeof CORE_TEXT['cf.' + id + '.title'], 'string');
+    assert.equal(typeof CORE_TEXT['cf.' + id + '.yes'], 'string');
+  }
+  const kit = f('admin/ui/kit.js');
+  assert.match(kit, /attachShadow\(\{ mode: "closed" \}\)/);
+  assert.match(kit, /adoptedStyleSheets/);
+  assert.match(kit, /\["all", "initial"\]/);
+  assert.match(kit, /coreDialogsOpen > 0\) \{ console\.warn\("\[design\] ui\.showDialog refused/);
+  assert.match(kit, /showCoreDialog\(\{\s*title,/, 'confirmDialog uses the core dialog');
+  assert.match(f('admin/ui/design-review.js'), /showCoreDialog\(\{/);
+  const css = f('admin/ui/core-dialog-css.js');
+  assert.ok(!/var\(--/.test(css.replace(/var\(--(ink|soft|muted|card|band|line|err|acc|prim)\)/g, '')), 'the core dialog stylesheet uses no design token');
+  assert.ok(!/(^|[\s;{])content\s*:/m.test(css.split('\n').filter((l) => !l.startsWith('//')).join('\n')), 'no generated content in the core dialog stylesheet');
+});
+
+test('hardening: ADMIN_UPLOAD_ORIGIN covering the signed screenshot host is documented in D14, the README, the nginx template and the onboarding docs', () => {
+  for (const [p, re] of [['docs/DECISIONS.md', /ADMIN_UPLOAD_ORIGIN MUST cover that host/], ['admin/README.md', /ADMIN_UPLOAD_ORIGIN.{1,3}必須同時涵蓋/], ['admin/deploy/nginx.conf.template', /MUST ALSO COVER THE HOST OF THE PLATFORM/],
+    ['.claude/skills/merchant-onboarding/references/checklist.md', /signed design-review screenshot URLs/], ['.claude/skills/merchant-onboarding/references/env-reference.md', /signed design-review screenshot host/]]) assert.match(f(p), re, p);
 });

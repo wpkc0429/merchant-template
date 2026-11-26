@@ -73,6 +73,7 @@ export default {
   `login.*` / `pw.*` / `invite.*`, `status.*` / `payment.*` / `fulfillment.*` (labels), `err.*` / `v.*` (error and
   validation wording), `confirm.*` (wording of irreversible-action confirmations), `common.*`, `state.*`, `pager.*`.
   Search the file (`grep '今日配送' design/copy.js`) to find the key for a sentence.
+* Exception (D14): the five design-history confirmations (`approveDesign`, `approveRevert`, `rejectDesign`, `cancelDesign`, `revertDesign`) and the review dialog have NO copy keys: their title, button labels and decline label are core text, and core dialogs are drawn in a closed shadow root with the core's own stylesheet (not themable; your CSS cannot reach them, and `ctx.ui.showDialog` does nothing while one is open).
 * Wording of a confirmation is yours: `confirm.<id>.title`, `confirm.<id>.text` (a lead-in sentence; the default is empty for most
   confirmations, so you may leave it empty or add one) and the button labels `.yes` / `.no`. **The confirm step AND its warning
   are the core's.** For every irreversible action (`cancelOrder`, `shipDelivered`, `shipReturned`, `deleteProduct`, `deleteImage`,

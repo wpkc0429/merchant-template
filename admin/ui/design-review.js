@@ -7,7 +7,7 @@
 // created HERE and revoked when the image leaves the screen or the dialog closes; no URL is ever shown, logged or stored.
 // Only a real person approves: the approve / reject / request-changes buttons ignore events with isTrusted !== true, and the
 // acknowledgement checkbox must be ticked by a real click before the approve button is enabled. The button disables the instant it is pressed.
-import { h, showDialog, button, textarea, toast } from "./kit.js";
+import { h, showCoreDialog, button, textarea, toast } from "./kit.js";
 import { coreText as ct } from "../lib/fixed-text.js";
 import { safeOrigin } from "../lib/versionpreview.js";
 import { formatDateTime } from "./format.js";
@@ -42,7 +42,8 @@ export function showReview(initial, handlers) {
     const panel = h("div", { class: "dlg-rv__panel", "data-testid": "confirm-rv-panel" });
     const root = h("div", { class: "dlg-rv" }, main, panel);
     const titleOf = () => (model.canApprove ? model.approve.title : ct("rv.reviewing"));
-    const { dialog, close } = showDialog({
+    // A CLOSED shadow root with its own stylesheet (ui/kit.js showCoreDialog): the design layer's CSS cannot restyle, hide or rewrite anything in here.
+    const { dialog, close } = showCoreDialog({
       title: titleOf(), content: root, actions: [], wide: true,
       onClose: () => { gen++; for (const id of [...urls.keys()]) revoke(id); handlers.dispose(); resolve(); },
     });
@@ -125,7 +126,10 @@ export function showReview(initial, handlers) {
         const box = h("div", { class: "dlg-rv__img" });
         if (!shot) { box.append(h("p", { class: "dlg-rv__msg" }, ct("rv.shots.missing"))); return box; }
         if (shot.purged) { box.append(h("p", { class: "dlg-rv__msg", "data-testid": "confirm-rv-purged" }, ct("rv.shots.purged"))); return box; }
-        const put = (u) => box.replaceChildren(h("img", { src: u, alt: label, class: "dlg-rv__pic", decoding: "async" }));
+        const fail = (kind) => box.replaceChildren(h("p", { class: "dlg-rv__msg", "data-testid": "confirm-rv-imgerr" }, ct(kind === "purged" ? "rv.shots.purged" : kind === "expired" ? "rv.shots.expired" : kind === "bad" ? "rv.shots.failed" : "rv.shots.blocked")),
+          kind === "purged" ? "" : button(ct("rv.shots.retry"), { small: true, "data-testid": "confirm-rv-retry", onClick: () => { revoke(shot.id); load(); } }));
+        // an image the browser cannot decode (a PNG signature followed by garbage) shows the error state with a retry, never a broken-image icon
+        const put = (u) => box.replaceChildren(h("img", { src: u, alt: label, class: "dlg-rv__pic", decoding: "async", onerror: () => { if (myGen === gen) { revoke(shot.id); fail("bad"); } } }));
         const load = () => {
           if (urls.has(shot.id)) { put(urls.get(shot.id)); return; }
           box.replaceChildren(h("p", { class: "muted dlg-rv__skel" }, ct("rv.shots.imageLoading")));
@@ -135,9 +139,7 @@ export function showReview(initial, handlers) {
             put(urls.get(shot.id));
           }).catch((e) => {
             if (myGen !== gen) return;
-            const kind = e && e.kind;
-            box.replaceChildren(h("p", { class: "dlg-rv__msg", "data-testid": "confirm-rv-imgerr" }, ct(kind === "purged" ? "rv.shots.purged" : kind === "expired" ? "rv.shots.expired" : "rv.shots.failed")),
-              kind === "purged" ? "" : button(ct("rv.shots.retry"), { small: true, "data-testid": "confirm-rv-retry", onClick: load }));
+            fail(e && e.kind);
           });
         };
         load();
@@ -184,8 +186,8 @@ export function showReview(initial, handlers) {
     }
 
     // ── actions panel ──
-    let ack = null, approveBtn = null;
-    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked) || busy; };
+    let ack = null, approveBtn = null, ackTrusted = false, clickTrusted = false; // ackTrusted: the box was ticked by a real (isTrusted) change event
+    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || busy; };
     async function run(fn) {
       if (busy) return;
       busy = true; lock(true); // disabled at once, before anything is awaited
@@ -202,7 +204,7 @@ export function showReview(initial, handlers) {
     const closeBtn = () => button(ct("rv.btn.close"), { onClick: () => { if (!busy) close(); }, "data-testid": "confirm-rv-close" });
 
     function renderPanel() {
-      ack = null; approveBtn = null;
+      ack = null; approveBtn = null; ackTrusted = false; clickTrusted = false;
       const kids = [];
       if (mode === "reload") {
         kids.push(h("div", { class: "dlg__foot dlg-rv__btns" }, button(ct("rv.btn.reload"), { kind: "primary", "data-testid": "confirm-rv-reload", onClick: trusted(() => run(() => handlers.reload())) }), closeBtn()));
@@ -227,9 +229,12 @@ export function showReview(initial, handlers) {
         side.push(closeBtn());
         if (model.canApprove) {
           ack = h("input", { type: "checkbox", "data-testid": "confirm-rv-ack", "aria-describedby": "dlg-rv-ackhint",
-            onchange: (ev) => { if (!ev.isTrusted) ack.checked = false; syncAck(); } }); // a scripted tick is undone
+            // el.click() makes the browser fire a TRUSTED change event, so the tick counts only when the CLICK that caused it was a real one
+            // (isTrusted on the click: a pointer press or Space / Enter on the focused box); anything else is undone.
+            onclick: (ev) => { clickTrusted = ev.isTrusted === true; },
+            onchange: (ev) => { if (ev.isTrusted === true && clickTrusted) ackTrusted = ack.checked; else ack.checked = ackTrusted; clickTrusted = false; syncAck(); } });
           approveBtn = button(model.approve.yes, { kind: "danger", disabled: true, "data-testid": "confirm-yes",
-            onClick: trusted(() => { if (busy || !ack.checked) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
+            onClick: trusted(() => { if (busy || !ack.checked || !ackTrusted) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
           if (model.approve.text) kids.push(h("p", { class: "dlg__msg" }, model.approve.text));
           kids.push(h("p", {}, h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, model.approve.warning)),
             h("label", { class: "check dlg-rv__ack" }, ack, h("span", {}, ct("rv.ack"))),

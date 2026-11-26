@@ -53,16 +53,32 @@ export class ImageError extends Error {
 }
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 export const MAX_IMAGE_BYTES = 40 * 1024 * 1024;
+// Pixel limits, read from the PNG's IHDR before the blob is ever handed to an <img> (a tiny file can declare a huge canvas).
+export const MAX_IMAGE_WIDTH = 8000, MAX_IMAGE_HEIGHT = 40000, MAX_IMAGE_AREA = 100_000_000;
+/** {width, height} from the IHDR chunk (it must be the first chunk, 13 bytes), or null when the header is not a well-formed PNG start. */
+export function pngSize(bytes) {
+  if (!bytes || bytes.length < 33) return null;
+  if (PNG.some((b, i) => bytes[i] !== b)) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (dv.getUint32(8) !== 13 || dv.getUint32(12) !== 0x49484452) return null; // length 13, "IHDR"
+  return { width: dv.getUint32(16), height: dv.getUint32(20) };
+}
+/** Forget the resource-timing entries the signed-URL fetches created (performance.getEntriesByType("resource") lists full URLs), and keep the buffer from filling. */
+export function clearTimings() {
+  try { if (typeof performance !== "undefined" && typeof performance.clearResourceTimings === "function") performance.clearResourceTimings(); } catch { /* not available */ }
+}
 /** Fetches one signed URL as a PNG blob. No cookies, no referrer, no cache, no redirects. The URL is never put in an error or a log. */
 export async function fetchImageBlob(url) {
   let res;
-  try { res = await fetch(url, { method: "GET", cache: "no-store", referrerPolicy: "no-referrer", credentials: "omit", redirect: "error" }); } catch { throw new ImageError("failed"); }
+  try { res = await fetch(url, { method: "GET", cache: "no-store", referrerPolicy: "no-referrer", credentials: "omit", redirect: "error" }); } catch { clearTimings(); throw new ImageError("failed"); }
+  clearTimings();
   if (!res.ok) throw new ImageError([401, 403, 404, 410].includes(res.status) ? "expired" : "failed");
   let buf;
-  try { buf = await res.arrayBuffer(); } catch { throw new ImageError("failed"); }
+  try { buf = await res.arrayBuffer(); } catch { clearTimings(); throw new ImageError("failed"); }
+  clearTimings();
   if (buf.byteLength > MAX_IMAGE_BYTES) throw new ImageError("bad");
-  const head = new Uint8Array(buf, 0, Math.min(8, buf.byteLength));
-  if (head.length < 8 || PNG.some((b, i) => head[i] !== b)) throw new ImageError("bad");
+  const size = pngSize(new Uint8Array(buf, 0, Math.min(33, buf.byteLength)));
+  if (!size || size.width < 1 || size.height < 1 || size.width > MAX_IMAGE_WIDTH || size.height > MAX_IMAGE_HEIGHT || size.width * size.height > MAX_IMAGE_AREA) throw new ImageError("bad");
   return new Blob([buf], { type: "image/png" });
 }
 

@@ -81,16 +81,23 @@ export async function fetchRequestForReview(shopID, id) {
  * otherwise every line break and tab becomes a space.
  */
 // Built from code points (ranges as [from, to]) so no invisible character ever sits in this source file.
-const cc = (n) => String.fromCharCode(n);
-const cls = (ranges) => new RegExp("[" + ranges.map(([a, b]) => cc(a) + "-" + cc(b)).join("") + "]", "g");
+const cc = (n) => String.fromCodePoint(n);
+const cls = (ranges) => new RegExp("[" + ranges.map(([a, b]) => cc(a) + "-" + cc(b)).join("") + "]", "gu");
 const UNSAFE = cls([[0, 8], [11, 12], [14, 31], [127, 159], [0x61c, 0x61c], [0x180e, 0x180e], [0x200b, 0x200b], [0x200e, 0x200f], [0x202a, 0x202e],
-  [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb]]);
+  [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb],
+  // invisible "blank" glyphs that can fake an empty or different text: soft hyphen, combining grapheme joiner, Hangul fillers (U+115F, U+1160, U+3164),
+  // Khmer inherent vowels, Braille blank, variation selectors, and the tag characters (U+E0000 - U+E007F)
+  [0xad, 0xad], [0x34f, 0x34f], [0x115f, 0x1160], [0x17b4, 0x17b5], [0x2800, 0x2800], [0x3164, 0x3164], [0xffa0, 0xffa0], [0xfe00, 0xfe0f],
+  [0xe0000, 0xe007f], [0xe0100, 0xe01ef]]);
+// A result that is only whitespace (any Unicode space) is "nothing": it becomes "" so the caller shows its neutral fallback.
+const BLANK = new RegExp("^[\\s" + cc(0xa0) + cc(0x1680) + cc(0x2000) + "-" + cc(0x200a) + cc(0x2028) + cc(0x2029) + cc(0x202f) + cc(0x205f) + cc(0x3000) + "]*$", "u");
 const BREAKS = cls([[10, 10], [13, 13], [0x2028, 0x2029]]);
 const BREAKS_AND_TABS = cls([[9, 10], [13, 13], [0x2028, 0x2029]]);
 export function cleanText(v, max, multiline = false) {
   if (typeof v !== "string") return "";
   const s = v.split(cc(13) + cc(10)).join(cc(10)).replace(BREAKS, cc(10));
-  return (multiline ? s : s.replace(BREAKS_AND_TABS, " ")).replace(UNSAFE, "").slice(0, max);
+  const out = (multiline ? s : s.replace(BREAKS_AND_TABS, " ")).replace(UNSAFE, "").slice(0, max);
+  return BLANK.test(out) ? "" : out;
 }
 const str = (v, max) => cleanText(v, max);
 const strOrNull = (v, max, multiline = false) => { const s = cleanText(v, max, multiline); return s ? s : null; };

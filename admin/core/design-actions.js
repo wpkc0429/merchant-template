@@ -29,7 +29,18 @@ const siteName = () => session.shopName || coreText("rv.thisShop");
 const CANCELLED = Object.freeze({ cancelled: true });
 const gone = () => new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
 const requireId = (v) => { if (!dh.isId(v)) throw gone(); };
+const CORE_STATUS = (s) => { try { return coreText(`rv.status.${s}`); } catch { return "—"; } };
 const TERMINAL = new Set(["published", "rejected", "failed", "cancelled", "reverted"]);
+// ONE core confirmation / review at a time, across all three actions: a second call while one is running (reading, or its dialog open)
+// returns a busy result at once, with no request and no dialog (a design cannot stack dialogs or loop the review to flood the API).
+let gateHeld = false;
+const gated = async (busyResult, fn) => {
+  if (gateHeld) return busyResult;
+  gateHeld = true;
+  try { return await fn(); } finally { gateHeld = false; }
+};
+const BUSY_CANCEL = Object.freeze({ cancelled: true, busy: true });
+const BUSY_REVIEW = Object.freeze({ outcome: "closed", busy: true });
 const err = (kind, key, reason, status, params) => new ActionError(kind, coreText(key, params), { reason, status });
 
 /** ApiError of a review / write call -> ActionError with a reason. Unmapped cases become a generic error (no ApiError, no body). */
@@ -81,9 +92,8 @@ export function createDesignActions({ ask, review, notify = () => {} }) {
     return { canApprove: cannot === "", cannotReason: cannot };
   }
 
-  async function openDesignReview(id) {
-    need("design.view");
-    requireId(id);
+  const openDesignReview = (id) => { need("design.view"); requireId(id); return gated(BUSY_REVIEW, () => reviewOnce(id)); };
+  async function reviewOnce(id) {
     const shopID = S();
     let cur;
     try { cur = await readForReview(shopID, id); } catch (e) { throw reviewError(e); }
@@ -103,8 +113,9 @@ export function createDesignActions({ ask, review, notify = () => {} }) {
         shopName: siteName(),
         ...stateOf(request, basis),
         canReject: can("design.approve") && !isReadOnly() && request.status === "awaiting_approval",
-        approve: { title: t(`confirm.${id2}.title`, p), text: t(`confirm.${id2}.text`, p), yes: t(`confirm.${id2}.yes`, p), warning: fixedWarning(id2, p), danger: true },
-        reject: { title: t("confirm.rejectDesign.title", p), text: t("confirm.rejectDesign.text", p), yes: t("confirm.rejectDesign.yes", p), warning: fixedWarning("rejectDesign", p) },
+        // title, lead-in and button labels are CORE text (no copy key): a design cannot relabel approve as "Cancel" (lib/fixed-text.js).
+        approve: { title: coreText(`cf.${id2}.title`, p), text: "", yes: coreText(`cf.${id2}.yes`, p), warning: fixedWarning(id2, p), danger: true },
+        reject: { title: coreText("cf.rejectDesign.title", p), text: "", yes: coreText("cf.rejectDesign.yes", p), warning: fixedWarning("rejectDesign", p) },
       };
     };
 
@@ -226,10 +237,8 @@ export function createDesignActions({ ask, review, notify = () => {} }) {
     return r;
   };
 
-  async function requestDesignRevert(id, opts) {
-    need("design.revert");
-    requireId(id);
-    const reason = reasonOf(opts);
+  const requestDesignRevert = (id, opts) => { need("design.revert"); requireId(id); const reason = reasonOf(opts); return gated(BUSY_CANCEL, () => revertOnce(id, reason)); };
+  async function revertOnce(id, reason) {
     const target = await readTarget(id);
     if (target.status !== "published" && target.status !== "reverted") throw err("state", "rv.err.notPublished", "invalid_state", 409);
     if (!(await ask("confirm.revertDesign", { siteName: siteName(), tag: target.publishedTag || target.publishTag || coreText("rv.unknownTag") }, { danger: false }))) return CANCELLED;
@@ -240,12 +249,17 @@ export function createDesignActions({ ask, review, notify = () => {} }) {
     } catch (e) { throw reviewError(e); }
   }
 
-  async function cancelDesignRequest(id) {
-    need("design.request");
-    requireId(id);
+  const cancelDesignRequest = (id) => { need("design.request"); requireId(id); return gated(BUSY_CANCEL, () => cancelOnce(id)); };
+  async function cancelOnce(id) {
     const target = await readTarget(id);
     if (TERMINAL.has(target.status)) throw err("state", "rv.err.terminal", "invalid_state", 409);
-    if (!(await ask("confirm.cancelDesign", { siteName: siteName() }))) return CANCELLED;
+    // The dialog says WHICH request: the prompt excerpt, the status and the short sha, all read by the core (never from the design layer).
+    const what = coreText("cf.cancelTarget.line", {
+      prompt: (target.promptExcerpt || coreText("cf.noPrompt")).slice(0, 160),
+      status: CORE_STATUS(target.status),
+      sha: (target.candidateSha || target.headSha || "").slice(0, 7) || coreText("cf.noVersion"),
+    });
+    if (!(await ask("confirm.cancelDesign", { siteName: siteName() }, { detail: `${coreText("cf.cancelTarget")}${String.fromCharCode(10)}${what}` }))) return CANCELLED;
     try {
       const request = dh.normalizeRequest(await rv.cancelRequest(S(), id), []);
       notify(coreText("rv.done.cancelled"));

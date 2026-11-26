@@ -17,6 +17,14 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
+// Under the REAL strict CSP of admin/deploy/nginx.conf.template (style-src 'self': no inline style, constructable stylesheets are what the core dialog uses).
+// The test patches attachShadow to OPEN roots (and records them) so Playwright and __dq() can look inside; one scenario runs unpatched to prove the root is closed.
+const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const OPEN_ROOTS = "(() => { const roots = []; const orig = Element.prototype.attachShadow; Element.prototype.attachShadow = function (o) { const r = orig.call(this, { ...o, mode: 'open' }); roots.push(r); return r; };"
+  + " window.__roots = roots; window.__dq = (q) => document.querySelector(q) || roots.map((r) => r.querySelector(q)).find(Boolean) || null;"
+  + " window.__dqa = (q) => [...document.querySelectorAll(q), ...roots.flatMap((r) => [...r.querySelectorAll(q)])];"
+  + " window.__active = () => { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; return a; };"
+  + " window.__html = () => document.documentElement.outerHTML + roots.map((r) => r.innerHTML).join(''); })();";
 const SHOTS = process.env.REVIEW_SHOTS || resolve(ADMIN, "e2e/out/review-ui");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -59,10 +67,11 @@ const PERMS = { owner: ["design.view", "design.request", "design.approve", "desi
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
 const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 let PORT = 0;
+const GARBAGE = (() => { const b = Buffer.from(png(390, 800, () => [1, 2, 3])); const out = Buffer.concat([b.subarray(0, 33), Buffer.from("this is not image data at all, just text".repeat(5))]); return out; })();
 let S; // per-scenario state
 const resetState = (o = {}) => {
   S = { role: "owner", preview: "", rev: 5, head: SHA1, status: "awaiting_approval", approveCalls: [], rejectCalls: [], changeCalls: [], revertCalls: [], cancelCalls: [], listCalls: 0, imageCalls: [], approveDelay: 0,
-    headMovedOnce: false, expireSig: new Set(), expireAll: false, sigSeq: 0, prompt: "make the banner pink <b>bold</b> \u202Edrow", kind: "change", purgeSecond: false, noShots: false, referers: [], detailCalls: 0, ...o };
+    headMovedOnce: false, theme: "", cspConnect: "", garbage: false, expireSig: new Set(), expireAll: false, sigSeq: 0, prompt: "make the banner pink <b>bold</b> \u202Edrow", kind: "change", purgeSecond: false, noShots: false, referers: [], detailCalls: 0, ...o };
 };
 resetState();
 const requestJson = () => ({
@@ -89,10 +98,11 @@ const view = () => `export default function (root, ctx) {
   const { h, button } = ctx.ui;
   const out = h("pre", { "data-testid": "out" });
   const run = (name, fn) => button(name, { "data-testid": "go-" + name, onClick: async () => { out.textContent = "..."; try { out.textContent = JSON.stringify(await fn()); } catch (e) { out.textContent = "ERR " + (e.reason || "") + " " + ctx.errorMessage(e); } } });
-  root.append(h("div", { class: "view" }, h("h1", {}, "host"), h("div", { style: { display: "flex", gap: "8px" } },
+  root.append(h("div", { class: "view" }, h("h1", {}, "host"), h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
     run("review", () => ctx.actions.openDesignReview("${RID}", { head_sha: "${"f".repeat(40)}" })),
     run("revert", () => ctx.actions.requestDesignRevert("${TARGET}", { reason: "go back" })),
-    run("cancel", () => ctx.actions.cancelDesignRequest("${RID2}"))), out));
+    run("cancel", () => ctx.actions.cancelDesignRequest("${RID2}")),
+    run("decoy", async () => { ctx.ui.showDialog({ title: "DECOY", content: h("p", {}, "decoy dialog"), actions: [] }); return "called"; })), out));
 }
 `;
 const server = createServer(async (req, res) => {
@@ -102,7 +112,7 @@ const server = createServer(async (req, res) => {
     const sig = new URL(req.url, "http://x").searchParams.get("sig");
     const cors = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
     if (S.expireAll || S.expireSig.has(sig)) { res.writeHead(403, { ...cors, "Content-Type": "application/xml" }); res.end("<Error>expired</Error>"); return; }
-    res.writeHead(200, { ...cors, "Content-Type": "image/png" }); res.end(PNGS.get(p.split("/").pop().replace(".png", ""))); return;
+    res.writeHead(200, { ...cors, "Content-Type": "image/png" }); res.end(S.garbage ? GARBAGE : PNGS.get(p.split("/").pop().replace(".png", ""))); return;
   }
   if (p.startsWith("/api/v1/")) {
     const a = p.slice("/api/v1".length), m = req.method;
@@ -140,9 +150,11 @@ const server = createServer(async (req, res) => {
   }
   if (p === "/design/routes.js") { res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" }); res.end('export default { home: "views/review-host.js" };'); return; }
   if (p === "/design/views/review-host.js") { res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" }); res.end(view()); return; }
+  if (p === "/design/theme.css" && S.theme) { res.writeHead(200, { "Content-Type": TYPES[".css"], "Cache-Control": "no-store" }); res.end(S.theme); return; }
   const path = p === "/" ? "/index.html" : p;
   if (!ALLOW.test(path) || path.includes("..")) { res.writeHead(404); res.end("no"); return; }
-  try { const b = await readFile(join(ADMIN, path)); res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" }); res.end(b); } catch { res.writeHead(404); res.end("no"); }
+  const extra = path === "/index.html" ? { "Content-Security-Policy": csp(S.cspConnect || "'self' http://127.0.0.1:" + PORT) } : {};
+  try { const b = await readFile(join(ADMIN, path)); res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store", ...extra }); res.end(b); } catch { res.writeHead(404); res.end("no"); }
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 PORT = server.address().port;
@@ -153,22 +165,25 @@ const check = (name, cond, extra = "") => { if (cond) console.log(`  ok  ${name}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const T = (id) => `[data-testid="${id}"]`;
 const consoleLines = [];
+const cspLines = [];
 
-async function open({ width = 1280, height = 900, ...state } = {}) {
+async function open({ width = 1280, height = 900, unpatched = false, ...state } = {}) {
   resetState(state);
   const ctx = await browser.newContext({ viewport: { width, height } });
   const pg = await ctx.newPage();
+  if (!unpatched) await pg.addInitScript(OPEN_ROOTS);
+  pg.on("console", (m) => { if (/Content Security Policy|Refused to/i.test(m.text())) cspLines.push(m.text()); });
   const errors = [];
   pg.on("pageerror", (e) => errors.push(String(e.message)));
   pg.on("console", (m) => consoleLines.push(m.text()));
   await pg.goto(URL0, { waitUntil: "load" });
-  await pg.waitForSelector(T("go-review"), { timeout: 15000 });
+  await pg.waitForSelector(T("go-review"), { state: "attached", timeout: 15000 });
   return { ctx, pg, errors };
 }
 const clickReview = async (pg) => { await pg.click(T("go-review")); await pg.waitForSelector("dialog[open] .dlg-rv"); await sleep(450); }; // the bottom sheet animates in for 200 ms
-const images = (pg) => pg.evaluate(() => [...document.querySelectorAll("dialog .dlg-rv__pic")].map((i) => ({ w: i.naturalWidth, h: i.naturalHeight, blob: i.src.startsWith("blob:") })));
-const waitImages = (pg, n) => pg.waitForFunction((k) => [...document.querySelectorAll("dialog .dlg-rv__pic")].filter((i) => i.naturalWidth > 0).length >= k, n, { timeout: 15000 });
-const outText = async (pg) => { await pg.waitForFunction(() => { const t = document.querySelector('[data-testid="out"]').textContent; return t && t !== "..."; }, null, { timeout: 8000 }).catch(() => {}); return pg.locator(T("out")).textContent(); };
+const images = (pg) => pg.evaluate(() => [...__dqa("dialog .dlg-rv__pic")].map((i) => ({ w: i.naturalWidth, h: i.naturalHeight, blob: i.src.startsWith("blob:") })));
+const waitImages = (pg, n) => pg.waitForFunction((k) => [...__dqa("dialog .dlg-rv__pic")].filter((i) => i.naturalWidth > 0).length >= k, n, { timeout: 15000 });
+const outText = async (pg) => { await pg.waitForFunction(() => { const t = __dq('[data-testid="out"]').textContent; return t && t !== "..."; }, null, { timeout: 8000 }).catch(() => {}); return pg.locator(T("out")).textContent(); };
 const noPost = () => S.approveCalls.length === 0 && S.rejectCalls.length === 0 && S.changeCalls.length === 0;
 
 try {
@@ -184,27 +199,27 @@ try {
     check("the warning names the version and the file count", (await pg.locator(T("confirm-warning")).textContent()).includes("（a1a1a1a、7 個檔案）"));
     check("the note that screenshots are captured by the service and are not proof", (await pg.locator(T("confirm-rv-shots-note")).textContent()).includes("截圖由服務擷取，不是證明"));
     check("the guard result and the diff percentage are shown", /守門員：通過/.test(txt) && (await pg.locator(T("confirm-rv-diff")).textContent()).includes("12.34%"));
-    check("the preview link is a safe https origin opened without opener", await pg.evaluate(() => { const a = document.querySelector('[data-testid="confirm-rv-preview"]'); return a && a.href === "https://p-1.preview.example/" && a.rel.includes("noopener") && a.target === "_blank"; }));
-    check("the prompt is plain text (no element was created from its HTML) and bidi marks are gone", await pg.evaluate(() => { const p = document.querySelector('[data-testid="confirm-rv-prompt"]'); return p.querySelector("b") === null && p.textContent.includes("<b>bold</b>") && !p.textContent.includes("\u202E"); }));
+    check("the preview link is a safe https origin opened without opener", await pg.evaluate(() => { const a = __dq('[data-testid="confirm-rv-preview"]'); return a && a.href === "https://p-1.preview.example/" && a.rel.includes("noopener") && a.target === "_blank"; }));
+    check("the prompt is plain text (no element was created from its HTML) and bidi marks are gone", await pg.evaluate(() => { const p = __dq('[data-testid="confirm-rv-prompt"]'); return p.querySelector("b") === null && p.textContent.includes("<b>bold</b>") && !p.textContent.includes("\u202E"); }));
     check("file paths and names lose bidi controls", !/\u202E/.test(txt));
     const imgs = await images(pg);
     check("images are blob: object URLs that decoded (no signed URL in the DOM)", imgs.length >= 2 && imgs.every((i) => i.blob && i.w > 0), JSON.stringify(imgs));
-    { const m = (await pg.content()).match(/.{30}(X-Amz|[/]_shots[/]|deadbeef).{30}/); check("no signed URL anywhere in the document", !m, m && m[0]); }
+    { const m = (await pg.evaluate(() => window.__html())).match(/.{30}(X-Amz|[/]_shots[/]|deadbeef).{30}/); check("no signed URL anywhere in the document", !m, m && m[0]); }
     const ack = pg.locator(T("confirm-rv-ack")), yes = pg.locator(`dialog ${T("confirm-yes")}`);
     check("the approve button is disabled until the checkbox is ticked", await yes.isDisabled() && !(await ack.isChecked()));
     // synthetic input
-    await pg.evaluate(() => { const c = document.querySelector('[data-testid="confirm-rv-ack"]'); c.click(); c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); });
+    await pg.evaluate(() => { const c = __dq('[data-testid="confirm-rv-ack"]'); c.click(); c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); });
     check("a scripted tick is undone and does not enable approve", !(await ack.isChecked()) && (await yes.isDisabled()));
-    await pg.evaluate(() => { const b = document.querySelector('dialog [data-testid="confirm-yes"]'); b.disabled = false; b.click(); b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await pg.evaluate(() => { const b = __dq('dialog [data-testid="confirm-yes"]'); b.disabled = false; b.click(); b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await sleep(500);
     check("synthetic clicks on approve send nothing", S.approveCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 1);
     await pg.screenshot({ path: join(SHOTS, "desktop-1280-before-ack.png") });
     await ack.click();
     check("a real tick enables the approve button", await ack.isChecked() && !(await yes.isDisabled()));
-    await pg.evaluate(() => { document.querySelector("dialog .dlg-rv__main").scrollTop = 0; });
+    await pg.evaluate(() => { __dq("dialog .dlg-rv__main").scrollTop = 0; });
     await pg.screenshot({ path: join(SHOTS, "desktop-1280-ack-ticked.png") });
     await yes.click();
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"), null, { timeout: 8000 });
+    await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("exactly one approve POST", S.approveCalls.length === 1);
     check("it carries the sha and ETag the REVIEW read (not the design layer's)", S.approveCalls[0].body.head_sha === SHA1 && Object.keys(S.approveCalls[0].body).join() === "head_sha" && S.approveCalls[0].ifMatch === '"5"', JSON.stringify(S.approveCalls[0]));
     const o = await outText(pg);
@@ -227,7 +242,7 @@ try {
     check("the approve button is disabled right after the press", await yes.isDisabled());
     await yes.click({ force: true, timeout: 500 }).catch(() => {});
     await pg.keyboard.press("Escape");
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"), null, { timeout: 8000 });
+    await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("a second press and Escape while waiting sent / cancelled nothing: one POST", S.approveCalls.length === 1);
     await ctx.close();
   }
@@ -241,7 +256,7 @@ try {
     check("reject shows its own fixed warning", (await pg.locator(T("confirm-warning")).textContent()).includes("拒絕後這次改版就結束"));
     await pg.fill(T("confirm-rv-reason"), "not pink enough\u202E");
     await pg.locator(`dialog ${T("confirm-yes")}`).click();
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"));
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
     check("one reject POST with the reason (bidi removed by the core)", S.rejectCalls.length === 1 && S.rejectCalls[0].reason === "not pink enough", JSON.stringify(S.rejectCalls));
     check("outcome rejected", /"outcome":"rejected"/.test(await outText(pg)));
     await ctx.close();
@@ -259,7 +274,7 @@ try {
     await pg.fill(T("confirm-rv-note"), "make the banner blue");
     check("the note field is limited to 500", (await pg.locator(T("confirm-rv-note")).getAttribute("maxlength")) === "500");
     await pg.locator(`dialog ${T("confirm-yes")}`).click();
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"));
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
     check("one request-changes POST with the note", S.changeCalls.length === 1 && S.changeCalls[0].note === "make the banner blue");
     check("outcome changesRequested", /"outcome":"changesRequested"/.test(await outText(pg)));
     await ctx.close();
@@ -284,7 +299,7 @@ try {
     check("the reload itself sent no approve", S.approveCalls.length === 1);
     await pg.locator(T("confirm-rv-ack")).click();
     await pg.locator(`dialog ${T("confirm-yes")}`).click();
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"));
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
     check("the deliberate second approve carries the NEW sha and ETag", S.approveCalls.length === 2 && S.approveCalls[1].body.head_sha === SHA2 && S.approveCalls[1].ifMatch === `"6"`, JSON.stringify(S.approveCalls[1]));
     await ctx.close();
   }
@@ -320,7 +335,7 @@ try {
     const { ctx, pg } = await open({ noShots: true });
     await clickReview(pg);
     await pg.waitForSelector(T("confirm-rv-shots"));
-    await pg.waitForFunction(() => /還沒有可看的截圖/.test(document.querySelector('[data-testid="confirm-rv-shots"]').textContent));
+    await pg.waitForFunction(() => /還沒有可看的截圖/.test(__dq('[data-testid="confirm-rv-shots"]').textContent));
     check("no screenshots: an explicit empty state, approve still needs the checkbox", (await pg.locator(`dialog ${T("confirm-yes")}`).isDisabled()));
     await ctx.close();
   }
@@ -352,8 +367,8 @@ try {
     await clickReview(pg); await waitImages(pg, 1);
     check("a single image by default with a before/after toggle", (await images(pg)).length === 1 && (await pg.locator(T("confirm-rv-phase-before")).count()) === 1);
     const geo = await pg.evaluate(() => {
-      const d = document.querySelector("dialog[open]"), r = (e) => e.getBoundingClientRect();
-      const stage = document.querySelector(".dlg-rv__stage"), main = document.querySelector(".dlg-rv__main"), warn = document.querySelector('[data-testid="confirm-warning"]'), yes = document.querySelector('dialog [data-testid="confirm-yes"]');
+      const d = __dq("dialog[open]"), r = (e) => e.getBoundingClientRect();
+      const stage = __dq(".dlg-rv__stage"), main = __dq(".dlg-rv__main"), warn = __dq('[data-testid="confirm-warning"]'), yes = __dq('dialog [data-testid="confirm-yes"]');
       return { dlgW: r(d).width, dlgScrollW: d.scrollWidth, docScrollW: document.documentElement.scrollWidth, vw: innerWidth, vh: innerHeight, stageH: r(stage).height, imgH: stage.scrollHeight, mainScrolls: main.scrollHeight > main.clientHeight,
         warnBottom: r(warn).bottom, warnTop: r(warn).top, yesTop: r(yes).top, yesBottom: r(yes).bottom, dlgBottom: r(d).bottom };
     });
@@ -367,9 +382,9 @@ try {
     await pg.screenshot({ path: join(SHOTS, "phone-390-slider.png") });
     await pg.locator(T("confirm-rv-mode-single")).click();
     await pg.locator(T("confirm-rv-ack")).click();
-    await pg.evaluate(() => { document.querySelector(".dlg-rv__main").scrollTop = 400; });
+    await pg.evaluate(() => { __dq(".dlg-rv__main").scrollTop = 400; });
     await pg.screenshot({ path: join(SHOTS, "phone-390-ack-ticked-scrolled.png") });
-    const after = await pg.evaluate(() => { const w = document.querySelector('[data-testid="confirm-warning"]').getBoundingClientRect(), y = document.querySelector('dialog [data-testid="confirm-yes"]').getBoundingClientRect(); return { wb: w.bottom, yt: y.top, vh: innerHeight, yb: y.bottom }; });
+    const after = await pg.evaluate(() => { const w = __dq('[data-testid="confirm-warning"]').getBoundingClientRect(), y = __dq('dialog [data-testid="confirm-yes"]').getBoundingClientRect(); return { wb: w.bottom, yt: y.top, vh: innerHeight, yb: y.bottom }; });
     check("scrolling the content never moves the warning under the button", after.wb <= after.yt && after.yb <= after.vh, JSON.stringify(after));
     await ctx.close();
   }
@@ -383,7 +398,7 @@ try {
     check("editor: says why (no permission)", (await pg.locator(T("confirm-rv-cannot")).innerText()).includes("沒有核准的權限"));
     await pg.screenshot({ path: join(SHOTS, "desktop-1280-editor.png") });
     await pg.locator(T("confirm-rv-close")).click();
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"));
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
     check("editor: outcome closed, nothing sent", /"outcome":"closed"/.test(await outText(pg)) && noPost());
     await pg.click(T("go-revert")); await sleep(500);
     check("editor: revert is refused (design.revert) before any dialog or request", /ERR permission/.test(await outText(pg)) && S.revertCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 0);
@@ -405,13 +420,16 @@ try {
     check("revert: the fixed warning says it only creates a request", (await pg.locator(T("confirm-warning")).textContent()).includes("這只會建立一個新的還原請求"));
     check("revert: the title names the old version read by the core", (await pg.locator(".dlg__title").innerText()).includes("design-2026-10-01"));
     await pg.locator(`dialog ${T("confirm-yes")}`).click();
-    await pg.waitForFunction(() => /"request"/.test(document.querySelector('[data-testid="out"]').textContent));
+    await pg.waitForFunction(() => /"request"/.test(__dq('[data-testid="out"]').textContent));
     check("revert: one POST with the reason; returns the new request", S.revertCalls.length === 1 && S.revertCalls[0].body.reason === "go back" && S.revertCalls[0].id === TARGET);
     await pg.click(T("go-cancel"));
     await pg.waitForSelector(`dialog[open] ${T("confirm-yes")}`);
     check("cancel: its fixed warning", (await pg.locator(T("confirm-warning")).textContent()).includes("取消後這次改版就結束"));
-    await pg.getByRole("button", { name: "取消", exact: true }).click();
-    await pg.waitForFunction(() => /cancelled/.test(document.querySelector('[data-testid="out"]').textContent));
+    const cdet = await pg.locator(T("confirm-detail")).innerText();
+    check("cancel: the dialog names WHICH request (prompt, status, 7-char sha), read by the core", /make the banner pink/.test(cdet) && /預覽中/.test(cdet) && /a1a1a1a/.test(cdet), cdet);
+    check("cancel: the decline button is core text, not copy", (await pg.locator("dialog[open] .btn").allInnerTexts()).includes("先不要"));
+    await pg.getByRole("button", { name: "先不要", exact: true }).click();
+    await pg.waitForFunction(() => /cancelled/.test(__dq('[data-testid="out"]').textContent));
     check("cancel declined: {cancelled:true} and no POST", S.cancelCalls.length === 0);
     await ctx.close();
   }
@@ -435,14 +453,14 @@ try {
     await pg.locator(T("go-review")).focus();
     await pg.keyboard.press("Enter");
     await pg.waitForSelector("dialog[open] .dlg-rv"); await waitImages(pg, 2);
-    const focusId = () => pg.evaluate(() => document.activeElement && (document.activeElement.dataset.testid || document.activeElement.tagName));
+    const focusId = () => pg.evaluate(() => __active() && (__active().dataset.testid || __active().tagName));
     const tabTo = async (id) => { for (let i = 0; i < 60; i++) { if ((await focusId()) === id) return true; await pg.keyboard.press("Tab"); } return false; };
     check("Tab reaches the checkbox", await tabTo("confirm-rv-ack"));
     await pg.keyboard.press("Space");
     check("Space ticks it", await pg.locator(T("confirm-rv-ack")).isChecked());
     check("Tab reaches the approve button", await tabTo("confirm-yes"));
     await pg.keyboard.press("Enter");
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"), null, { timeout: 8000 });
+    await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("Enter on the focused approve button approves (keyboard-only)", S.approveCalls.length === 1);
     await ctx.close();
   }
@@ -450,12 +468,212 @@ try {
     const { ctx, pg } = await open();
     await clickReview(pg);
     await pg.keyboard.press("Escape");
-    await pg.waitForFunction(() => !document.querySelector("dialog[open]"));
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
     check("Escape closes the dialog without approving", noPost() && /"outcome":"closed"/.test(await outText(pg)));
     await ctx.close();
   }
 
-  check("no console line ever held a signed URL, token or key", !consoleLines.some((l) => /_shots|X-Amz|deadbeef|tok-|secret\/key/.test(l)), consoleLines.filter((l) => /_shots|X-Amz|tok-/.test(l)).join("|").slice(0, 200));
+  // ── 13. the dialog lives in a CLOSED shadow root, under the real strict CSP ──
+  console.log("closed shadow root, strict CSP, decoy dialogs");
+  {
+    const { ctx, pg } = await open({ unpatched: true });
+    await pg.click(T("go-review")); await pg.waitForSelector('[data-core="dialog"]', { state: "attached" }); await sleep(600);
+    const st = await pg.evaluate(() => { const h = document.querySelector('[data-core="dialog"]'); const cs = getComputedStyle(h);
+      return { closed: h.shadowRoot === null, lightDialog: document.querySelector("dialog"), lightYes: document.querySelector('[data-testid="confirm-yes"]'), all: (h.style.cssText.includes("font: initial !important") && h.style.cssText.includes("color: initial !important")) ? "all-initial" : "no", prio: h.style.getPropertyPriority("display"), display: cs.display, vis: cs.visibility }; });
+    check("the shadow root is CLOSED (host.shadowRoot is null) and no dialog or button is in the page DOM", st.closed && st.lightDialog === null && st.lightYes === null, JSON.stringify(st));
+    check("the host carries inline all:initial !important", st.all === "all-initial" && st.prio === "important" && st.display === "block" && st.vis === "visible", JSON.stringify(st));
+    check("the dialog is a real modal and shows its text under the CSP (the core stylesheet applied)", await pg.evaluate(() => document.elementFromPoint(innerWidth / 2, innerHeight / 2) === document.querySelector('[data-core="dialog"]')));
+    check("no Content-Security-Policy violation (constructable stylesheet, blob images, signed-URL fetch)", cspLines.length === 0, cspLines.join("|"));
+    await pg.evaluate(() => document.querySelector('[data-testid="go-decoy"]').click());
+    await sleep(300);
+    check("ctx.ui.showDialog is refused while the review is open (no decoy dialog)", (await pg.evaluate(() => document.querySelectorAll("dialog").length)) === 0 && !(await pg.evaluate(() => document.body.innerText.includes("DECOY"))));
+    await pg.keyboard.press("Escape");
+    await pg.waitForFunction(() => !document.querySelector('[data-core="dialog"]'));
+    await pg.evaluate(() => document.querySelector('[data-testid="go-decoy"]').click());
+    await pg.waitForSelector("dialog[open]");
+    check("... and works again once the core dialog is closed", (await pg.locator("dialog[open]").innerText()).includes("DECOY"));
+    await ctx.close();
+  }
+  {
+    const { ctx, pg } = await open({ unpatched: true });
+    await pg.evaluate(() => { document.querySelector('[data-testid="go-revert"]').click(); });
+    await pg.waitForSelector('[data-core="dialog"]', { state: "attached" }); await sleep(400);
+    await pg.evaluate(() => document.querySelector('[data-testid="go-decoy"]').click()); await sleep(300);
+    check("the shared confirm dialog is a closed shadow root too, and refuses a decoy", (await pg.evaluate(() => document.querySelector('[data-core="dialog"]').shadowRoot === null && document.querySelectorAll("dialog").length === 0)));
+    await ctx.close();
+  }
+
+  // ── 14. design CSS attacks cannot change the dialog (every selector class of the review) ──
+  console.log("css attacks");
+  const ATTACK = [
+    '.dlg-rv .dlg__warning::after { content: "取消這次改版（假）"; }', '.dlg-rv .dlg__warning::before { content: "Cancel"; }', '.btn--danger::after { content: "Cancel"; }', '.btn--danger::before { content: "Cancel"; }',
+    '[class*="dlg"]::after { content: "X"; font-size: 40px; }', '[class*="btn"] { font-size: 1px !important; color: transparent !important; }', '[data-testid]::after { content: "Reject"; }', '[data-testid="confirm-warning"] { visibility: hidden !important; }',
+    '*, *::before, *::after { font-size: 1px !important; color: transparent !important; text-indent: -9999px !important; letter-spacing: -3px !important; }',
+    'img { opacity: 0 !important; filter: brightness(0) !important; } [class*="pic"], [class*="dlg-rv__img"] { display: none !important; }',
+    'input[type="checkbox"], input { position: fixed !important; left: -9999px !important; opacity: 0 !important; } label { display: none !important; }',
+    '.dlg-rv__panel { position: fixed !important; top: 200% !important; } [class*="panel"] { display: none !important; }',
+    'dialog, dialog[open], dialog::backdrop { display: none !important; background: #fff !important; } div, section, span, p, button, h2, h3 { display: none !important; }',
+    '[data-core], [data-core="dialog"] { display: none !important; visibility: hidden !important; position: fixed !important; top: -9999px !important; opacity: 0 !important; filter: blur(9px) !important; transform: scale(0.01) !important; clip-path: inset(100%) !important; }',
+    'body > div:last-child, body > :last-child { display: none !important; } html, body { font-size: 1px !important; color: transparent !important; visibility: hidden !important; text-indent: -9999px !important; line-height: 0 !important; word-spacing: -9px !important; }',
+    ':root { --ink: #fff; --card: #fff; --error: #fff; --paper: #fff; --brand-primary: #fff; --muted: #fff; --band: #fff; --accent: #fff; }',
+    'h1 { font-size: 1px !important; }'].join(String.fromCharCode(10));
+  const measure = (pg) => pg.evaluate(() => {
+    const q = (s) => __dq(s), cs = (e, ps) => getComputedStyle(e, ps || null), r = (e) => e.getBoundingClientRect();
+    const warn = q('[data-testid="confirm-warning"]'), yes = q('dialog [data-testid="confirm-yes"]'), ack = q('[data-testid="confirm-rv-ack"]'), panel = q('[data-testid="confirm-rv-panel"]'), pic = __dqa(".dlg-rv__pic")[0], title = q(".dlg__title");
+    const vis = (e, bounded = true) => { const b = r(e), c = cs(e); return b.width > 4 && b.height > 4 && c.visibility === "visible" && c.display !== "none" && Number(c.opacity) === 1 && (!bounded || (b.top >= 0 && b.bottom <= innerHeight + 1 && b.left >= 0 && b.right <= innerWidth + 1)); };
+    return { warnFont: cs(warn).fontSize, warnColor: cs(warn).color, warnIndent: cs(warn).textIndent, warnVis: vis(warn), warnAfter: cs(warn, "::after").content, warnBefore: cs(warn, "::before").content, yesAfter: cs(yes, "::after").content, yesBefore: cs(yes, "::before").content,
+      yesText: yes.textContent, yesFont: cs(yes).fontSize, yesColor: cs(yes).color, yesVis: (() => { const b = r(yes), c = cs(yes); return b.width > 4 && b.height > 4 && c.visibility === "visible" && c.display !== "none"; })(), titleText: title.textContent, titleFont: cs(title).fontSize, titleColor: cs(title).color, titleVis: vis(title),
+      ackVis: vis(ack), ackW: Math.round(r(ack).width), panelVis: vis(panel), imgFilter: pic ? cs(pic).filter : "none", imgOpacity: pic ? cs(pic).opacity : "1", imgVis: pic ? vis(pic, false) : true, warnW: Math.round(r(warn).width), dlgW: Math.round(r(q("dialog[open]")).width),
+      letter: cs(warn).letterSpacing };
+  });
+  {
+    const base = await open({ width: 1280, height: 900 });
+    await clickReview(base.pg); await waitImages(base.pg, 2);
+    const m0 = await measure(base.pg);
+    await base.ctx.close();
+    const atk = await open({ width: 1280, height: 900, theme: ATTACK });
+    check("control: the attack CSS IS applied to the page itself (the h1 shrank to 1px)", (await atk.pg.evaluate(() => getComputedStyle(document.querySelector("h1")).fontSize)) === "1px");
+    await atk.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click()); await atk.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" }); await sleep(450); await waitImages(atk.pg, 2);
+    const m1 = await measure(atk.pg);
+    check("baseline is sane (everything visible)", m0.warnVis && m0.yesVis && m0.ackVis && m0.panelVis && m0.imgVis && m0.titleVis, JSON.stringify(m0));
+    check("attacked: the warning has the same size, colour, indent, spacing and is fully visible", m1.warnFont === m0.warnFont && m1.warnColor === m0.warnColor && m1.warnIndent === m0.warnIndent && m1.letter === m0.letter && m1.warnVis && m1.warnW === m0.warnW, JSON.stringify([m0, m1]));
+    check("attacked: no ::before / ::after text on the warning, the approve button or anything (content stays none)", m1.warnAfter === "none" && m1.warnBefore === "none" && m1.yesAfter === "none" && m1.yesBefore === "none", JSON.stringify(m1));
+    check("attacked: the approve button label and title are unchanged and visible", m1.yesText === m0.yesText && m1.yesText === "核准並上線" && m1.yesFont === m0.yesFont && m1.yesColor === m0.yesColor && m1.yesVis && m1.titleText === m0.titleText && m1.titleFont === m0.titleFont && m1.titleColor === m0.titleColor && m1.titleVis);
+    check("attacked: the checkbox, the panel and the images are visible and unfiltered (img{opacity:0}, brightness(0), left:-9999px, top:200% all ignored)", m1.ackVis && m1.panelVis && m1.imgVis && m1.imgFilter === "none" && m1.imgOpacity === "1" && m1.ackW === m0.ackW, JSON.stringify(m1));
+    check("attacked: the dialog has its normal size and the host is displayed", m1.dlgW === m0.dlgW && (await atk.pg.evaluate(() => { const h = document.querySelector('[data-core="dialog"]'); const c = getComputedStyle(h); return c.display === "block" && c.visibility === "visible" && c.opacity === "1" && c.transform === "none" && c.clipPath === "none"; })));
+    await atk.pg.screenshot({ path: join(SHOTS, "css-attack-1280-dialog-unchanged.png") });
+    await atk.pg.locator(T("confirm-rv-ack")).click();
+    await atk.pg.locator('dialog ' + T("confirm-yes")).click();
+    await atk.pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
+    check("attacked: a real person can still approve (one POST, sha and ETag of the review)", S.approveCalls.length === 1 && S.approveCalls[0].body.head_sha === SHA1);
+    await atk.ctx.close();
+  }
+  {
+    const atk = await open({ width: 1280, height: 900, theme: ATTACK });
+    await atk.pg.evaluate(() => document.querySelector('[data-testid="go-revert"]').click());
+    await atk.pg.waitForSelector("dialog[open]", { state: "attached" }); await sleep(400);
+    const c = await atk.pg.evaluate(() => { const w = __dq('[data-testid="confirm-warning"]'), y = __dq('dialog [data-testid="confirm-yes"]'), b = w.getBoundingClientRect(), cs = getComputedStyle(w);
+      return { font: cs.fontSize, after: getComputedStyle(y, "::after").content, text: y.textContent, w: b.width, h: b.height, vis: cs.visibility, label: [...__dqa("dialog .btn")].map((x) => x.textContent) }; });
+    check("attacked: the shared confirm dialog keeps its warning size / text and its real button labels", c.font === "14px" && c.after === "none" && c.text === "建立還原請求" && c.w > 200 && c.h > 20 && c.vis === "visible" && c.label.join() === "先不要,建立還原請求", JSON.stringify(c));
+    await atk.pg.screenshot({ path: join(SHOTS, "css-attack-confirm-unchanged.png") });
+    await atk.ctx.close();
+  }
+  {
+    const z = await open({ width: 1280, height: 900, theme: "html, body { zoom: 0.3 !important; }" });
+    await z.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+    await z.pg.waitForSelector("dialog[open]", { state: "attached" }).catch(() => {}); await sleep(500);
+    const w = await z.pg.evaluate(() => { const d = __dq("dialog[open]"); return d ? Math.round(d.getBoundingClientRect().width) : 0; });
+    check("a zoom on html / body does not shrink the review dialog (the core dialog keeps its normal width)", w >= 900, String(w));
+    await z.ctx.close();
+  }
+
+  // ── 15. only a real person approves: scripted ticks and scripted clicks send nothing ──
+  console.log("trusted input");
+  {
+    const { ctx, pg } = await open();
+    await clickReview(pg); await waitImages(pg, 2);
+    const ack = pg.locator(T("confirm-rv-ack")), yes = pg.locator('dialog ' + T("confirm-yes"));
+    await pg.evaluate(() => { const c = __dq('[data-testid="confirm-rv-ack"]'); c.checked = true; const b = __dq('dialog [data-testid="confirm-yes"]'); b.disabled = false; });
+    await yes.click(); await sleep(500);
+    check("a scripted ack.checked = true followed by a real click on approve does NOT send", S.approveCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 1);
+    await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').checked = false; });
+    await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').click(); });
+    await sleep(200);
+    check("el.click() on the box (a trusted change event from an untrusted click) is undone", !(await ack.isChecked()));
+    await pg.evaluate(() => { const c = __dq('[data-testid="confirm-rv-ack"]'); c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); const b = __dq('dialog [data-testid="confirm-yes"]'); b.disabled = false; });
+    await yes.click(); await sleep(500);
+    check("a scripted change event + a real click on approve does NOT send", S.approveCalls.length === 0);
+    await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').checked = false; });
+    await ack.click(); await sleep(100);
+    check("a real tick enables the approve button", (await ack.isChecked()) && !(await yes.isDisabled()));
+    await pg.evaluate(() => { const b = __dq('dialog [data-testid="confirm-yes"]'); b.click(); b.dispatchEvent(new MouseEvent("click", { bubbles: true })); b.dispatchEvent(new PointerEvent("click", { bubbles: true })); });
+    await sleep(600);
+    check("with the box really ticked and the button enabled, a scripted click on approve sends NOTHING (the trusted() check)", S.approveCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 1);
+    await yes.click();
+    await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
+    check("a real click then sends exactly one approve", S.approveCalls.length === 1);
+    await ctx.close();
+  }
+  {
+    const { ctx, pg } = await open();
+    await clickReview(pg); await waitImages(pg, 2);
+    await pg.locator(T("confirm-rv-reject")).click();
+    await pg.evaluate(() => { __dq('dialog [data-testid="confirm-yes"]').click(); });
+    await sleep(400);
+    check("a scripted click on the reject button sends nothing", S.rejectCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 1);
+    await pg.locator('dialog ' + T("confirm-yes")).click();
+    await pg.waitForFunction(() => !__dq("dialog[open]"));
+    check("a real click rejects", S.rejectCalls.length === 1);
+    await ctx.close();
+  }
+  {
+    const { ctx, pg } = await open();
+    await clickReview(pg); await waitImages(pg, 2);
+    await pg.locator(T("confirm-rv-changes")).click();
+    await pg.fill(T("confirm-rv-note"), "blue please");
+    await pg.evaluate(() => { __dq('dialog [data-testid="confirm-yes"]').click(); });
+    await sleep(400);
+    check("a scripted click on 'send changes' sends nothing", S.changeCalls.length === 0);
+    await ctx.close();
+  }
+
+  // ── 16. signed URLs leave no trace in the resource timings ──
+  console.log("resource timings");
+  {
+    const { ctx, pg } = await open();
+    await clickReview(pg); await waitImages(pg, 2); await sleep(300);
+    const n = await pg.evaluate(() => performance.getEntriesByType("resource").filter((e) => /_shots|X-Amz|deadbeef|sig=/.test(e.name)).length);
+    check("performance.getEntriesByType('resource') holds no signed URL after the images loaded", n === 0, String(n));
+    await ctx.close();
+  }
+
+  // ── 17. screenshots that cannot load: CSP / network, and an undecodable PNG ──
+  console.log("screenshot failures");
+  {
+    const { ctx, pg } = await open({ cspConnect: "'self'" });
+    await clickReview(pg);
+    await pg.waitForSelector(T("confirm-rv-imgerr"));
+    const t0 = await pg.locator(T("confirm-rv-imgerr")).first().innerText();
+    check("a fetch blocked by the CSP (host not in connect-src) shows a clear 'cannot load screenshots' state with the ADMIN_UPLOAD_ORIGIN hint and a retry button", /無法載入截圖/.test(t0) && /ADMIN_UPLOAD_ORIGIN/.test(t0) && (await pg.locator(T("confirm-rv-retry")).count()) >= 1, t0);
+    check("... and approving is still gated by the checkbox (the person decides)", await pg.locator('dialog ' + T("confirm-yes")).isDisabled());
+    await pg.screenshot({ path: join(SHOTS, "desktop-1280-screenshots-blocked.png") });
+    await ctx.close();
+  }
+  {
+    const { ctx, pg } = await open({ garbage: true });
+    await clickReview(pg);
+    await pg.waitForSelector(T("confirm-rv-imgerr"), { timeout: 10000 });
+    const pics = await pg.evaluate(() => __dqa(".dlg-rv__pic").length);
+    check("a PNG signature + IHDR followed by garbage shows the error state with a retry button, not a broken image", pics === 0 && (await pg.locator(T("confirm-rv-retry")).count()) >= 1);
+    await ctx.close();
+  }
+
+  // ── 18. phone: tap targets and a usable screenshot region on a short screen ──
+  console.log("phone tap targets");
+  for (const [w, h] of [[390, 844], [390, 560]]) {
+    const { ctx, pg } = await open({ width: w, height: h });
+    await clickReview(pg); await waitImages(pg, 1);
+    const tt = await pg.evaluate(() => {
+      const hgt = (e) => Math.round(e.getBoundingClientRect().height * 10) / 10;
+      const pick = (sel) => __dqa(sel).map(hgt);
+      const rows = { ackRow: pick(".dlg-rv__ack"), viewport: pick('[data-testid^="confirm-rv-vp-"]'), mode: pick('[data-testid^="confirm-rv-mode-"]'), phase: pick('[data-testid^="confirm-rv-phase-"]'), summary: pick("summary"), preview: pick('[data-testid="confirm-rv-preview"]'),
+        view: pick('[data-testid="confirm-rv-view"]'), reject: pick('[data-testid="confirm-rv-reject"]'), changes: pick('[data-testid="confirm-rv-changes"]'), close: pick('[data-testid="confirm-rv-close"]'), approve: pick('dialog [data-testid="confirm-yes"]') };
+      const stage = __dqa(".dlg-rv__stage")[0];
+      return { rows, stageH: stage ? Math.round(stage.getBoundingClientRect().height) : 0 };
+    });
+    const small = Object.entries(tt.rows).filter(([, v]) => v.some((x) => x < 43.9)).map(([k, v]) => k + ":" + v.join("/"));
+    check("viewport " + w + "x" + h + ": every tap target is at least 44px (ack row, view toggles, summary, preview link, buttons)", small.length === 0 && tt.rows.ackRow.length === 1 && tt.rows.summary.length === 1 && tt.rows.preview.length === 1 && tt.rows.viewport.length >= 1, JSON.stringify(tt.rows));
+    check("viewport " + w + "x" + h + ": the screenshot region keeps a usable height (>= 180px)", tt.stageH >= 180, String(tt.stageH));
+    const reach = await pg.evaluate(() => { const sc = __dq(".dlg-rv"); sc.scrollTop = sc.scrollHeight; const y = __dq('dialog [data-testid="confirm-yes"]').getBoundingClientRect(), wn = __dq('[data-testid="confirm-warning"]').getBoundingClientRect(); return { yb: y.bottom, vh: innerHeight, wb: wn.bottom, yt: y.top }; });
+    check("viewport " + w + "x" + h + ": scrolled down, the approve button is on screen below the warning", reach.yb <= reach.vh + 1 && reach.wb <= reach.yt, JSON.stringify(reach));
+    await pg.evaluate(() => { __dq(".dlg-rv").scrollTop = 0; });
+    await pg.screenshot({ path: join(SHOTS, "phone-" + w + "x" + h + "-review.png") });
+    await pg.evaluate(() => { const sc = __dq(".dlg-rv"); sc.scrollTop = sc.scrollHeight; });
+    await pg.screenshot({ path: join(SHOTS, "phone-" + w + "x" + h + "-review-scrolled.png") });
+    await ctx.close();
+  }
+
+  check("no console line the APP wrote held a signed URL, token or key (the browser's own CSP-violation line is not the app's)", !consoleLines.filter((l) => !/Content Security Policy|Fetch API cannot load|Refused to/.test(l)).some((l) => /_shots|X-Amz|deadbeef|tok-|secret\/key/.test(l)), consoleLines.filter((l) => !/Content Security/.test(l) && /_shots|X-Amz|tok-/.test(l)).join("|").slice(0, 200));
 } catch (e) {
   failures++; console.error("  FAIL test crashed:", e && e.stack || e);
 } finally {

@@ -10,6 +10,7 @@ import path from "node:path";
 import { scanCode, scanDataJs, scanCss, scanAsset, scopeViolations } from "./lib/design-scan.mjs";
 import { validateCopy, validateRoutes, defaultsProblems, WARNED_CONFIRM_IDS, LIMITS } from "../lib/design-schema.js";
 import { fixedWarning } from "../core/warnings.js";
+import { CORE_CONFIRM_IDS, CORE_TEXT } from "../lib/fixed-text.js";
 import { deployChecks } from "./check-design.mjs";
 import { CASES } from "./__fixtures__/cases.mjs";
 
@@ -73,7 +74,7 @@ ok("scope: windows separators are normalised", scopeViolations(["design\\views\\
   ok("copy: the editable .text lead-in of an irreversible confirm is accepted", fw.copy["confirm.cancelOrder.text"] === "你確定嗎？");
   ok("defaults: no warning key and no retired .message key for irreversible confirms", defaultsProblems(real).length === 0, JSON.stringify(defaultsProblems(real)));
   ok("defaults: a defaults file that defines a warning is reported", defaultsProblems({ "confirm.cancelOrder.warning": "x" }).length === 1);
-  ok("core: every irreversible confirm has a fixed warning and a non-empty text", WARNED_CONFIRM_IDS.every((id) => fixedWarning(id, { id: 1, email: "a@b.c" }).length > 5 && `confirm.${id}.title` in real && (`confirm.${id}.text` in real) && `confirm.${id}.yes` in real));
+  ok("core: every irreversible confirm has a fixed warning and a non-empty text", WARNED_CONFIRM_IDS.every((id) => fixedWarning(id, { id: 1, email: "a@b.c" }).length > 5 && (CORE_CONFIRM_IDS.includes(id) ? (`cf.${id}.title` in CORE_TEXT && `cf.${id}.yes` in CORE_TEXT && !Object.keys(real).some((k) => k.startsWith(`confirm.${id}.`))) : (`confirm.${id}.title` in real && (`confirm.${id}.text` in real) && `confirm.${id}.yes` in real))));
   const rr = validateRoutes({ home: "views/home.js", nope: "views/x.js", orders: "../lib/api.js", team: "views/../x.js", shipping: 5, reports: "https://x/y.js" });
   ok("routes: only a known id with a views/ path is kept", Object.keys(rr.routes).join() === "home" && rr.warnings.length === 5, JSON.stringify(rr));
 }
