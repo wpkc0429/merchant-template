@@ -112,6 +112,40 @@ export function scanTree(root, dirName, api) {
   return out;
 }
 
+/** Remove a trailing nginx `# ...` comment from each line; a `#` inside a "..." or '...' value is kept (quote-aware). */
+function stripNginxComments(text) {
+  return text.split("\n").map((line) => {
+    let q = "";
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (q) { if (ch === "\\") i++; else if (ch === q) q = ""; }
+      else if (ch === '"' || ch === "'") q = ch;
+      else if (ch === "#") return line.slice(0, i);
+    }
+    return line;
+  }).join("\n");
+}
+
+/** Strength problems of a CSP string (shared by the server-level and every location CSP). Empty array = strong enough. */
+function cspProblems(val) {
+  const bad = [];
+  const d = new Map();
+  for (const part of val.split(";")) { const [n, ...rest] = part.trim().split(/\s+/); if (n) d.set(n.toLowerCase(), rest); }
+  const script = d.get("script-src");
+  const defNone = (d.get("default-src") || []).join(" ") === "'none'";
+  if (script !== undefined ? !(script.length === 1 && (script[0] === "'self'" || script[0] === "'none'")) : !defNone) bad.push(`CSP script-src must be 'self' or 'none' (or absent under default-src 'none') (found: ${script ? script.join(" ") : "not set"})`);
+  if (!d.has("default-src")) bad.push("CSP has no default-src");
+  for (const [n, vals] of d) if (vals.some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) bad.push(`CSP ${n} must not contain unsafe-inline, unsafe-eval or a wildcard`);
+  for (const [n, vals] of d) {
+    if (/^(img-src|font-src|media-src)$/.test(n)) continue;
+    const sch = vals.filter((x) => /^[a-z][a-z0-9+.-]*:$/i.test(x) && !(n === "worker-src" && x.toLowerCase() === "blob:"));
+    if (sch.length) bad.push(`CSP ${n} must not use the scheme source ${sch.join(" ")}`);
+  }
+  for (const n of ["base-uri", "frame-ancestors"]) if ((d.get(n) || []).join(" ") !== "'none'") bad.push(`CSP ${n} must be 'none'`);
+  if (!defNone && (d.get("object-src") || []).join(" ") !== "'none'") bad.push("CSP object-src must be 'none'");
+  return bad;
+}
+
 /** Non-failing notes collected by the checks (printed by main). */
 const NOTES = [];
 
@@ -129,7 +163,7 @@ export function deployChecks(root) {
   const docker = read("deploy/Dockerfile");
   if (nginx === null) v("deploy/csp-missing", "deploy/nginx.conf.template is missing: the admin hosting config must carry the strict CSP", "deploy/nginx.conf.template");
   else {
-    const live = nginx.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    const live = stripNginxComments(nginx);
     const m = /add_header\s+Content-Security-Policy\s+"([^"]+)"\s*(always)?\s*;/i.exec(live);
     if (!m) v("deploy/csp-missing", "deploy/nginx.conf.template has no (uncommented) `add_header Content-Security-Policy \"...\" always;`", "deploy/nginx.conf.template");
     else {
@@ -149,7 +183,7 @@ export function deployChecks(root) {
   if (nginx !== null) {
     // nginx does NOT inherit add_header into a location that defines its own add_header, so the server level must carry a CSP
     // and every such location must repeat the full security header set with a CSP at least as strict as the server-level one.
-    const live = nginx.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+    const live = stripNginxComments(nginx);
     const locs = [];
     let server = "", pos = 0;
     const re = /\blocation\s+([^{;]*?)\s*\{/g;
@@ -162,9 +196,12 @@ export function deployChecks(root) {
     }
     server += live.slice(pos);
     const hdrs = (t) => [...t.matchAll(/add_header\s+([A-Za-z-]+)\s+"([^"]*)"\s*(always)?\s*;/gi)].map((x) => ({ n: x[1].toLowerCase(), val: x[2], always: !!x[3] }));
-    const parse = (p) => { const d = new Map(); for (const part of p.split(";")) { const [n, ...rest] = part.trim().split(/\s+/); if (n) d.set(n.toLowerCase(), rest.join(" ")); } return d; };
     const serverCsp = hdrs(server).find((h) => h.n === "content-security-policy");
     if (!serverCsp) v("deploy/csp-missing", "deploy/nginx.conf.template has no server-level `add_header Content-Security-Policy` (outside the location blocks)", "deploy/nginx.conf.template");
+    else {
+      if (!serverCsp.always) v("deploy/csp-always", "the server-level CSP add_header must end with `always`", "deploy/nginx.conf.template");
+      for (const msg of cspProblems(serverCsp.val)) v("deploy/csp-weak", `server level: ${msg}`, "deploy/nginx.conf.template");
+    }
     const REQUIRED = ["Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Permissions-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy", "Cache-Control"];
     for (const loc of locs) {
       if (!/add_header\b/.test(loc.body)) continue;
@@ -178,14 +215,7 @@ export function deployChecks(root) {
       if (!c.always) v("deploy/csp-always", `${name}: the CSP add_header must end with \`always\``, "deploy/nginx.conf.template");
       if (serverCsp && c.val.trim() === serverCsp.val.trim()) continue;
       // not identical: it must still be at least as strict (default-src 'none' is the strictest base)
-      const d = parse(c.val);
-      const script = d.get("script-src");
-      const defNone = d.get("default-src") === "'none'";
-      if (script !== undefined ? script !== "'self'" && script !== "'none'" : !defNone) weak(`CSP script-src must be 'self' or 'none' (or absent under default-src 'none') (found: ${script ?? "not set"})`);
-      if (!d.has("default-src")) weak("CSP has no default-src");
-      for (const [n, val] of d) if (val.split(" ").some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) weak(`CSP ${n} must not contain unsafe-inline, unsafe-eval or a wildcard`);
-      for (const n of ["base-uri", "frame-ancestors"]) if (d.get(n) !== "'none'") weak(`CSP ${n} must be 'none'`);
-      if (!defNone && d.get("object-src") !== "'none'") weak("CSP object-src must be 'none'");
+      for (const msg of cspProblems(c.val)) weak(msg);
     }
   }
   if (docker === null) v("deploy/csp-missing", "deploy/Dockerfile is missing", "deploy/Dockerfile");

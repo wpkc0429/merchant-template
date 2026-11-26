@@ -63,7 +63,7 @@
   "lib/session.js": "1cad3c0f44a7332b32cda145e5a7394bb083ff563765c1f12840bd27a86d6090",
   "lib/team.js": "05c3f13e5c9bf61d6882030391cc3c46d17a19c9907e28229a477239b9bca3b0",
   "lib/upload.js": "c82caea7630bbd736e6cb25b33a1d81cfe16fd307af9c6068de21c2739a22887",
-  "scripts/check-design.mjs": "639d4b372de73b3eb2ecbfa2d36ec48ff48f2734cceaf08cacba43d0a8f878bb",
+  "scripts/check-design.mjs": "1e8d245c1b773616bf16699cf7c633f4933cdb0b2ab5c9439b5f3f0ae754d851",
   "scripts/check-layers.mjs": "8ad3b19c9e38a4d313870547b4edc5bda4d9d63829ee36f84dfe689531bf2a28",
   "scripts/lib/ctx-surface.mjs": "6ad1270920b46016f6ea0c4393e9af101327ec102e37dd79dbc633a3862365ef",
   "scripts/lib/design-scan.mjs": "ebdf8e03a093becc5688d16218e9ff4c5b6a232068cb831b4aec0875b7974a45",

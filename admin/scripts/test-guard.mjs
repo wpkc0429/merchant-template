@@ -164,6 +164,16 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
     ok("deploy: a location without the full header set -> loc-headers naming the location", /loc-headers location = \/site-config\.js.*X-Frame-Options/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(/^\s*add_header X-Frame-Options .*$/m, "")))));
     ok("deploy: a location CSP without `always` -> csp-always", /csp-always location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace("object-src 'none'\" always;", "object-src 'none'\";")))));
     ok("deploy: the current template still passes (strict /content.schema.json CSP is accepted)", (dep(ng), deployChecks(dir).length === 0), JSON.stringify(deployChecks(dir)));
+    // hardening: server-level CSP strength, quote-aware comment stripping, scheme sources
+    const srvRe = /^ {4}add_header Content-Security-Policy .*$/m;
+    const srvLine = ng.match(srvRe)[0];
+    ok("deploy: weak server CSP placed after strong location CSPs -> csp-weak 'server level'", /csp-weak server level/.test(locMsgs(ng.replace(srvRe, "").replace(/\n(\s*)\}\s*$/, (m0) => m0) + "\n" + srvLine.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"))));
+    ok("deploy: server CSP with default-src * -> csp-weak 'server level'", /csp-weak server level/.test(locMsgs(ng.replace(srvRe, srvLine.replace("default-src 'self'", "default-src *")))));
+    ok("deploy: server CSP with scheme source in script-src -> csp-weak", /csp-weak server level.*scheme source/.test(locMsgs(ng.replace(srvRe, srvLine.replace("script-src 'self'", "script-src 'self' https:")))));
+    ok("deploy: a commented-out add_header (trailing # comment) is never counted", /loc-headers location = \/site-config\.js.*X-Frame-Options/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(/^(\s*)add_header X-Frame-Options (.*)$/m, "$1# add_header X-Frame-Options $2")))) && /loc-headers location = \/site-config\.js.*X-Frame-Options/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(/^(\s*)(add_header X-Frame-Options .*)$/m, "$1proxy_pass_request_body on; # $2")))));
+    ok("deploy: a trailing comment after a live add_header does not hide it, and # inside a quoted value is kept", (dep(ng.replace(srvLine, srvLine.replace(/;$/, "; # note")).replace("object-src 'none'\" always;", "object-src 'none'; report-uri /r#frag\" always;")), deployChecks(dir).length === 0), JSON.stringify(deployChecks(dir)));
+    ok("deploy: scheme source https: in /content.schema.json default-src -> csp-weak", /csp-weak location = \/content\.schema\.json.*scheme source https:/.test(locMsgs(inLoc("= /content.schema.json", (b) => b.replace("default-src 'none'", "default-src https:")))));
+    ok("deploy: scheme source data: in /site-config.js connect-src -> csp-weak", /csp-weak location = \/site-config\.js.*scheme source data:/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace("connect-src", "connect-src data:")))));
     ok("deploy: a missing deploy/ directory -> csp-missing", (rmSync(path.join(dir, "deploy"), { recursive: true }), /deploy\/csp-missing/.test(deployChecks(dir).map((x) => x.rule).join())));
     cpSync(path.join(ROOT, "deploy"), path.join(dir, "deploy"), { recursive: true });
     ok("deploy: restored -> passes", deployChecks(dir).length === 0);
