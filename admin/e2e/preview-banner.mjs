@@ -193,6 +193,41 @@ try {
   { const { ctx, page, state } = await open("preview", { noPopover: true }); await sleep(1500); const f = await facts(page);
     check("no popover: plain preview page still works (sticky bar, on top, no fail-closed)", f.banner && f.top && !f.failed && !f.popoverOpen && f.adds === 1 && !state.crashed, JSON.stringify(f));
     await page.screenshot({ path: join(SHOTS, "banner-nopopover-1280.png") }); await ctx.close(); }
+  // 4e. dialogs: legitimate confirms (ui/kit.js style: opaque backdrop, opened a few times) keep the app; loops of modals / popovers fail closed once
+  console.log("modal dialogs and top-layer rotation");
+  const DLG = `(() => { const d = document.createElement("dialog"); d.textContent = "confirm"; d.style.cssText = "border:1px solid #000;padding:2rem"; document.body.append(d); d.showModal(); window.__d = d; })()`;
+  { const { ctx, page, state } = await open("preview");
+    if ((await facts(page)).popoverOpen) {
+      for (let i = 0; i < 3; i++) {
+        await page.evaluate(DLG); await sleep(700);
+        const f = await facts(page);
+        check(`confirm dialog #${i + 1} open: banner still top-most, not failed closed`, f.popoverOpen && !f.failed && f.app && (await seenColor(page)) === BAR_RGB, JSON.stringify(f));
+        await page.evaluate(() => { window.__d.close(); window.__d.remove(); }); await sleep(700);
+      }
+      const f = await facts(page);
+      check("after three confirms: no fail-closed, no crash", !f.failed && f.app && !state.crashed, JSON.stringify(f));
+      // a dialog that stays open must not make the banner churn (no raise loop): count toggle events of the banner over 3 s
+      await page.evaluate(DLG);
+      await page.evaluate(() => { window.__tg = 0; document.getElementById("core-preview-banner").addEventListener("toggle", () => window.__tg++); });
+      await sleep(3000);
+      check("a dialog that stays open: banner is not re-raised over and over", (await page.evaluate(() => window.__tg)) === 0 && !(await facts(page)).failed);
+    }
+    await ctx.close(); }
+  for (const [name, fn] of Object.entries({
+    "fight: opaque showModal() closed and re-opened every 40 ms": () => { const d = document.createElement("dialog"); d.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border:0;margin:0;background:#000;pointer-events:none"; document.body.append(d); setInterval(() => { d.close(); try { d.showModal(); } catch {} }, 40); d.showModal(); },
+    "fight: a NEW opaque modal every 40 ms": () => { setInterval(() => { document.querySelectorAll("dialog").forEach((x) => x.remove()); const d = document.createElement("dialog"); d.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border:0;margin:0;background:#000"; document.body.append(d); d.showModal(); }, 40); },
+    "fight: popover=manual rotation every 40 ms": () => { setInterval(() => { document.querySelectorAll("[data-rot]").forEach((x) => x.remove()); const d = document.createElement("div"); d.setAttribute("data-rot", ""); d.setAttribute("popover", "manual"); d.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;margin:0;border:0;background:#000;pointer-events:none"; document.body.append(d); d.showPopover(); }, 40); },
+  })) {
+    const { ctx, page, state } = await open("preview");
+    if (!(await facts(page)).popoverOpen) { await ctx.close(); continue; }
+    await page.evaluate(`(${fn.toString()})()`);
+    await sleep(3500);
+    const f = await facts(page);
+    check(`${name}: fails closed exactly once, no crash`, f.failed && f.failMsgs === 1 && !f.app && !state.crashed, JSON.stringify(f));
+    await sleep(1000);
+    check(`${name}: nothing changes afterwards`, (await facts(page)).failMsgs === 1);
+    await ctx.close();
+  }
   // 4d. a design layer that keeps closing the popover: bounded, one fail-closed
   { const { ctx, page, state } = await open("preview");
     if ((await facts(page)).popoverOpen) {

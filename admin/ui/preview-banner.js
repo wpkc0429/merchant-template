@@ -118,10 +118,25 @@ function syncSpacer(b) {
     if (sp.style.height !== h) { sp.style.setProperty("height", h, "important"); sp.style.setProperty("margin", "0", "important"); if (observer && typeof observer.takeRecords === "function") observer.takeRecords(); }
   } catch { /* cosmetic */ }
 }
-/** Something else is in the top layer (a modal dialog, another popover): raise the banner above it again (no rebuild, no count). */
-function raise(b) {
+let raisedOver = []; // the OTHER top-layer elements the banner was last raised above (it is known to be on top of these)
+/**
+ * Something else is in the top layer (a modal dialog, another popover): raise the banner above it. Only when an element appeared that the banner
+ * is not known to be above (no constant churn while a legitimate modal stays open), and every raise counts in the rebuild window: a design layer
+ * that keeps opening full-screen modals ends in ONE fail-closed, never a loop. Runs at once on DOM / `toggle` / `close` events, not only on the timer.
+ */
+function raise(b = el) {
+  if (!POPOVER || failed || !b || !b.isConnected) return;
   try {
-    if (document.querySelectorAll(":modal, :popover-open").length > 1) { selfToggle = Date.now(); b.hidePopover(); b.showPopover(); }
+    const others = [...document.querySelectorAll(":modal, :popover-open")].filter((n) => n !== b);
+    const fresh = others.filter((n) => !raisedOver.includes(n));
+    raisedOver = others.filter((n) => raisedOver.includes(n)); // forget the ones that closed (a re-opened one is new again)
+    if (!fresh.length || !isOpen(b)) return;
+    const now = Date.now();
+    rebuilds = rebuilds.filter((t) => now - t < REBUILD_WINDOW_MS);
+    if (rebuilds.length >= REBUILD_MAX) { failClosed(); return; }
+    rebuilds.push(now);
+    selfToggle = now; b.hidePopover(); b.showPopover();
+    raisedOver = others;
   } catch { /* ignore */ }
 }
 /** No Popover API: a fixed/absolute element (even pointer-events:none, which elementFromPoint skips) or a body/html pseudo-element painted over the bar. */
@@ -241,7 +256,7 @@ export function verifyBanner(mode = previewMode) {
     try { if (el && el.parentNode) el.parentNode.removeChild(el); } catch { /* ignore */ }
     el = build(mode);
     document.body.prepend(el);
-    if (POPOVER) { try { el.showPopover(); } catch { /* checked below */ } }
+    if (POPOVER) { try { el.showPopover(); raisedOver = [...document.querySelectorAll(":modal, :popover-open")].filter((n) => n !== el); } catch { /* checked below */ } }
     if (observer) { observer.observe(el, { ...OBSERVE, subtree: true }); if (typeof observer.takeRecords === "function") observer.takeRecords(); } // our own DOM change is not news
     if (bannerIntact(el, mode)) { syncSpacer(el); return true; }
     failClosed();
@@ -276,6 +291,19 @@ export function installPreviewBanner(mode = previewMode) {
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(run); else setTimeout(run, 0);
   };
   poke = check;
+  if (POPOVER && typeof document.addEventListener === "function") {
+    const quick = (e) => {
+      if (e && e.target === el) return;
+      if (e && e.target && e.newState !== "open") raisedOver = raisedOver.filter((n) => n !== e.target); // closed (a later open of the same element is new)
+      raise();
+    };
+    document.addEventListener("toggle", quick, true);
+    document.addEventListener("close", quick, true);
+    if (typeof MutationObserver === "function") new MutationObserver((records) => {
+      for (const r of records) if (r.attributeName) raisedOver = raisedOver.filter((n) => n !== r.target); // `open` toggled: it may have been re-opened on top of the banner
+      raise();
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "popover"] });
+  }
   if (typeof MutationObserver === "function" && !observer) {
     observer = new MutationObserver(check);
     const opts = OBSERVE;
