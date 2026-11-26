@@ -42,7 +42,9 @@ export const placeholdersOf = (s) => [...String(s).matchAll(PLACEHOLDER_RE)].map
  * Single source of truth: core/warnings.js imports this list.
  */
 export const WARNED_CONFIRM_IDS = ["cancelOrder", "shipDelivered", "shipReturned", "deleteProduct", "deleteImage", "deleteCategory", "disableMember", "revokeInvite",
-  "publishContent", "unpublishContent", "deleteContent", "restoreContent", "registerContentSchema", "registerContentSchemaRemovals"];
+  "publishContent", "unpublishContent", "deleteContent", "restoreContent", "registerContentSchema", "registerContentSchemaRemovals",
+  // design history (T1-T4 PR2, D14): approving a design or a revert puts it live for everyone; reject and cancel end a request; revert creates one
+  "approveDesign", "approveRevert", "rejectDesign", "cancelDesign", "revertDesign"];
 
 const CONFIRM_KEY_RE = /^confirm\.([A-Za-z0-9]+)\.(.+)$/;
 const FIXED_WARNING_MSG = "the warning of an irreversible confirmation is FIXED by the core (core/warnings.js) and cannot be defined, reworded or removed in copy; edit only title, text and the button labels";

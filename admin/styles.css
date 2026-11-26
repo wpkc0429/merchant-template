@@ -404,3 +404,40 @@ select.input { appearance: none; padding-right: 36px; background-image: linear-g
 .cf-color input[type="color"] { width: 44px; height: 38px; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--card); }
 .cf-error-summary { padding: 10px 12px; border-radius: var(--r-sm); background: rgba(179, 38, 30, .08); color: var(--error); font-size: 14px; }
 .cf-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- 11. Design review dialog (core: ui/design-review.js, D14) ---------- */
+.dlg--review { width: min(980px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); }
+.dlg--review .dlg__body { height: 100%; max-height: none; overflow: hidden; display: flex; flex-direction: column; gap: 10px; padding: 18px 20px 14px; }
+.dlg-rv { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 10px; }
+.dlg-rv__main { flex: 1; min-height: 0; overflow-y: auto; display: grid; gap: 14px; align-content: start; padding-right: 4px; }
+.dlg-rv__main h3 { font-size: 14px; font-weight: 600; margin-top: 4px; }
+.dlg-rv__alert { background: rgba(179, 86, 77, .12); border: 1px solid var(--error); border-radius: var(--r-sm); padding: 10px 14px; color: var(--ink); }
+.dlg-rv__prompt { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--band); border-radius: var(--r-sm); padding: 10px 12px; max-height: 9em; overflow: auto; }
+.dlg-rv__files ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; font-size: 13px; }
+.dlg-rv__rec { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 0; font-size: 14px; }
+.dlg-rv__rec dt { color: var(--muted); } .dlg-rv__rec dd { margin: 0; overflow-wrap: anywhere; }
+.dlg-rv__note { background: var(--band); border-left: 3px solid var(--accent); padding: 8px 12px; font-size: 14px; }
+.dlg-rv__ctl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.dlg-rv__ctl .input { width: auto; max-width: 100%; min-height: 40px; }
+.dlg-rv__tog { display: inline-flex; gap: 4px; margin-bottom: 8px; }
+.dlg-rv__ctl .dlg-rv__tog { margin-bottom: 0; }
+.dlg-rv__stage { max-height: 60vh; overflow: auto; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--placeholder); }
+.dlg-rv__stage--side { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; padding: 8px; }
+.dlg-rv__stage figure { margin: 0; min-width: 0; }
+.dlg-rv__stage figcaption { font-size: 12.5px; color: var(--muted); padding-bottom: 4px; }
+.dlg-rv__img { min-height: 60px; }
+.dlg-rv__pic { width: 100%; height: auto; }
+.dlg-rv__msg, .dlg-rv__skel { padding: 14px; margin: 0; }
+.dlg-rv__cmp { position: relative; }
+.dlg-rv__over { position: absolute; inset: 0 auto auto 0; width: 100%; }
+.dlg-rv__range { width: 100%; min-height: 44px; margin-top: 8px; accent-color: var(--brand-primary); }
+.dlg-rv__panel { flex: none; max-height: 52dvh; overflow-y: auto; display: grid; gap: 8px; border-top: 1px solid var(--line-2); padding-top: 10px; }
+.dlg-rv .dlg__warning { display: block; padding: 10px 12px; border: 1px solid var(--error); border-radius: var(--r-sm); background: rgba(179, 86, 77, .09); color: var(--ink); font-size: 14px; line-height: 1.55; }
+.dlg-rv__btns.dlg__foot { padding: 0; flex-wrap: wrap; }
+@media (max-width: 599px) {
+  .dlg--review { width: 100vw; max-width: 100vw; height: 94dvh; max-height: 94dvh; margin: auto 0 0; }
+  .dlg--review .dlg__body { padding: 14px 14px 10px; }
+  .dlg-rv__stage--side { grid-template-columns: 1fr; }
+  .dlg-rv__stage { max-height: 52vh; }
+  .dlg-rv__btns .btn { min-height: 44px; }
+}

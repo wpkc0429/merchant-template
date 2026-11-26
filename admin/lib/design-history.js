@@ -26,12 +26,16 @@ const basis = new Map();
 function remember(shopID, id, etag, d) {
   const key = `${shopID}:${id}`;
   basis.delete(key);
-  basis.set(key, { etag: String(etag || ""), rev: d.rev, headSha: String(d.head_sha || ""), candidateSha: d.candidate_sha ? String(d.candidate_sha) : "" });
+  const entry = { etag: String(etag || ""), rev: d.rev, headSha: String(d.head_sha || ""), candidateSha: d.candidate_sha ? String(d.candidate_sha) : "" };
+  basis.set(key, entry);
   while (basis.size > BASIS_MAX) basis.delete(basis.keys().next().value);
+  return entry;
 }
 /** Core-internal: what the last read of this request saw. Not exported through ctx. */
 export const reviewBasis = (shopID, id) => basis.get(`${shopID}:${id}`) || null;
-/** Core-internal: forget everything (sign-out, tests). */
+/** Core-internal: forget what was read about one request (after an approve that went stale, after a reject). */
+export const forgetReviewBasis = (shopID, id) => { basis.delete(`${shopID}:${id}`); };
+/** Core-internal: forget everything. lib/session.js calls it on sign-in, sign-out and session clear (user change); tests too. */
 export const clearReviewBasis = () => basis.clear();
 
 // query validation (before any request)
@@ -63,10 +67,33 @@ export async function fetchRequest(shopID, id) {
   remember(shopID, id, headers && headers.get ? headers.get("ETag") : "", data || {});
   return data || {};
 }
+/** Same read, but also returns the basis THIS read produced ({etag, rev, headSha, candidateSha}), so a review can pin exactly what it displays. */
+export async function fetchRequestForReview(shopID, id) {
+  const { data, headers } = await apiRaw("GET", `${base(shopID)}/requests/${id}`);
+  const d = data && typeof data === "object" ? data : {};
+  return { data: d, basis: { ...remember(shopID, id, headers && headers.get ? headers.get("ETag") : "", d) } };
+}
 
 // normalize
-const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
-const strOrNull = (v, max) => (typeof v === "string" && v ? v.slice(0, max) : null);
+/**
+ * Text from the platform or the design service is DATA that a person reads: control characters, bidirectional overrides and
+ * zero-width marks are removed (a name or path must not reorder or hide what is displayed). `multiline` keeps \n and \t (a prompt);
+ * otherwise every line break and tab becomes a space.
+ */
+// Built from code points (ranges as [from, to]) so no invisible character ever sits in this source file.
+const cc = (n) => String.fromCharCode(n);
+const cls = (ranges) => new RegExp("[" + ranges.map(([a, b]) => cc(a) + "-" + cc(b)).join("") + "]", "g");
+const UNSAFE = cls([[0, 8], [11, 12], [14, 31], [127, 159], [0x61c, 0x61c], [0x180e, 0x180e], [0x200b, 0x200b], [0x200e, 0x200f], [0x202a, 0x202e],
+  [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb]]);
+const BREAKS = cls([[10, 10], [13, 13], [0x2028, 0x2029]]);
+const BREAKS_AND_TABS = cls([[9, 10], [13, 13], [0x2028, 0x2029]]);
+export function cleanText(v, max, multiline = false) {
+  if (typeof v !== "string") return "";
+  const s = v.split(cc(13) + cc(10)).join(cc(10)).replace(BREAKS, cc(10));
+  return (multiline ? s : s.replace(BREAKS_AND_TABS, " ")).replace(UNSAFE, "").slice(0, max);
+}
+const str = (v, max) => cleanText(v, max);
+const strOrNull = (v, max, multiline = false) => { const s = cleanText(v, max, multiline); return s ? s : null; };
 const idOrNull = (v) => (isId(v) ? v : null);
 const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
 const count = (v) => (Number.isFinite(v) && v >= 0 ? Math.min(Math.floor(v), 1e9) : 0);
@@ -151,10 +178,10 @@ export function normalizeRequest(d, events = []) {
   d = d && typeof d === "object" ? d : {};
   return {
     ...normalizeSummary(d),
-    promptText: strOrNull(d.prompt_text, 20000),
-    changeNote: strOrNull(d.change_note, 600),
-    rejectReason: strOrNull(d.reject_reason, 600),
-    failureDetail: strOrNull(d.failure_detail, 300),
+    promptText: strOrNull(d.prompt_text, 20000, true),
+    changeNote: strOrNull(d.change_note, 600, true),
+    rejectReason: strOrNull(d.reject_reason, 600, true),
+    failureDetail: strOrNull(d.failure_detail, 300, true),
     diff: normalizeDiff(d.diff_summary),
     guard: normalizeGuard(d.guard),
     previewOrigin: safeOrigin(d.preview_origin),

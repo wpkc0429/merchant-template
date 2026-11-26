@@ -1,0 +1,82 @@
+// D14 (PR2 of the T1-T4 design history, v0.5.0 unreleased): the decision is recorded, exactly three ctx.actions and nothing else were
+// added to ctx, the five fixed warnings are in place with the approved texts, the review code never logs or injects HTML, and the real
+// Chromium test of the review dialog runs (it skips cleanly without Playwright). Template-only.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { TEMPLATE } from './helpers.mjs';
+
+const f = (p) => readFileSync(path.join(TEMPLATE, p), 'utf8').replace(/\r\n/g, '\n');
+const code = (p) => f(p).split('\n').filter((l) => !['//', '/*', '*'].some((c) => l.trim().startsWith(c))).join('\n');
+
+test('D14 is recorded whole in docs/DECISIONS.md, newest first, and names the approvals and what is not in PR2', () => {
+  const lines = f('docs/DECISIONS.md').split('\n');
+  const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
+  assert.equal(ids[0], 'D14');
+  assert.equal(new Set(ids).size, ids.length);
+  const start = lines.findIndex((l) => l.startsWith('### D14.'));
+  let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
+  const body = lines.slice(start + 1, end).join('\n');
+  for (const n of ['openDesignReview', 'requestDesignRevert', 'cancelDesignRequest', 'approveDesign', 'approveRevert', 'rejectDesign', 'cancelDesign', 'revertDesign', 'WARNED_CONFIRM_IDS', 'checkbox, not a password', 'blobs', 'head_moved', 'Not in this PR', 'clearReviewBasis']) assert.ok(body.includes(n), n);
+  assert.match(body.trim(), /\.$/, 'ends with a full stop (not cut off)');
+});
+
+test('CORE-CHANGELOG describes step 2 under the unreleased v0.5.0; template.json is NOT bumped', () => {
+  const log = f('docs/CORE-CHANGELOG.md');
+  assert.match(log, /^## v0\.5\.0 \(UNRELEASED/m);
+  assert.ok(log.includes('Design history, step 2 of 4 (decision D14'));
+  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
+});
+
+test('ctx: exactly the three actions were added; ctx.ui and every other namespace is unchanged', () => {
+  const api = JSON.parse(f('admin/lib/public-api.json'));
+  for (const n of ['openDesignReview', 'requestDesignRevert', 'cancelDesignRequest']) assert.ok(api['ctx.actions'].includes(n), n);
+  assert.equal(api['ctx.actions'].length, 35, 'the 32 actions of v0.4.2 plus exactly three');
+  assert.equal(api['ctx.data'].length, 37);
+  assert.ok(!api['ctx.ui'].some((n) => /design|review|shot|image/i.test(n)), 'no ui function for screenshots or the review');
+  assert.equal(api.ctx.length, 20);
+  const doc = f('admin/docs/DESIGN-LAYER.md');
+  for (const n of ['openDesignReview(requestId)', 'requestDesignRevert(requestId', 'cancelDesignRequest(requestId)']) assert.ok(doc.includes('`' + n), n);
+});
+
+test('the five fixed warnings carry the approved texts, are in WARNED_CONFIRM_IDS, and copy has title / text / yes only', async () => {
+  const { FIXED_WARNINGS } = await import('../admin/core/warnings.js');
+  const { WARNED_CONFIRM_IDS } = await import('../admin/lib/design-schema.js');
+  const want = {
+    approveDesign: '核准後，這次的設計改動會在數分鐘內對所有{siteName}使用者上線，無法在這裡撤回；要回到舊版，只能再提出一個「還原」請求並再次核准。你核准的是畫面上這個版本（{sha}、{n} 個檔案），之後若有新版本需要重新審閱。',
+    approveRevert: '核准後，{siteName}會在數分鐘內換回「{tag}」這個舊版設計，所有人立刻看到。內容文件不受影響；舊設計若讀不到現在的內容，會顯示預設文案。要再換回來，需要再提出一個還原請求。',
+    rejectDesign: '拒絕後這次改版就結束，這個版本不會上線，也無法重新開啟；想繼續要重新提出需求。如果只是想請 AI 再調整，請改按「要求修改」。',
+    cancelDesign: '取消後這次改版就結束，進行中的預覽會被丟棄，無法重新開啟。',
+    revertDesign: '這只會建立一個新的還原請求，不會馬上改變{siteName}；之後仍要通過檢查、預覽，並由你再次核准才會上線。內容文件不受影響，也不會重新註冊內容結構。',
+  };
+  for (const [id, text] of Object.entries(want)) {
+    assert.equal(FIXED_WARNINGS[id], text, id);
+    assert.ok(WARNED_CONFIRM_IDS.includes(id), id);
+    for (const part of ['title', 'text', 'yes']) { const k = `confirm.${id}.${part}`; assert.ok(f('admin/design-defaults/copy.js').includes(`"${k}"`) && f('admin/design/copy.js').includes(`"${k}"`), k); }
+    assert.ok(!new RegExp(`confirm\\.${id}\\.(warn|message)`).test(f('admin/design-defaults/copy.js') + f('admin/design/copy.js')), `${id} has no warning or message copy key`);
+  }
+  assert.equal(WARNED_CONFIRM_IDS.length, 14 + 5);
+});
+
+test('review code: no console output, no HTML injection, nothing that can put a signed URL into storage, an address or a log', () => {
+  for (const p of ['admin/ui/design-review.js', 'admin/core/design-actions.js', 'admin/lib/design-review.js']) {
+    const c = code(p);
+    assert.ok(!/console\./.test(c), `${p} must not log`);
+    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/.test(c), `${p} must not inject HTML`);
+    assert.ok(!/localStorage|sessionStorage|\bhistory\.(push|replace)State|\blocation\.|document\.cookie|postMessage/.test(c), `${p} must not store or publish anything`);
+  }
+  const ui = code('admin/ui/design-review.js');
+  assert.match(ui, /ev\.isTrusted === true/, 'buttons ignore untrusted events');
+  assert.match(ui, /URL\.revokeObjectURL/);
+  assert.match(code('admin/lib/design-review.js'), /cache: "no-store", referrerPolicy: "no-referrer", credentials: "omit", redirect: "error"/);
+  assert.ok(!/reviewBasis|clearReviewBasis/.test(code('admin/core/context.js')) && !/reviewBasis/.test(code('admin/core/data.js')), 'the basis is not reachable from ctx');
+  assert.match(code('admin/lib/session.js'), /clearReviewBasis\(\)/);
+});
+
+test('design review in a real Chromium (skips cleanly without Playwright)', { timeout: 290000 }, () => {
+  const r = spawnSync(process.execPath, [path.join(TEMPLATE, 'admin', 'e2e', 'design-review.mjs')], { encoding: 'utf8', timeout: 280000 });
+  process.stdout.write(r.stdout || '');
+  assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
+});

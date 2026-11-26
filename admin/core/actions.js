@@ -9,12 +9,14 @@ import * as members from "../lib/members.js";
 import * as team from "../lib/team.js";
 import * as upload from "../lib/upload.js";
 import { t } from "../lib/design.js";
-import { confirmDialog } from "../ui/kit.js";
+import { confirmDialog, toast } from "../ui/kit.js";
+import { showReview } from "../ui/design-review.js";
 import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
 import { need, readOnlyGuarded } from "./guard.js";
 import { requestVersionPreview } from "./version-preview.js";
 import { createContentActions } from "./content-actions.js";
+import { createDesignActions } from "./design-actions.js";
 import { ActionError, invalid, blocked } from "./errors.js";
 
 const S = () => session.shopID;
@@ -271,12 +273,15 @@ async function setMemberActive(userId, active) {
 }
 
 const contentActions = createContentActions({ ask });
+// openDesignReview / requestDesignRevert / cancelDesignRequest (D14): the review dialog is drawn by the core (ui/design-review.js).
+const designActions = createDesignActions({ ask, review: showReview, notify: (m) => toast(m, "ok") });
 
 // EVERY function in this table is wrapped by readOnlyGuarded(): on a preview host (lib/preview.js) each one throws ActionError
 // reason "read_only" before doing anything. requestVersionPreview is in the table too (no preview from inside a preview).
 export const actions = readOnlyGuarded({
   ...contentActions,
   requestVersionPreview,
+  ...designActions,
   saveProduct, deleteProduct, createNewArrivalsCategory,
   uploadProductImage, setImageAlt, deleteImage, moveImage,
   createCategory, updateCategory, deleteCategory, moveCategory, setProductOrder,
