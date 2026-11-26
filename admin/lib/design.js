@@ -8,6 +8,7 @@
 // Everything is validated against lib/design-schema.js and falls back, per entry, to the pristine
 // built-in copy in design-defaults/. A broken design logs a console warning and NEVER blocks the app.
 import { validateCopy, validateRoutes } from "./design-schema.js";
+import { FIXED_COPY } from "./fixed-text.js";
 
 const DESIGN = new URL("../design/", import.meta.url).href;
 const DEFAULTS = new URL("../design-defaults/", import.meta.url).href;
@@ -28,10 +29,13 @@ export async function loadDesign() {
   } catch (e) {
     warn("built-in design defaults failed to load", e);
   }
+  // Fixed core-owned texts (lib/fixed-text.js): the built-in copy must carry exactly the fixed text (a mismatch is a core bug, so fail loud).
+  for (const [k, v] of Object.entries(FIXED_COPY)) if (defaultCopy[k] !== v) throw new Error(`design-defaults/copy.js: "${k}" must equal the fixed text in lib/fixed-text.js`);
   try {
     const mod = await import(`${DESIGN}copy.js`);
     const r = validateCopy(mod.default, defaultCopy);
     copy = r.copy;
+    for (const k of Object.keys(FIXED_COPY)) if (k in copy) { const own = mod.default && Object.hasOwn(mod.default, k); delete copy[k]; if (own) warn(`copy: "${k}" is a FIXED core text and cannot be changed in design/copy.js; the core's text is shown`); }
     r.warnings.forEach((w) => warn(w));
     (r.retired || []).forEach((w) => warn(w));
   } catch (e) { warn("design/copy.js could not be loaded; using the built-in copy", e); copy = {}; }
@@ -45,6 +49,7 @@ export async function loadDesign() {
 
 /** Copy lookup: design copy, then the built-in copy, then the key itself. {name} placeholders are filled from params. */
 export function t(key, params) {
+  if (Object.hasOwn(FIXED_COPY, key)) return FIXED_COPY[key]; // fixed, core-owned: never from design/copy.js
   let s = copy[key];
   if (s === undefined) s = defaultCopy[key];
   if (s === undefined) {

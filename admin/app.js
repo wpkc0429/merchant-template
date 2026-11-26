@@ -13,6 +13,7 @@ import { ROUTES, NAV } from "./core/routes.js";
 import { makeContext } from "./core/context.js";
 import { makeAuth } from "./core/auth.js";
 import { mountView } from "./core/host.js";
+import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
 
 const visibleNav = () => NAV.filter((n) => n.perm.every((p) => can(p)));
 
@@ -45,6 +46,7 @@ const authFor = (linkToken) => makeAuth({ linkToken, hooks });
 
 // ── Boot ───────────────────────────────────────────────────────────────
 async function boot() {
+  installPreviewBanner(); // preview hosts only (lib/preview.js): the core-owned banner the design layer cannot remove
   await loadDesign();
   onUnauthorized((why) => { showLogin({ notice: why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
   fetchHostBranding().then((b) => { hostBranding = b; if (!session.user) applyBranding(b?.branding, b?.name); });
@@ -115,6 +117,7 @@ async function onRoute(m) {
 }
 
 async function renderIn(token, def, m) {
+  verifyBanner();
   const main = clear(shell.main);
   shell.setActive(def.nav || "");
   window.scrollTo(0, 0);

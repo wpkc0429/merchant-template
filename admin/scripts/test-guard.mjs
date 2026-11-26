@@ -253,5 +253,15 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
   ok("scripts/test-content.mjs passes (content core)", r.status === 0, r.stdout + r.stderr);
 }
 
+// ── 7. version preview core + preview-mode read-only + the core banner (offline; runs itself as a normal page and as a preview host) ──
+{
+  const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-preview.mjs")], { encoding: "utf8" });
+  ok("scripts/test-preview.mjs passes (version preview, read-only preview mode, core banner)", r.status === 0, r.stdout + r.stderr);
+  const man = JSON.parse(readFileSync(path.join(ROOT, "scripts/core.manifest.json"), "utf8"));
+  const files = Object.keys(man.files || man);
+  for (const f of ["core/version-preview.js", "lib/preview.js", "lib/versionpreview.js", "lib/fixed-text.js", "ui/preview-banner.js", "design-defaults/views/design-version-preview.js", "design-defaults/parts/version-preview-section.js"]) ok(`core manifest covers ${f}`, files.includes(f));
+  ok("public-api lists the two approved version preview names", api["ctx.actions"].includes("requestVersionPreview") && api["ctx.data"].includes("getVersionPreview"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -16,15 +16,21 @@ const allowedOrigins = new Set();
 export function allowImageOrigin(url) {
   try { allowedOrigins.add(new URL(url).origin); } catch { /* not a URL */ }
 }
+// ONE extra link target, for href only (never img src): the origin of the version preview the person asked for (core/version-preview.js).
+// A single slot, replaced by the next preview, so the global image/link allowlist above is not widened.
+let previewLinkOrigin = "";
+export function allowPreviewLinkOrigin(url) {
+  try { previewLinkOrigin = url ? new URL(url).origin : ""; } catch { previewLinkOrigin = ""; }
+}
 const refuse = (what) => console.warn(`[design] ui: refused ${what}`);
 
-function urlOK(v) {
+function urlOK(v, attr = "") {
   const s = String(v).trim();
   if (/^(#|\/(?!\/)|\.{1,2}\/|\?)/.test(s)) return true;
   if (/^(mailto:|tel:|blob:)/i.test(s)) return true;
   if (/^data:image\/(png|jpe?g|webp|gif|avif|svg\+xml)[;,]/i.test(s)) return true;
   if (/^[a-z][a-z0-9+.-]*:/i.test(s) || s.startsWith("//")) {
-    try { const u = new URL(s, location.href); return /^https?:$/.test(u.protocol) && (u.origin === location.origin || allowedOrigins.has(u.origin)); } catch { return false; }
+    try { const u = new URL(s, location.href); return /^https?:$/.test(u.protocol) && (u.origin === location.origin || allowedOrigins.has(u.origin) || (attr === "href" && u.protocol === "https:" && previewLinkOrigin !== "" && u.origin === previewLinkOrigin)); } catch { return false; }
   }
   return true; // plain relative path
 }
@@ -43,7 +49,7 @@ export function h(tag, attrs, ...kids) {
     if (BLOCKED_ATTRS.has(lk)) { refuse(`attribute "${k}"`); continue; }
     if (URL_ATTRS.has(lk)) {
       const parts = lk === "srcset" ? String(v).split(",").map((p) => p.trim().split(/\s+/)[0]) : [String(v)];
-      if (!parts.every(urlOK)) { refuse(`${k}="${String(v).slice(0, 60)}"`); continue; }
+      if (!parts.every((x) => urlOK(x, lk))) { refuse(`${k}="${String(v).slice(0, 60)}"`); continue; }
     }
     if (k === "class") el.className = v;
     else if (k === "style") {

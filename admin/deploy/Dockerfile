@@ -25,5 +25,8 @@ COPY vendor/ /usr/share/nginx/html/vendor/
 # exports ADMIN_RESOLVER for the variable proxy_pass of /content.schema.json, so the storefront hostname is resolved per request, not at start-up).
 COPY deploy/require-origins.sh /docker-entrypoint.d/05-require-origins.sh
 COPY deploy/resolver.envsh /docker-entrypoint.d/06-resolver.envsh
-RUN chmod +x /docker-entrypoint.d/05-require-origins.sh
+COPY deploy/preview-config.sh /docker-entrypoint.d/07-preview-config.sh
+RUN chmod +x /docker-entrypoint.d/05-require-origins.sh /docker-entrypoint.d/07-preview-config.sh
+# Preview hosts (version preview / change preview): also set ADMIN_PREVIEW_MODE=version|change, ADMIN_PREVIEW_TAG, ADMIN_PREVIEW_EXPIRES (deploy/preview-config.sh);
+# the core is then read-only and shows its own banner. A preview is served with the same strict CSP, X-Robots-Tag noindex and no framing as production.
 EXPOSE 80

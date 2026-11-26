@@ -126,6 +126,12 @@ echo 'window.ADMIN_CONFIG.apiBase = location.origin;' > config.local.js
 
 Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁、新到舊）、訂單詳情與卡片訊息、今日配送與首頁數字、全部／部分出貨→送達→退貨、退貨與取消的權限（店員無按鈕、強送 API 回 403）、顧客與會員等級、報表（預設、空狀態、範圍上限）、成員管理（邀請、新帳號接受、既有帳號接受、撤回、停用／啟用、被停用者下一個請求即登出、店主與自己不可操作）、店員導覽，以及 390px 手機逐頁溢出檢查與截圖、桌機截圖。
 
+### 預覽橫幅的真瀏覽器測試（v0.4.0）
+
+`node e2e/preview-banner.mjs`（在 `admin/`）：不需要平台，用內建的 stub 伺服器在真的 Chromium 驗證預覽橫幅（不 fail closed、文字完整、設計層隱藏／覆蓋會剛好 fail closed 一次、非預覽頁沒有橫幅），並在 390／1280 截圖（`BANNER_SHOTS`，預設 `e2e/out/banner`）。Playwright 取自 `$PLAYWRIGHT_DIR` 或同層 `ecommerce/e2e`；找不到就印 `SKIP` 並以 0 結束。`tests/preview-banner-browser.test.mjs` 會呼叫它。
+
+注意：版本預覽（`/design/:id/version-preview`）在歷史清單與還原流程（T1-T4）完成前，使用者沒有入口；預設畫面不顯示「改成這個版本」。
+
 ## 部署
 
 這是一包靜態檔，部署在商家自己的後台網域（例如 `admin.<shop-domain>`），與 API **同源**：

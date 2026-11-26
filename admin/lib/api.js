@@ -10,6 +10,7 @@
 // - Cloudflare Access session expiry shows up as a failed fetch (TypeError) or
 //   an HTML body instead of JSON: reload the page once (30 s loop guard).
 // This file builds no DOM and knows nothing about views.
+import { isReadOnly } from "./preview.js";
 
 const cfg = window.ADMIN_CONFIG || {};
 const isLocalHost = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
@@ -152,6 +153,8 @@ export async function api(method, path, body) { return (await apiRaw(method, pat
  * ETag of a response use this; everything else uses api().
  */
 export async function apiRaw(method, path, body, extraHeaders) {
+  // Preview mode is read-only (lib/preview.js): the last line of defence behind the core actions. Sign-in, refresh and sign-out do not pass here.
+  if (isReadOnly() && !/^(GET|HEAD)$/i.test(method)) throw new ApiError(403, { error: { code: "read_only", message: "this preview is read-only" } });
   const doFetch = () => accessAwareFetch(url(path), {
     method,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens.access}`, ...(extraHeaders || {}) },

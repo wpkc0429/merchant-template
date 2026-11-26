@@ -55,6 +55,10 @@ bucket, cannot run dynamic code (`eval`/`Function` are blocked) and cannot be fr
 direct-upload origin because image upload PUTs there; `img-src` the public image domain.) No inline scripts exist in
 the core, so no `'unsafe-inline'` is needed for scripts.
 
+## Preview hosts (version previews and change previews): read-only, noindex, banner
+
+A preview host is the same image with `ADMIN_PREVIEW_MODE=version|change` (and optionally `ADMIN_PREVIEW_TAG`, `ADMIN_PREVIEW_EXPIRES`, an RFC 3339 UTC time); `deploy/preview-config.sh` writes `/preview-config.js` and the container refuses bad values. The platform reports `read_only: true` on every version preview and `preview_read_only: true` on requests: the service MUST deploy previews with this mode. Then the core (not the design layer) disables every write-capable `ctx.actions` function, refuses every non-GET API request and shows its own banner (preview kind, tag, expiry) that the design layer cannot remove. The preview is served with the same strict CSP, `X-Frame-Options: DENY` / `frame-ancestors 'none'` and `X-Robots-Tag: noindex, nofollow` as production (nginx.conf.template sets them on every response). A preview host that is not started with the mode is NOT read-only: do not serve one to a merchant.
+
 ## Budget and limits
 
 * Cap tokens and tool calls per request and per shop per day; cap retries after a guard failure (3 is plenty); cap diff
