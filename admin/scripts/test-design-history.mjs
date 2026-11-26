@@ -95,7 +95,7 @@ const ev = (o = {}) => ({ seq: 1, kind: "created", from_status: "", to_status: "
 
 // the three names are on the real ctx
 ok("ctx.data exposes exactly the three new functions", ["listDesignRequests", "getDesignRequest", "getDesignState"].every((n) => typeof makeContext({ routeId: "home" }).data[n] === "function"));
-ok("no design ACTION was added (PR2)", !["openDesignReview", "requestDesignRevert", "cancelDesignRequest"].some((n) => n in actions));
+ok("the three design actions exist (PR2, D14) and nothing else design-related was added", ["openDesignReview", "requestDesignRevert", "cancelDesignRequest"].every((n) => typeof actions[n] === "function") && Object.keys(actions).filter((n) => /design/i.test(n)).length === 3);
 
 // routing groundwork: defined, but not registered and no nav entry
 ok("routes design and designRequest are defined with design.view", DESIGN_HISTORY_ROUTES.map((r) => `${r.id}${r.pattern}${r.perm}`).join() === "design/designdesign.view,designRequest/design/:iddesign.view");

@@ -6,10 +6,11 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadPlaywright, SITE, OUT, OWNER, STAFF, check, section, failureCount } from "./lib.mjs";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 
 mkdirSync(OUT, { recursive: true });
 const { chromium } = loadPlaywright();
-const browser = await chromium.launch();
+const browser = hookBrowser(await chromium.launch());
 const T = (page, id) => page.locator(`[data-testid="${id}"]`);
 const overflow = (page) => page.evaluate(() => { const w = window.innerWidth; let worst = document.documentElement.scrollWidth - w; for (const el of document.querySelectorAll("body *")) { if (el.closest("svg") || el.closest("dialog:not([open])")) continue; const r = el.getBoundingClientRect(); if (!r.width || !r.height || getComputedStyle(el).position === "fixed") continue; worst = Math.max(worst, Math.ceil(r.right - w), Math.ceil(-r.left)); } return worst; });
 async function session(width, height, who = OWNER) {

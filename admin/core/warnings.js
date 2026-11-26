@@ -24,6 +24,12 @@ const W = {
   restoreContent: "只會把這個版本放回草稿，不會發佈；目前的草稿內容會被取代。",
   registerContentSchema: "內容結構會改成這份檔案的版本，之後所有內容文件都依它驗證。這是店主的操作，不能由 AI 或自動化代為進行。",
   registerContentSchemaRemovals: "這份檔案會讓上面列出的欄位值不再顯示，或讓文件失去類型。值會留在版本快照裡，但店面不會再讀到它們。確認後才會送出。",
+  // design history (T1-T4 PR2, D14; wording approved by the owner 2026-11-27)
+  approveDesign: "核准後，這次的設計改動會在數分鐘內對所有{siteName}使用者上線，無法在這裡撤回；要回到舊版，只能再提出一個「還原」請求並再次核准。你核准的是畫面上這個版本（{sha}、{n} 個檔案），之後若有新版本需要重新審閱。",
+  approveRevert: "核准後，{siteName}會在數分鐘內換回「{tag}」這個舊版設計，所有人立刻看到。內容文件不受影響；舊設計若讀不到現在的內容，會顯示預設文案。要再換回來，需要再提出一個還原請求。",
+  rejectDesign: "拒絕後這次改版就結束，這個版本不會上線，也無法重新開啟；想繼續要重新提出需求。如果只是想請 AI 再調整，請改按「要求修改」。",
+  cancelDesign: "取消後這次改版就結束，進行中的預覽會被丟棄，無法重新開啟。",
+  revertDesign: "這只會建立一個新的還原請求，不會馬上改變{siteName}；之後仍要通過檢查、預覽，並由你再次核准才會上線。內容文件不受影響，也不會重新註冊內容結構。",
 };
 export const FIXED_WARNINGS = Object.freeze(W);
 

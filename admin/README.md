@@ -79,7 +79,7 @@ img-src 'self' data: https://<IMAGE_PUBLIC_BASE_URL 網域>; connect-src 'self' 
 base-uri 'none'; form-action 'none'; object-src 'none'
 ```
 
-這樣即使有設計變更逃過掃描，也無法把資料送到 API 與圖片桶以外的地方、無法動態執行程式（`eval`／`Function` 被擋）。`deploy/nginx.conf.template` 已套用這份 CSP（另加 `blob:` 圖片與 `worker-src blob:` 給 HEIC 轉檔），網域由環境變數 `ADMIN_IMG_ORIGIN`、`ADMIN_UPLOAD_ORIGIN` 帶入。
+這樣即使有設計變更逃過掃描，也無法把資料送到 API 與圖片桶以外的地方、無法動態執行程式（`eval`／`Function` 被擋）。`deploy/nginx.conf.template` 已套用這份 CSP（另加 `blob:` 圖片與 `worker-src blob:` 給 HEIC 轉檔），**`ADMIN_UPLOAD_ORIGIN` 必須同時涵蓋平台「設計審閱截圖」簽名網址的主機**（物件儲存的帳號端點 `https://<account>.r2.cloudflarestorage.com`；私有的 design-history bucket 與圖片 bucket 在同一個帳號）：沒涵蓋時審閱視窗載不到任何截圖，會顯示「無法載入截圖」並點名 `ADMIN_UPLOAD_ORIGIN`（決策 D14）。網域由環境變數 `ADMIN_IMG_ORIGIN`、`ADMIN_UPLOAD_ORIGIN` 帶入。
 
 ## 本機執行
 

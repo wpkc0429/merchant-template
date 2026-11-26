@@ -15,9 +15,24 @@ const S = () => session.shopID;
 const gone = () => new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
 const requireId = (v) => { if (!dh.isId(v)) throw gone(); };
 
-/** ApiError -> ActionError. Anything that is not an ApiError is returned untouched. */
+/**
+ * What the design layer gets for a failure it has no special case for: a plain ActionError with fixed wording. It never carries an
+ * ApiError (its `body` is the platform's raw response) or any network error text.
+ */
+export function genericError(e) {
+  if (e && e.isActionError) return e;
+  if (e instanceof ApiError) {
+    if (e.status === 401) return new ActionError("state", t("err.401"), { reason: "unauthorized", status: 401 });
+    if (e.status >= 500) return new ActionError("state", t("err.5xx"), { reason: "server_error", status: e.status });
+    return new ActionError("state", t("err.generic"), { reason: "error", status: e.status });
+  }
+  return new ActionError("state", t("err.network"), { reason: "network", status: 0 });
+}
+
+/** ApiError -> ActionError. Everything unmapped becomes a generic ActionError (genericError), never the raw ApiError. */
 export function toActionError(e) {
-  if (!(e instanceof ApiError)) return e;
+  if (e && e.isActionError) return e;
+  if (!(e instanceof ApiError)) return genericError(e);
   const detail = String(e.body?.error?.message || "").slice(0, 300);
   const mk = (kind, key, reason, status, params) => { const a = new ActionError(kind, t(key, params), { reason, status }); a.detail = detail; return a; };
   if (e.status === 403) return denied();
@@ -29,7 +44,7 @@ export function toActionError(e) {
     return a;
   }
   if (e.status === 503) return mk("state", "err.503", e.code || "unavailable", 503);
-  return e;
+  return genericError(e);
 }
 
 /** ctx.data.listDesignRequests({site?, status?, kind?, page, pageSize}) -> {requests[], page, pageSize, total}. Needs design.view. */

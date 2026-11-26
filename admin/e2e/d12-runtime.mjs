@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const HOST = "admin.example.test";
@@ -23,7 +24,7 @@ function loadPlaywright() {
 const pw = loadPlaywright();
 if (!pw) { console.log("SKIP d12-runtime browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
 let browser;
-try { browser = await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] }); } catch (e) {
+try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
   console.log(`SKIP d12-runtime browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
 }
 
@@ -48,6 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   const bctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await bctx.newPage();
+  // core dialogs live in CLOSED shadow roots; hookBrowser (e2e/lib/shadow-hook.mjs) opens them in THIS test browser only
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e.message)));
   await page.goto(URL0, { waitUntil: "load" });
@@ -66,7 +68,7 @@ try {
   check("the fixed warning is shown", (await page.locator("[data-testid=confirm-warning]").textContent()).includes("無法復原"));
   // the worst case: a script with FULL page access (more than any design layer has) fires every synthetic event it can
   const attempts = await page.evaluate(async () => {
-    const yes = document.querySelector("[data-testid=confirm-yes]");
+    const yes = __dq("[data-testid=confirm-yes]");
     const log = [];
     const tryIt = (name, f) => { try { f(); log.push(`${name}: no error`); } catch (e) { log.push(`${name}: ${e.name}`); } };
     tryIt("click()", () => yes.click());
@@ -78,7 +80,7 @@ try {
     tryIt("dispatchEvent(submit)", () => yes.dispatchEvent(new Event("submit", { bubbles: true })));
     tryIt("el.onclick call", () => yes.onclick && yes.onclick(new MouseEvent("click")));
     await new Promise((r) => setTimeout(r, 400));
-    return { log, answer: window.__answer, open: Boolean(document.querySelector("dialog[open]")) };
+    return { log, answer: window.__answer, open: Boolean(__dq("dialog[open]")) };
   });
   check("no synthetic input confirms it (answer is still pending)", attempts.answer === "pending", JSON.stringify(attempts));
   check("the dialog is still open after every attempt", attempts.open);
@@ -133,6 +135,24 @@ try {
 
   // ── 3. ctx.ui.$ / $$ and showDialog as the design layer gets them ──
   console.log("ctx.ui as the design layer sees it");
+  // a design dialog (ctx.ui.showDialog, light DOM) while NO core dialog is open: only { close }, and its buttons ignore synthetic clicks
+  const designPart = await page.evaluate(async () => {
+    const { makeContext } = await import("/core/context.js");
+    const ctx = makeContext({ routeId: "home", nav: [], auth: undefined });
+    const { h } = ctx.ui;
+    const handle = ctx.ui.showDialog({ title: "設計層的對話框", content: h("p", {}, "x"), actions: [{ label: "按鈕一", kind: "primary", onClick: () => { window.__designClicked = (window.__designClicked || 0) + 1; } }] });
+    await new Promise((r) => setTimeout(r, 100));
+    const designBtn = [...document.querySelectorAll("dialog[open] button")].find((b) => b.textContent === "按鈕一");
+    designBtn.click();
+    designBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 200));
+    return { handleKeys: Object.keys(handle).join(","), designClicksFromSynthetic: window.__designClicked || 0 };
+  });
+  check("ctx.ui.showDialog returns only { close }", designPart.handleKeys === "close", designPart.handleKeys);
+  check("a design dialog's buttons ignore synthetic clicks", designPart.designClicksFromSynthetic === 0, String(designPart.designClicksFromSynthetic));
+  await page.getByRole("button", { name: "按鈕一" }).click(); // a real click works
+  check("a real click on a design dialog button runs its action", (await page.evaluate(() => window.__designClicked)) === 1);
+  await page.waitForFunction(() => !document.querySelector("dialog[open]"));
   const scoped = await page.evaluate(async () => {
     const { makeContext } = await import("/core/context.js");
     const ctx = makeContext({ routeId: "home", nav: [], auth: undefined });
@@ -150,7 +170,7 @@ try {
     out.allBody = quiet(() => ctx.ui.$$("button", document.body)).length;
     out.computed = quiet(() => ctx.ui["$"]("[data-testid=confirm-yes]"));
     out.viaValues = quiet(() => Object.values(ctx.ui).filter((f) => typeof f === "function" && /^designQuery/.test(f.name)).map((f) => f("[data-testid=confirm-yes]", document)).filter((x) => x && (x.nodeType === 1 || x.length)).length);
-    const dlg = document.querySelector("dialog[open]");
+    const dlg = __dq("dialog[open]");
     out.insideDialog = quiet(() => ctx.ui.$("[data-testid=confirm-yes]", dlg));
     const wrap = h("div", {}, h("p", { class: "mine" }, "x"), h("span", { class: "mine2" }, "y"));
     out.ownOk = Boolean(ctx.ui.$(".mine", wrap)) && ctx.ui.$$("span, p", wrap).length === 2;
@@ -159,14 +179,7 @@ try {
     const holder = h("div", {}, h("div", { id: "toasts" }, h("p", { class: "mine" }, "z")));
     out.toastContainer = quiet(() => ctx.ui.$(".mine", holder));
     wrap.remove();
-    const handle = ctx.ui.showDialog({ title: "設計層的對話框", content: h("p", {}, "x"), actions: [{ label: "按鈕一", kind: "primary", onClick: () => { window.__designClicked = (window.__designClicked || 0) + 1; } }] });
-    out.handleKeys = Object.keys(handle).join(",");
-    await new Promise((r) => setTimeout(r, 100));
-    const designBtn = [...document.querySelectorAll("dialog[open] button")].find((b) => b.textContent === "按鈕一");
-    designBtn.click();
-    designBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
-    out.designClicksFromSynthetic = window.__designClicked || 0;
+    out.refusedDecoy = (() => { const hh = ctx.ui.showDialog({ title: "decoy", content: h("p", {}, "x"), actions: [] }); return Object.keys(hh).join(",") + "|" + document.querySelectorAll("dialog").length + "|" + Boolean(window.__dq("dialog[open]")); })();
     out.answerStill = window.__answer;
     return out;
   });
@@ -178,13 +191,10 @@ try {
   check("a root inside a dialog finds nothing", scoped.insideDialog === null);
   check("a container of toast / core nodes is refused", scoped.toastContainer === null);
   check("$ / $$ still work on an element the design built (detached and attached)", scoped.ownOk === true && scoped.attachedOwnOk === true);
-  check("ctx.ui.showDialog returns only { close }", scoped.handleKeys === "close", scoped.handleKeys);
-  check("a design dialog's buttons ignore synthetic clicks", scoped.designClicksFromSynthetic === 0, String(scoped.designClicksFromSynthetic));
+  check("ctx.ui.showDialog is refused while a core confirmation is open (a no-op { close }, no dialog in the page)", scoped.refusedDecoy === "close|0|true", scoped.refusedDecoy);
   check("and the core confirmation behind it is still unanswered", scoped.answerStill === "pending");
-  await page.getByRole("button", { name: "按鈕一" }).click(); // a real click works
-  check("a real click on a design dialog button runs its action", (await page.evaluate(() => window.__designClicked)) === 1);
-  await page.keyboard.press("Escape"); // closes whichever dialog is on top
-  await page.evaluate(() => { for (const d of document.querySelectorAll("dialog[open]")) d.close(); });
+  await page.keyboard.press("Escape"); // closes the core confirmation
+
   check("no uncaught page errors", errors.length === 0, errors.join(" | "));
   await bctx.close();
 } finally {

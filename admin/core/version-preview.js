@@ -11,6 +11,7 @@ import { t } from "../lib/design.js";
 import { allowPreviewLinkOrigin } from "../ui/kit.js";
 import { need } from "./guard.js";
 import { ActionError, denied } from "./errors.js";
+import { genericError } from "./design-history.js";
 
 const S = () => session.shopID;
 const gone = () => new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
@@ -21,9 +22,11 @@ const requireId = (v) => { if (!vp.isId(v)) throw gone(); };
 const shown = (p) => { if (p.origin) allowPreviewLinkOrigin(p.origin); return p; };
 const detailOf = (e) => String(e.body?.error?.message || "").slice(0, 300);
 
-/** ApiError -> ActionError. 409 reasons and 429 caps keep their machine code in `reason`; 429 carries `retryAfter` (seconds). Anything else is returned untouched. */
+/** ApiError -> ActionError. 409 reasons and 429 caps keep their machine code in `reason`; 429 carries `retryAfter` (seconds). Anything else
+ * becomes the generic ActionError of core/design-history.js (fixed wording; never the ApiError, its response body or a raw network message). */
 export function toActionError(e) {
-  if (!(e instanceof ApiError)) return e;
+  if (e && e.isActionError) return e;
+  if (!(e instanceof ApiError)) return genericError(e);
   const mk = (kind, key, reason, params, status) => {
     const a = new ActionError(kind, t(key, params), { reason, status });
     a.detail = detailOf(e);
@@ -48,7 +51,7 @@ export function toActionError(e) {
     a.retryAfter = e.retryAfter || 0;
     return a;
   }
-  return e;
+  return genericError(e);
 }
 
 /** ctx.data.getVersionPreview(previewId): the preview's state. Needs design.view. `origin` is set only for the person who asked, while it is ready. */

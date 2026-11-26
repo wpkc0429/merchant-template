@@ -5,11 +5,12 @@ import { resolve } from "node:path";
 import {
   loadPlaywright, API, SITE, OUT, OWNER, STAFF, superAdmin, req, apiLogin, check, section, failureCount,
 } from "./lib.mjs";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 import { catalog, placeOrder, payOrder, taipeiDate, restockStock } from "./data.mjs";
 
 mkdirSync(OUT, { recursive: true });
 const { chromium } = loadPlaywright();
-const browser = await chromium.launch();
+const browser = hookBrowser(await chromium.launch());
 const shot = (page, name) => page.screenshot({ path: resolve(OUT, `${name}.png`), fullPage: false });
 const T = (page, id) => page.locator(`[data-testid="${id}"]`);
 const runId = Date.now().toString(36);

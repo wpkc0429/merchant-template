@@ -14,6 +14,9 @@
 #                        e.g. https://img.example.com
 #   ADMIN_UPLOAD_ORIGIN  the R2 / S3 origin the browser PUTs image uploads to (direct upload),
 #                        e.g. https://<account-id>.r2.cloudflarestorage.com  (media-r2-setup.md)
+#                        IT MUST ALSO COVER THE HOST OF THE PLATFORM'S SIGNED SCREENSHOT URLS (design-history review, decision D14):
+#                        the same object-storage account endpoint (the second, private design-history bucket lives on the same account).
+#                        If it does not, the review dialog cannot load any screenshot (connect-src blocks the fetch).
 #   ADMIN_SITE_ORIGIN    the storefront origin, e.g. https://www.example.com . Used for (1) the content PREVIEW button (served to
 #                        the page as /site-config.js) and (2) /content.schema.json, which this server reads from the storefront so
 #                        the store owner can dry-run and register the content schema from the admin (same-origin for the browser,

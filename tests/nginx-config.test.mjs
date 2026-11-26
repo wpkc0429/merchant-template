@@ -69,6 +69,26 @@ describe('nginx.conf.template after envsubst', () => {
   });
 });
 
+describe('design review screenshots under the CSP (D14)', () => {
+  // The platform's signed screenshot URL is on the object-storage account endpoint; the admin may fetch it only if ADMIN_UPLOAD_ORIGIN is that origin.
+  const SIGNED = 'https://acct123.r2.cloudflarestorage.com/ecommerce-design-history/shops/1/design/x/y.png?X-Amz-Signature=abc';
+  const cspOf = (env) => [...strip(render(env)).matchAll(/Content-Security-Policy "([^"]+)"/g)].map((m) => m[1]).filter((c) => c.includes('connect-src'));
+  const connectSrc = (csp) => (/connect-src ([^;]+);/.exec(csp) || [])[1].split(' ');
+  const allows = (csp, url) => { const u = new URL(url); return connectSrc(csp).some((s) => s === "'self'" ? false : s === u.origin); };
+  test('with ADMIN_UPLOAD_ORIGIN = the account endpoint, both CSP headers allow the signed URL host (and keep connect-src to self + that origin)', () => {
+    const csps = cspOf({ ...ENV, ADMIN_UPLOAD_ORIGIN: 'https://acct123.r2.cloudflarestorage.com' });
+    assert.equal(csps.length, 2, 'server-level and static-assets-level CSP');
+    for (const c of csps) {
+      assert.ok(allows(c, SIGNED), c);
+      assert.deepEqual(connectSrc(c), ["'self'", 'https://acct123.r2.cloudflarestorage.com']);
+      assert.match(c, /img-src 'self' data: blob: /, 'screenshots are shown from blob: object URLs');
+      assert.match(c, /style-src 'self';/, 'no inline styles: the core dialog uses a constructed stylesheet');
+    }
+  });
+  test('with a different ADMIN_UPLOAD_ORIGIN the signed host is NOT allowed (screenshots would fail: the requirement is real)', () => {
+    for (const c of cspOf(ENV)) assert.ok(!allows(c, SIGNED));
+  });
+});
 describe('start-up checks (deploy/require-origins.sh)', () => {
   const sh = spawnSync('sh', ['-c', 'true']);
   const skip = sh.error ? 'no sh on this machine' : false;

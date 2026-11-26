@@ -13,7 +13,7 @@ const f = (p) => readFileSync(path.join(TEMPLATE, p), 'utf8').replace(/\r\n/g, '
 test('D13 is recorded whole in docs/DECISIONS.md, newest first, and names what is and is not in PR1', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.deepEqual(ids.slice(0, 2), ['D13', 'D12']);
+  assert.ok(ids.includes('D13') && ids.indexOf('D13') < ids.indexOf('D12'));
   assert.equal(new Set(ids).size, ids.length);
   const start = lines.findIndex((l) => l.startsWith('### D13. T1-T4 build plan approved 2026-11-27; PR1 read layer'));
   assert.ok(start > 0);
@@ -37,10 +37,10 @@ test('CORE-CHANGELOG has a clearly marked UNRELEASED v0.5.0 section; template.js
 test('ctx: exactly the three read functions were added to ctx.data and no action, warning or ROUTE_IDS entry', () => {
   const api = JSON.parse(f('admin/lib/public-api.json'));
   for (const n of ['listDesignRequests', 'getDesignRequest', 'getDesignState']) assert.ok(api['ctx.data'].includes(n), n);
-  for (const n of ['openDesignReview', 'requestDesignRevert', 'cancelDesignRequest']) assert.ok(!api['ctx.actions'].includes(n), n + ' is PR2');
+  // PR2 (D14) added the three actions on purpose; tests/design-review.test.mjs pins exactly that.
   const schema = f('admin/lib/design-schema.js');
   assert.ok(!/"design"|"designRequest"/.test(schema.slice(0, schema.indexOf('ICON_NAMES'))), 'ROUTE_IDS unchanged');
-  assert.ok(!/approveDesign|approveRevert|rejectDesign|cancelDesign|revertDesign/.test(schema + f('admin/core/warnings.js')), 'no new fixed warning yet');
+  // PR2 (D14) added the five fixed warnings; tests/design-review.test.mjs pins them.
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /`listDesignRequests\(\{site\?, status\?, kind\?, page, pageSize\}\)`/);
 });
 
@@ -53,7 +53,7 @@ test('routes: design and designRequest are defined with design.view but not regi
   assert.ok(!/design/i.test(nav), 'no design nav item');
 });
 
-test('the version preview revert button stays hidden and the core never exposes the ETag or a signed URL', () => {
+test('the version preview revert button stays hidden and the read layer never exposes the ETag or a signed URL', () => {
   for (const p of ['admin/design/views/design-version-preview.js', 'admin/design-defaults/views/design-version-preview.js']) assert.ok(!f(p).includes('onRevert'), p);
   const core = f('admin/core/design-history.js'), lib = f('admin/lib/design-history.js');
   assert.ok(!/reviewBasis|etag/i.test(core.split('\n').filter((l) => !isComment(l)).join('\n')), 'core/design-history.js never touches the ETag');

@@ -5,6 +5,9 @@
 // raw HTML (innerHTML/outerHTML/srcdoc), string event handlers, script-like tags, form actions and
 // URLs that are not same-origin / relative / an allowed image origin. Refusals are dropped with a warning.
 import { t } from "../lib/design.js";
+import { buildCoreCss } from "./core-dialog-css.js";
+import { resolveTheme } from "./core-theme.js";
+import { coreText } from "../lib/fixed-text.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -117,8 +120,13 @@ export function designQueryAll(sel, root) {
   if (!searchableRoot(root)) { console.warn("[design] ui.$$ refused: pass an element you created (not document, body or a container of core UI)"); return []; }
   return [...root.querySelectorAll(String(sel))].filter((el) => !isCoreNode(el));
 }
-/** ctx.ui.showDialog for design code: the same dialog, but only {close} comes back (no element to click, query or edit). */
-export function designShowDialog(opts) { const { close } = showDialog(opts); return { close }; }
+/** ctx.ui.showDialog for design code: the same dialog, but only {close} comes back (no element to click, query or edit).
+ *  While a CORE dialog (a confirmation or the design review) is open nothing is opened: a design cannot stack a decoy above or beside it. */
+export function designShowDialog(opts) {
+  if (coreDialogsOpen > 0) { console.warn("[design] ui.showDialog refused: a core dialog is open"); return { close() {} }; }
+  const { close } = showDialog(opts);
+  return { close };
+}
 
 // ── Branding (data from lib/session.js -> CSS variables; core applies it after every screen mount) ─
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -165,7 +173,101 @@ export function toast(message, kind = "ok") {
 
 // ── Dialogs (native <dialog>; a bottom sheet on phones) ────────────────
 /** Returns {dialog, close}. `content` is a Node; actions are [{label, kind, onClick}] (onClick may return false to stay open). */
-export function showDialog({ title, content, actions = [], onClose, wide = false }) {
+export function showDialog(opts) { return buildDialog(opts, (dialog) => { document.body.append(dialog); }); }
+
+// ── CORE dialogs: confirmations and the design review live in a CLOSED shadow root ──
+// The design layer's CSS (selectors, universal rules, ::before / ::after, filters, fonts, positions) cannot cross a shadow boundary, and the
+// HOST carries inline `all: initial !important` so nothing INHERITED from the page (font-size, color, text-indent, visibility, ...) reaches the text.
+// The stylesheet is constructed from ui/core-dialog-css.js (adoptedStyleSheets: allowed by style-src 'self') and uses no design token.
+// The root is closed: no document.querySelector, no shadowRoot property, no event retargeting trick reaches in. Native <dialog>.showModal() is kept.
+let coreDialogsOpen = 0;
+/** True while a core dialog is open (ctx.ui.showDialog refuses meanwhile). */
+export const coreDialogOpen = () => coreDialogsOpen > 0;
+const supportsShadow = () => { try { return typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype && typeof ShadowRoot === "function"; } catch { return false; } };
+const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "static"], ["visibility", "visible"], ["opacity", "1"], ["filter", "none"], ["transform", "none"],
+  ["clip-path", "none"], ["mask", "none"], ["direction", "ltr"], ["unicode-bidi", "normal"], ["zoom", "1"], ["pointer-events", "auto"], ["contain", "none"]];
+// ── Theming of the core dialogs ──
+// ONLY these design tokens are read (ui/core-theme.js: --ink, --card, --brand-primary, --error, --accent, --r-sm, --r-lg, --f-sans), validated, and turned into
+// LITERAL values that are written straight into the dialog's own stylesheet (ui/core-dialog-css.js buildCoreCss, replaceSync on every change). The painted dialog
+// uses no custom property at all, so @property registrations, inheritance tricks and animated custom properties cannot alter it; a token registered with an
+// incompatible syntax just reads as an invalid colour and the default is used.
+/** The design's tokens as the core sees them: an opaque colour per token (or null) and a trimmed raw string. */
+function readTokens(host, colorProbe) {
+  const cs = getComputedStyle(host);
+  const raw = (n) => String(cs.getPropertyValue(n) || "").trim();
+  const color = (n) => {
+    const v = raw(n);
+    if (!v) return null;
+    colorProbe.style.color = "rgb(1, 2, 3)"; colorProbe.style.color = v;
+    const c = getComputedStyle(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
+    if (!m || (c === "rgb(1, 2, 3)" && v.replace(/\s+/g, "") !== "rgb(1,2,3)")) return null; // invalid, or not opaque (rgba / color() are refused)
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  return { color, raw };
+}
+
+export function showCoreDialog(opts) {
+  if (!supportsShadow()) return showDialog(opts); // an old browser: the light dialog (styled by styles.css), without the isolation
+  const host = document.createElement("div");
+  host.setAttribute("data-core", "dialog");
+  for (const [k, v] of HOST_STYLE) host.style.setProperty(k, v, "important"); // CSSOM, so it is allowed by style-src 'self' and beats any author !important
+  const root = host.attachShadow({ mode: "closed" });
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(buildCoreCss(resolveTheme({ color: () => null, raw: () => "" }))); // the defaults until the first read of the design's tokens
+  root.adoptedStyleSheets = [sheet];
+  coreDialogsOpen++;
+  let counted = true;
+  const release = () => { if (counted) { counted = false; coreDialogsOpen--; } };
+  try {
+    let sane = () => true;
+    const probe = document.createElement("div"); // 100 px wide, invisible: painted width / layout width = the zoom that html / body / any ancestor puts on the host
+    probe.className = "zprobe";
+    const colorProbe = document.createElement("div");
+    colorProbe.className = "zprobe";
+    root.append(probe, colorProbe);
+    const r = buildDialog({ ...opts, check: () => sane(), onClose: (v) => { release(); clearInterval(timer); cancelAnimationFrame(raf); host.remove(); opts.onClose?.(v); } }, (dialog) => { root.append(dialog); document.body.append(host); });
+    // A CSS `zoom` on html / body (also animated or changed LATER by a transition or keyframes) compounds into the dialog whatever the host says. It is
+    // measured with the probe and cancelled out with a counter-zoom on the dialog, on EVERY animation frame (rAF) and every 250 ms while the dialog is open.
+    const { dialog } = r;
+    const ancestorZoom = () => { const w = probe.offsetWidth, q = probe.getBoundingClientRect().width; return w > 0 && q > 0 ? q / w : 1; };
+    const correct = () => {
+      try {
+        const q = ancestorZoom();
+        if (Math.abs(q - 1) > 0.005) dialog.style.setProperty("zoom", String(1 / q), "important");
+        else if (dialog.style.getPropertyValue("zoom")) dialog.style.removeProperty("zoom");
+      } catch { /* no layout (a test DOM) */ }
+    };
+    let themeKey = "";
+    const theme = () => {
+      try {
+        const pal = resolveTheme(readTokens(host, colorProbe)), key = JSON.stringify(pal);
+        if (key === themeKey) return;
+        themeKey = key;
+        sheet.replaceSync(buildCoreCss(pal));
+      } catch { /* no layout (a test DOM) */ }
+    };
+    let raf = 0, timer = 0;
+    const loop = () => { correct(); if (counted) raf = requestAnimationFrame(loop); };
+    correct(); theme();
+    if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
+    timer = setInterval(() => { correct(); theme(); }, 250);
+    // At the moment of a confirmation: is the dialog really shown at its normal scale, fully inside the screen? Otherwise nothing is submitted.
+    sane = () => {
+      try {
+        // Measure FIRST: a dialog that was distorted a moment ago (so the person may have seen it so) is refused even if it is corrected right now.
+        const was = dialog.offsetWidth > 0 ? dialog.getBoundingClientRect().width / dialog.offsetWidth : 0;
+        correct(); theme();
+        const rc = dialog.getBoundingClientRect(), w = dialog.offsetWidth;
+        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
+          && rc.left >= -1 && rc.top >= -1 && rc.right <= innerWidth + 1 && rc.bottom <= innerHeight + 1;
+      } catch { return true; }
+    };
+    r.sane = sane;
+    return r;
+  } catch (e) { release(); host.remove(); throw e; }
+}
+
+function buildDialog({ title, content, actions = [], onClose, wide = false, check }, mount) {
   const dialog = document.createElement("dialog");
   dialog.className = `dlg${wide ? " dlg--wide" : ""}`;
   const close = (result) => { dialog.close(result); };
@@ -177,6 +279,11 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
       onClick: async (ev) => {
         // D12: only a real person confirms. A synthetic click (el.click(), dispatchEvent) has isTrusted === false and is ignored.
         if (!ev || ev.isTrusted !== true) return;
+        if (a.guard && check && !check()) { // the dialog is not shown at its normal scale / inside the screen: refuse, keep the button disabled
+          b.disabled = true;
+          if (!dialog.querySelector('[data-testid="confirm-display-error"]')) foot.before(h("p", { class: "dlg__warning", role: "alert", "data-testid": "confirm-display-error" }, coreText("dlg.display")));
+          return;
+        }
         const keep = a.onClick ? await busy(b, () => a.onClick({ close })) : undefined;
         if (keep !== false && a.close !== false) close(a.label);
       },
@@ -186,7 +293,7 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
   }
   dialog.append(h("div", { class: "dlg__body" }, h("h2", { class: "dlg__title" }, title), content), actions.length ? foot : "");
   dialog.addEventListener("close", () => { dialog.remove(); onClose?.(dialog.returnValue); });
-  document.body.append(dialog);
+  mount(dialog);
   dialog.showModal();
   return { dialog, close };
 }
@@ -195,7 +302,7 @@ export function showDialog({ title, content, actions = [], onClose, wide = false
 export function confirmDialog({ title, message, warning = "", detail = "", confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
-    showDialog({
+    showCoreDialog({
       title,
       // `warning` is the core's FIXED text (core/warnings.js) for an irreversible action: it is always rendered, in its
       // own element, and is never taken from the design layer's copy.
@@ -203,7 +310,7 @@ export function confirmDialog({ title, message, warning = "", detail = "", confi
       content: h("div", {}, h("p", { class: "dlg__msg" }, message, warning ? h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, warning) : ""), detail ? h("pre", { class: "dlg__detail", "data-testid": "confirm-detail" }, detail) : ""),
       actions: [
         { label: cancelText, kind: "ghost" },
-        { label: confirmText, kind: danger ? "danger" : "primary", testid: "confirm-yes", onClick: () => { answer = true; } },
+        { label: confirmText, kind: danger ? "danger" : "primary", testid: "confirm-yes", guard: true, onClick: () => { answer = true; } },
       ],
       onClose: () => resolve(answer),
     });

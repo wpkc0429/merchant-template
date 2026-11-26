@@ -1,11 +1,13 @@
 // Session state: who is logged in, which shop, what they may do.
 import { api, publicApi, login as apiLogin, logout as apiLogout, restoreSession } from "./api.js";
 import { setPermissions, clearPermissions } from "./perm.js";
+import { clearReviewBasis } from "./design-history.js";
 
 export const session = { user: null, shopID: null, shopIDs: [], shopName: "", branding: null };
 
 /** After tokens exist: load /admin/me then the shop's permissions and branding. */
 export async function loadSession(preferredShopID) {
+  clearReviewBasis(); // a new sign-in or a restored session never inherits what an earlier user's review had read (design review, D14)
   const me = await api("GET", "/admin/me");
   const ids = me.sids || [];
   session.user = { id: me.id, email: me.email, platformPermissions: me.platform_permissions || [] };
@@ -39,6 +41,7 @@ export async function logout() {
 }
 
 export function clearSession() {
+  clearReviewBasis(); // sign-out, session loss, user change: no review basis survives
   session.user = null;
   session.shopID = null;
   session.shopIDs = [];

@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, rmSync, existsSync, mkdirSync } from "node
 import { resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { loadPlaywright, SITE, OWNER, STAFF, apiLogin, req, check, section, failureCount } from "./lib.mjs";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 import { catalog, placeOrder } from "./data.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
@@ -27,7 +28,7 @@ function restore() {
 const route = (id, file) => put("routes.js", read("routes.js").replace(new RegExp(`(\\n  ${id}: )"[^"]+"`), `$1"${file}"`));
 
 const { chromium } = loadPlaywright();
-const browser = await chromium.launch();
+const browser = hookBrowser(await chromium.launch());
 async function newPage(opts = {}, br = browser) {
   const ctx = await br.newContext({ viewport: { width: 1280, height: 860 }, ...opts });
   const page = await ctx.newPage();
@@ -440,12 +441,31 @@ try {
       const gc = guard("--no-layers", "--files", "design/theme.css");
       check(`the guard rejects theme.css that hides the warning: ${css.slice(0, 40)}`, gc.status === 1 && /css\/hides-dialog/.test(gc.stderr), gc.stderr);
     }
-    put("theme.css", ".dlg__warning { color: rgb(176, 0, 32); font-weight: 600; }\n");
-    check("styling the warning (colour, weight) is allowed", guard("--no-layers", "--files", "design/theme.css").status === 0);
+    // 4. THEMING: the design tokens (custom properties) inherit into the core dialog's closed shadow root and theme it; arbitrary CSS cannot reach it
+    put("tokens.css", ":root { --error: rgb(138, 28, 124); --brand-primary: rgb(11, 107, 58); --accent: rgb(200, 60, 0); --r-lg: 4px; --f-sans: serif; }\n");
+    put("theme.css", ".dlg__warning { color: rgb(176, 0, 32); font-size: 1px; display: none; } .dlg__warning::after { content: 'x'; } dialog { display: none; } .btn--danger::after { content: 'Cancel'; } [data-core] { visibility: hidden; }\n");
     page = await newPage();
     await login(page, OWNER);
     d = await dlgText(page, w1.id);
-    check("a styled warning is still rendered", d.warning === FIXED && (await T(page, "confirm-warning").evaluate((e) => getComputedStyle(e).color)) === "rgb(176, 0, 32)");
+    const themed = await page.evaluate(() => {
+      const w = __dq('[data-testid="confirm-warning"]'), y = __dq('dialog [data-testid="confirm-yes"]'), dlg = __dq("dialog[open]"), cs = (e, ps) => getComputedStyle(e, ps || null);
+      return { warnColor: cs(w).color, warnSize: cs(w).fontSize, warnDisplay: cs(w).display, warnAfter: cs(w, "::after").content, yesAfter: cs(y, "::after").content, yesBg: cs(y).backgroundColor, radius: cs(dlg).borderTopLeftRadius, font: cs(dlg).fontFamily, open: dlg.open, rect: dlg.getBoundingClientRect().width };
+    });
+    check("a styled design: the fixed warning is still rendered with its fixed text, and arbitrary CSS (colour, size, display, ::after, dialog, [data-core]) does not touch it",
+      d.warning === FIXED && themed.warnColor === "rgb(28, 28, 30)" && themed.warnSize !== "1px" && themed.warnDisplay === "inline" && themed.warnAfter === "none" && themed.yesAfter === "none" && themed.open && themed.rect > 200, JSON.stringify(themed));
+    check("design TOKENS theme the core dialog: --error on the danger button, --r-lg radius, a generic --f-sans font", themed.yesBg === "rgb(138, 28, 124)" && themed.radius === "4px" && /serif/.test(themed.font), JSON.stringify(themed));
+    await page.screenshot({ path: resolve(process.env.E2E_OUT || resolve(import.meta.dirname, "out"), "themed-confirm-1280.png") });
+    await page.locator("dialog[open] .btn--ghost").first().click();
+    await page.context().close();
+    // a hostile token set (invisible text, low contrast, a named font) is ignored: the dialog stays readable
+    put("tokens.css", ":root { --ink: rgb(250, 250, 250); --card: rgb(255, 255, 255); --error: rgb(255, 255, 255); --brand-primary: rgb(254, 254, 254); --f-sans: 'Some Named Font', serif; --r-sm: 400px; }\n");
+    put("theme.css", "\n");
+    page = await newPage();
+    await login(page, OWNER);
+    d = await dlgText(page, w1.id);
+    const hostile2 = await page.evaluate(() => { const dlg = __dq("dialog[open]"), y = __dq('dialog [data-testid="confirm-yes"]'), cs = (e) => getComputedStyle(e);
+      return { ink: cs(__dq(".dlg__title")).color, bg: cs(dlg).backgroundColor, yes: cs(y).backgroundColor, font: cs(dlg).fontFamily }; });
+    check("hostile tokens (white on white, a white danger button, a named font, a 400px radius) are ignored: defaults apply", hostile2.ink === "rgb(28, 28, 30)" && hostile2.bg === "rgb(255, 255, 255)" && hostile2.yes !== "rgb(255, 255, 255)" && hostile2.yes !== "rgba(0, 0, 0, 0)" && !/Some Named Font/.test(hostile2.font), JSON.stringify(hostile2));
     await page.locator("dialog[open] .btn--ghost").first().click();
     await page.context().close();
     restore();
@@ -456,7 +476,7 @@ try {
   const csp = "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: http://127.0.0.1:9000; connect-src 'self' http://127.0.0.1:9000; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
   const cspProduct = (await req("POST", "/admin/shops/1/products", { token: ownerToken, body: { title: `CSP ${runId}`, slug: `csp-${runId}`, status: 0, skus: [{ sku_code: `csp-${runId}-M`, options: { size: "M" }, price_amount: 100, currency: "TWD", stock_qty: 1, is_active: true }] } })).json;
   // Playwright-fulfilled documents are treated as non-local by Chromium, so allow the loopback MinIO in this browser only.
-  const cspBrowser = await chromium.launch({ args: ["--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests,LocalNetworkAccessPermissionPolicy"] });
+  const cspBrowser = hookBrowser(await chromium.launch({ args: ["--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests,LocalNetworkAccessPermissionPolicy"] }));
   page = await newPage({}, cspBrowser);
   const violations = [];
   page.on("console", (m) => { if (/Content Security Policy|Refused to/i.test(m.text())) violations.push(m.text()); });

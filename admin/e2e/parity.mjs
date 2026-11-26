@@ -5,6 +5,7 @@
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadPlaywright, SITE, OWNER, STAFF, apiLogin, req } from "./lib.mjs";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 
 const mode = process.argv[2];
 const { chromium } = loadPlaywright();
@@ -29,7 +30,7 @@ if (mode === "capture") {
     ["not-found", "/nope"],
   ];
   const staffViews = [["home", "/"], ["orders", "/orders"], ["no-permission", "/products"]];
-  const browser = await chromium.launch();
+  const browser = hookBrowser(await chromium.launch());
   const settle = async (page) => {
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForFunction(() => !document.querySelector(".spinner, .state--loading"), null, { timeout: 15000 }).catch(() => {});
@@ -75,7 +76,7 @@ if (mode === "capture") {
 } else if (mode === "compare") {
   const [a, b] = [resolve(process.argv[3]), resolve(process.argv[4])];
   const names = [...new Set([...readdirSync(a), ...readdirSync(b)])].filter((n) => n.endsWith(".png")).sort();
-  const browser = await chromium.launch();
+  const browser = hookBrowser(await chromium.launch());
   const page = await browser.newPage();
   let diffs = 0;
   for (const n of names) {
