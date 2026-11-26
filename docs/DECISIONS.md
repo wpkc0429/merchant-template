@@ -19,9 +19,11 @@ Decided by the owner on 2026-11-26. **Policy**: a locked-core change no longer n
 
 Approval was given in chat to the maintainer assistant. A human can contest or revoke it at any time by editing this decision.
 
-## v0.3.0 (PROPOSED on branch core/content-store-0.3.0; become standing decisions when the human reviewer merges)
+## v0.3.0 (DECIDED: merged 2026-11-26 under D10)
 
-Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, platform template follow-up T1-T5 (platform label "D10", unrelated to this repo's D10)) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and need the reviewer's approval.
+Merged 2026-11-26 under D10 after two independent security reviews and passing guards/tests. The owner approved the boundary direction (the design layer may read content and dry-run schemas but may not register or write) and delegated the maintainer-choice items (D7 600 ms wait, D8 warnings on all content actions, D9a ADMIN_SITE_ORIGIN, D9b /content-schema, D9c image origins, D9d empty FAQ) to the maintainer assistant's recommendation.
+
+Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, platform template follow-up T1-T5 (platform label "D10", unrelated to this repo's D10)) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and were approved as described in the line above.
 
 ### D7. The storefront reads platform content at runtime; `content.js` stays the default copy
 
@@ -37,6 +39,10 @@ New `ctx.data` / `ctx.actions` / `ctx.ui` functions (see admin/docs/DESIGN-LAYER
 * The schema screen is routed at `/content-schema` (not `/content/schema`): `schema` is a valid document key.
 * Content images: only absolute http(s) URLs from an origin the platform returned (catalogue images) or from the optional `SHOP_CONFIG.imageOrigin` are accepted; relative paths and data: are refused.
 * A published but empty FAQ shows an empty FAQ (not the defaults).
+
+### Known follow-ups (v0.3.0)
+
+* check-design `cspProblems` (admin/scripts/check-design.mjs) accepts `img-src https:`, while the template only intends `data:`, `blob:` and the specific image origin. Open low finding from the independent reviews. Tighten later; guard rule changes need the owner under D10.
 
 ## 2026-11-25 (v0.2.0), decided by the user
 
