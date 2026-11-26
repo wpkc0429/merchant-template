@@ -15,7 +15,7 @@ Format rules (the sync script parses them):
 
 ## v0.2.1
 
-Security headers fix (audit findings H2 and M7 of the ecommerce launch checklist). Proposed, needs the owner's approval (docs/DECISIONS.md D1 amendment).
+Security headers fix (audit findings H2 and M7 of the ecommerce launch checklist). Approved by the owner on 2026-11-26 (docs/DECISIONS.md D1 amendment).
 
 Design-layer action: none
 
