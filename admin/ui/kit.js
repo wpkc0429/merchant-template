@@ -5,7 +5,8 @@
 // raw HTML (innerHTML/outerHTML/srcdoc), string event handlers, script-like tags, form actions and
 // URLs that are not same-origin / relative / an allowed image origin. Refusals are dropped with a warning.
 import { t } from "../lib/design.js";
-import { CORE_DIALOG_CSS } from "./core-dialog-css.js";
+import { buildCoreCss } from "./core-dialog-css.js";
+import { resolveTheme } from "./core-theme.js";
 import { coreText } from "../lib/fixed-text.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
@@ -182,53 +183,27 @@ export function showDialog(opts) { return buildDialog(opts, (dialog) => { docume
 let coreDialogsOpen = 0;
 /** True while a core dialog is open (ctx.ui.showDialog refuses meanwhile). */
 export const coreDialogOpen = () => coreDialogsOpen > 0;
-let coreSheet = null;
-const supportsShadow = () => { try { return typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype && typeof Element.prototype.attachShadow === "function"; } catch { return false; } };
+const supportsShadow = () => { try { return typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype && typeof ShadowRoot === "function"; } catch { return false; } };
 const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "static"], ["visibility", "visible"], ["opacity", "1"], ["filter", "none"], ["transform", "none"],
   ["clip-path", "none"], ["mask", "none"], ["direction", "ltr"], ["unicode-bidi", "normal"], ["zoom", "1"], ["pointer-events", "auto"], ["contain", "none"]];
-// ── Theming of the core dialogs: ONLY these design tokens (custom properties inherit into the shadow root), each VALIDATED here ──
-//   --ink + --card      text and dialog colours; accepted only as opaque colours with a contrast of at least 7:1, else BOTH fall back to the defaults
-//   --brand-primary     (also set from the shop branding) primary buttons / checkbox; opaque, contrast >= 3 against the card, button text chosen for >= 4.5
-//   --error             danger buttons and the warning frame; same rules
-//   --accent            focus ring and note stripe; opaque, contrast >= 3 against the card
-//   --r-sm, --r-lg      radius of boxes and of the dialog; plain px values (at most 24 and 28)
-//   --f-sans            font family, honoured ONLY when it is one generic keyword (serif, sans-serif, system-ui, monospace, ui-*): a named font could be a
-//                       design-supplied @font-face that remaps glyphs, so named stacks are ignored and the dialog keeps its system font
-// Everything else of the design CSS (selectors, content, filters, positions, any other property) cannot reach the dialog.
-const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
-const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
-const GENERIC_FONTS = new Set(["serif", "sans-serif", "system-ui", "monospace", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]);
-const DEF = { ink: [28, 28, 30], card: [255, 255, 255], prim: [28, 28, 30], err: [179, 38, 30], acc: [47, 93, 138] };
-const rgbCss = (c) => "rgb(" + c.join(", ") + ")";
-/** The accepted --k-* values for the tokens the design currently sets (a plain object; empty = all defaults). */
-function readCoreTheme(host, colorProbe) {
+// ── Theming of the core dialogs ──
+// ONLY these design tokens are read (ui/core-theme.js: --ink, --card, --brand-primary, --error, --accent, --r-sm, --r-lg, --f-sans), validated, and turned into
+// LITERAL values that are written straight into the dialog's own stylesheet (ui/core-dialog-css.js buildCoreCss, replaceSync on every change). The painted dialog
+// uses no custom property at all, so @property registrations, inheritance tricks and animated custom properties cannot alter it; a token registered with an
+// incompatible syntax just reads as an invalid colour and the default is used.
+/** The design's tokens as the core sees them: an opaque colour per token (or null) and a trimmed raw string. */
+function readTokens(host, colorProbe) {
   const cs = getComputedStyle(host);
   const raw = (n) => String(cs.getPropertyValue(n) || "").trim();
-  const colorOf = (v) => {
+  const color = (n) => {
+    const v = raw(n);
     if (!v) return null;
     colorProbe.style.color = "rgb(1, 2, 3)"; colorProbe.style.color = v;
     const c = getComputedStyle(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
     if (!m || (c === "rgb(1, 2, 3)" && v.replace(/\s+/g, "") !== "rgb(1,2,3)")) return null; // invalid, or not opaque (rgba / color() are refused)
     return [Number(m[1]), Number(m[2]), Number(m[3])];
   };
-  const out = {};
-  let ink = DEF.ink, card = DEF.card;
-  const ci = colorOf(raw("--ink")), cc = colorOf(raw("--card"));
-  if ((ci || cc) && contrast(ci || DEF.ink, cc || DEF.card) >= 7) { ink = ci || DEF.ink; card = cc || DEF.card; if (ci) out["--k-ink"] = rgbCss(ink); if (cc) out["--k-card"] = rgbCss(card); }
-  const pick = (custom, def) => [custom, def, ink].find((c) => c && contrast(c, card) >= 3);
-  const textFor = (bg) => { const w = [255, 255, 255], k = [0, 0, 0]; const best = contrast(w, bg) >= contrast(k, bg) ? w : k; return contrast(best, bg) >= 4.5 ? best : null; };
-  for (const [tok, key, def] of [["--brand-primary", "prim", DEF.prim], ["--error", "err", DEF.err]]) {
-    const c = pick(colorOf(raw(tok)), def), t = c && textFor(c);
-    if (c && t) { out["--k-" + key] = rgbCss(c); out["--k-" + key + "-text"] = rgbCss(t); }
-  }
-  const acc = pick(colorOf(raw("--accent")), DEF.acc);
-  if (acc) out["--k-acc"] = rgbCss(acc);
-  const px = (n, max) => { const m = /^(\d{1,2}(?:\.\d+)?)px$/.exec(raw(n)); return m && Number(m[1]) <= max ? m[1] + "px" : null; };
-  const rsm = px("--r-sm", 24), rlg = px("--r-lg", 28);
-  if (rsm) out["--k-rsm"] = rsm;
-  if (rlg) out["--k-rlg"] = rlg;
-  if (GENERIC_FONTS.has(raw("--f-sans").toLowerCase())) out["--k-font"] = raw("--f-sans").toLowerCase();
-  return out;
+  return { color, raw };
 }
 
 export function showCoreDialog(opts) {
@@ -237,8 +212,9 @@ export function showCoreDialog(opts) {
   host.setAttribute("data-core", "dialog");
   for (const [k, v] of HOST_STYLE) host.style.setProperty(k, v, "important"); // CSSOM, so it is allowed by style-src 'self' and beats any author !important
   const root = host.attachShadow({ mode: "closed" });
-  if (!coreSheet) { coreSheet = new CSSStyleSheet(); coreSheet.replaceSync(CORE_DIALOG_CSS); }
-  root.adoptedStyleSheets = [coreSheet];
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(buildCoreCss(resolveTheme({ color: () => null, raw: () => "" }))); // the defaults until the first read of the design's tokens
+  root.adoptedStyleSheets = [sheet];
   coreDialogsOpen++;
   let counted = true;
   const release = () => { if (counted) { counted = false; coreDialogsOpen--; } };
@@ -264,12 +240,10 @@ export function showCoreDialog(opts) {
     let themeKey = "";
     const theme = () => {
       try {
-        const vals = readCoreTheme(host, colorProbe), key = JSON.stringify(vals);
+        const pal = resolveTheme(readTokens(host, colorProbe)), key = JSON.stringify(pal);
         if (key === themeKey) return;
         themeKey = key;
-        for (const k of ["--k-ink", "--k-card", "--k-prim", "--k-prim-text", "--k-err", "--k-err-text", "--k-acc", "--k-rsm", "--k-rlg", "--k-font"]) {
-          if (k in vals) dialog.style.setProperty(k, vals[k]); else dialog.style.removeProperty(k);
-        }
+        sheet.replaceSync(buildCoreCss(pal));
       } catch { /* no layout (a test DOM) */ }
     };
     let raf = 0, timer = 0;

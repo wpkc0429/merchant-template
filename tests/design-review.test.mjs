@@ -96,11 +96,47 @@ test('hardening: the five confirmations have CORE titles and labels; the core di
   assert.match(kit, /showCoreDialog\(\{\s*title,/, 'confirmDialog uses the core dialog');
   assert.match(f('admin/ui/design-review.js'), /showCoreDialog\(\{/);
   const css = f('admin/ui/core-dialog-css.js');
-  assert.ok(![...css.matchAll(/var\(--([a-z-]+)/g)].some((m) => !m[1].startsWith('k-')), 'the core dialog stylesheet reads only its own --k-* variables (design tokens are validated in ui/kit.js first)');
+  const { buildCoreCss } = await import('../admin/ui/core-dialog-css.js');
+  const { resolveTheme } = await import('../admin/ui/core-theme.js');
+  const built = buildCoreCss(resolveTheme({ color: () => null, raw: () => '' }));
+  assert.ok(!/var\(|(^|[\s;{(,])--[a-z]/.test(built) && !/\{[a-z-]+\}/.test(built.replace(/@media[^{]*\{/g, '')), 'the built stylesheet has no var(), no custom property and no unreplaced marker: only validated literals');
   assert.ok(!/(^|[\s;{])content\s*:/m.test(css.split('\n').filter((l) => !l.startsWith('//')).join('\n')), 'no generated content in the core dialog stylesheet');
 });
 
 test('hardening: ADMIN_UPLOAD_ORIGIN covering the signed screenshot host is documented in D14, the README, the nginx template and the onboarding docs', () => {
   for (const [p, re] of [['docs/DECISIONS.md', /ADMIN_UPLOAD_ORIGIN MUST cover that host/], ['admin/README.md', /ADMIN_UPLOAD_ORIGIN.{1,3}必須同時涵蓋/], ['admin/deploy/nginx.conf.template', /MUST ALSO COVER THE HOST OF THE PLATFORM/],
     ['.claude/skills/merchant-onboarding/references/checklist.md', /signed design-review screenshot URLs/], ['.claude/skills/merchant-onboarding/references/env-reference.md', /signed design-review screenshot host/]]) assert.match(f(p), re, p);
+});
+
+test('core theme: muted text passes 4.5:1 on the card AND the band, a dark card gets a readable red, a pastel brand colour is moved along its hue', async () => {
+  const { resolveTheme, contrast, DEFAULTS } = await import('../admin/ui/core-theme.js');
+  const theme = (tokens, raw = {}) => resolveTheme({ color: (n) => tokens[n] || null, raw: (n) => raw[n] || '' });
+  // the defaults
+  let t = theme({});
+  assert.deepEqual(t.ink, DEFAULTS.ink);
+  for (const [name, c] of [['muted', t.muted], ['soft', t.soft], ['ink', t.ink]]) assert.ok(contrast(c, t.card) >= 4.5 && contrast(c, t.band) >= 4.5, name + ' on card and band');
+  // a validated pair that is exactly at the 7:1 limit: the old 70% mix gave about 3.4:1
+  t = theme({ '--ink': [89, 89, 89], '--card': [255, 255, 255] });
+  assert.ok(contrast(t.ink, t.card) >= 7);
+  for (const c of [t.muted, t.soft]) assert.ok(contrast(c, t.card) >= 4.5 && contrast(c, t.band) >= 4.5, 'muted at the 7:1 limit');
+  // a dark design without --error: the red is lightened along its hue until it reads
+  t = theme({ '--ink': [240, 240, 240], '--card': [18, 18, 24] });
+  assert.ok(contrast(t.err, t.card) >= 3 && t.errText && contrast(t.errText, t.err) >= 4.5, 'dark card: readable red with a readable label');
+  assert.ok(t.err[0] > t.err[1] + 30 && t.err[0] > t.err[2] + 30, 'it is still a red');
+  assert.ok(contrast(t.prim, t.card) >= 3 && t.primText && contrast(t.primText, t.prim) >= 4.5, 'dark card: readable primary');
+  for (const c of [t.muted, t.soft]) assert.ok(contrast(c, t.card) >= 4.5 && contrast(c, t.band) >= 4.5, 'dark card muted');
+  // a pastel brand colour on a cream card (about 2:1): the nearest passing shade of the SAME hue, not the default
+  t = theme({ '--brand-primary': [201, 164, 106], '--card': [247, 244, 238], '--ink': [30, 30, 30] });
+  assert.ok(contrast(t.prim, t.card) >= 3 && contrast(t.primText, t.prim) >= 4.5, 'pastel primary now passes');
+  assert.ok(t.prim[0] > t.prim[1] && t.prim[1] > t.prim[2], 'still the brand (warm) hue, not the default grey');
+  assert.notDeepEqual(t.prim, DEFAULTS.prim);
+  // hostile or broken tokens read as defaults
+  t = theme({ '--ink': [250, 250, 250], '--card': [255, 255, 255], '--error': [255, 255, 255] });
+  assert.deepEqual(t.ink, DEFAULTS.ink); assert.deepEqual(t.card, DEFAULTS.card); assert.ok(contrast(t.err, t.card) >= 3);
+  t = theme({}, { '--r-sm': '400px', '--r-lg': '9px', '--f-sans': 'Some Named Font, serif' });
+  assert.equal(t.rsm, DEFAULTS.rsm); assert.equal(t.rlg, '9px'); assert.equal(t.font, DEFAULTS.font);
+  assert.equal(theme({}, { '--f-sans': 'serif' }).font, 'serif');
+  // the approve (danger) and the primary button never collapse into the card or each other's label
+  t = theme({ '--brand-primary': [255, 255, 255], '--error': [255, 255, 255] });
+  assert.ok(contrast(t.prim, t.card) >= 3 && contrast(t.err, t.card) >= 3);
 });

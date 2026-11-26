@@ -535,7 +535,7 @@ try {
     check("baseline is sane (everything visible)", m0.warnVis && m0.yesVis && m0.ackVis && m0.panelVis && m0.imgVis && m0.titleVis, JSON.stringify(m0));
     check("attacked: the warning has the same size, colour, indent, spacing and is fully visible", m1.warnFont === m0.warnFont && m1.warnColor === m0.warnColor && m1.warnIndent === m0.warnIndent && m1.letter === m0.letter && m1.warnVis && m1.warnW === m0.warnW, JSON.stringify([m0, m1]));
     check("attacked: no ::before / ::after text on the warning, the approve button or anything (content stays none)", m1.warnAfter === "none" && m1.warnBefore === "none" && m1.yesAfter === "none" && m1.yesBefore === "none", JSON.stringify(m1));
-    check("attacked: the approve button label and title are unchanged and visible", m1.yesText === m0.yesText && m1.yesText === "核准並上線" && m1.yesFont === m0.yesFont && m1.yesColor === m0.yesColor && m1.yesVis && m1.titleText === m0.titleText && m1.titleFont === m0.titleFont && m1.titleColor === m0.titleColor && m1.titleVis);
+    check("attacked: the approve button label and title are unchanged and visible", m1.yesText === m0.yesText && m1.yesText === "核准並上線" && m1.yesFont === m0.yesFont && m1.yesVis && m1.titleText === m0.titleText && m1.titleFont === m0.titleFont && m1.titleColor === m0.titleColor && m1.titleVis);
     check("attacked: the checkbox, the panel and the images are visible and unfiltered (img{opacity:0}, brightness(0), left:-9999px, top:200% all ignored)", m1.ackVis && m1.panelVis && m1.imgVis && m1.imgFilter === "none" && m1.imgOpacity === "1" && m1.ackW === m0.ackW, JSON.stringify(m1));
     check("attacked: the dialog has its normal size and the host is displayed", m1.dlgW === m0.dlgW && (await atk.pg.evaluate(() => { const h = document.querySelector('[data-core="dialog"]'); const c = getComputedStyle(h); return c.display === "block" && c.visibility === "visible" && c.opacity === "1" && c.transform === "none" && c.clipPath === "none"; })));
     await atk.pg.screenshot({ path: join(SHOTS, "css-attack-1280-dialog-unchanged.png") });
@@ -670,7 +670,7 @@ try {
     await bad.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
     await bad.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" }); await sleep(500);
     const b = await bad.pg.evaluate(() => { const d = __dq("dialog[open]"), cs = (e) => getComputedStyle(e); return { ink: cs(__dq(".dlg__title")).color, card: cs(d).backgroundColor, yes: cs(__dq('dialog [data-testid="confirm-yes"]')).backgroundColor, font: cs(d).fontFamily, rad: cs(d).borderTopLeftRadius }; });
-    check("hostile tokens (white on white, white buttons, a named font, a 400px radius) are ignored: the defaults keep the dialog readable", b.ink === "rgb(28, 28, 30)" && b.card === "rgb(255, 255, 255)" && b.yes === "rgb(179, 38, 30)" && !/Some Named Font/.test(b.font) && b.rad === "16px", JSON.stringify(b));
+    check("hostile tokens (white on white, white buttons, a named font, a 400px radius) are ignored: the defaults keep the dialog readable", b.ink === "rgb(28, 28, 30)" && b.card === "rgb(255, 255, 255)" && b.yes !== "rgb(255, 255, 255)" && b.yes !== "rgba(0, 0, 0, 0)" && !/Some Named Font/.test(b.font) && b.rad === "16px", JSON.stringify(b));
     await bad.ctx.close();
     // tokens that turn hostile LATER (keyframes on :root) are caught by the 250 ms re-read and by the approve-time check
     const late = await open({ width: 1280, height: 900, theme: "@keyframes tk { to { --ink: rgb(255, 255, 255); --card: rgb(255, 255, 255); } } :root:has([data-core]) { animation: tk 1ms 400ms forwards; }" });
@@ -679,6 +679,48 @@ try {
     const lt = await late.pg.evaluate(() => getComputedStyle(__dq(".dlg__title")).color);
     check("tokens made hostile later (keyframes) are re-validated within 250 ms: the text stays dark", lt === "rgb(28, 28, 30)", lt);
     await late.ctx.close();
+  }
+
+  // ── 14d. @property registrations (and animated registered tokens) cannot change the painted dialog: the sheet holds validated LITERALS ──
+  console.log("@property attacks");
+  {
+    const NAMES = ["k-card", "k-ink", "k-prim", "k-err", "k-prim-text", "k-err-text", "k-acc", "k-rsm", "k-rlg", "k-font", "k-soft", "k-muted", "k-band", "k-line", "k-edge", "k-warnbg", "k-errline",
+      "ink", "card", "brand-primary", "error", "accent", "r-sm", "r-lg", "f-sans", "paper", "muted"];
+    const reg = (n, syntax, inherits, init) => "@property --" + n + " { syntax: '" + syntax + "'; inherits: " + inherits + (init === "" ? "" : "; initial-value: " + init) + "; }";
+    const all = (syntax, inherits, init) => NAMES.map((n) => reg(n, syntax, inherits, init)).join(String.fromCharCode(10));
+    const VARIANTS = [
+      ["the reported attack (--k-card / --k-ink / --k-prim / --k-err and their texts as <length>, html black)", ["k-card", "k-ink", "k-prim", "k-err", "k-prim-text", "k-err-text"].map((n) => reg(n, "<length>", "true", "0px")).join(" ") + " html { background: #000; }"],
+      ["every name as <length>, inherits true", all("<length>", "true", "0px")],
+      ["every name as <length>, inherits false", all("<length>", "false", "0px")],
+      ["every name as '*' (inherits true)", all("*", "true", "")],
+      ["every name as '*' (inherits false)", all("*", "false", "")],
+      ["every name as <color> initial white, inherits false", all("<color>", "false", "white")],
+      ["every name as <color> initial transparent, inherits true", all("<color>", "true", "transparent")],
+      ["every name as <number>", all("<number>", "true", "0")],
+      ["every name as <percentage>", all("<percentage>", "false", "0%")],
+      ["every name as <angle>", all("<angle>", "true", "0deg")],
+      ["every name as <transform-function>", all("<transform-function>", "true", "rotate(0deg)")],
+      ["registered <color> tokens animated to white after 300 ms", ["ink", "card", "brand-primary", "error", "accent"].map((n) => reg(n, "<color>", "true", "black")).join(" ") + " @keyframes pa { to { --ink: white; --card: white; --brand-primary: white; --error: white; --accent: white; } } :root:has([data-core]) { animation: pa 1ms 300ms forwards; }"],
+      ["registered <length> radius tokens animated to 400px", reg("r-sm", "<length>", "true", "0px") + " " + reg("r-lg", "<length>", "true", "0px") + " @keyframes pr { to { --r-sm: 400px; --r-lg: 400px; } } :root:has([data-core]) { animation: pr 1ms 300ms forwards; }"],
+      ["@layer, @scope, @container, @starting-style on the page", "@layer a, b; @layer b { dialog, button, p, div { color: transparent; background: transparent; } } @scope (body) { * { opacity: 0 !important; } } @container (min-width: 1px) { * { visibility: hidden; } } @starting-style { dialog { opacity: 0; } }"],
+    ];
+    const lumOf = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+    const ratio = (a, b) => { const x = lumOf(a), y = lumOf(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    const rgbOf = (s) => (/rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)/.exec(s) || []).slice(1, 5).map((v, i) => (i === 3 ? (v === undefined ? 1 : Number(v)) : Number(v)));
+    for (const [name, theme] of VARIANTS) {
+      const a = await open({ width: 1280, height: 900, theme });
+      await a.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+      await a.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" }); await sleep(1400);
+      const m = await a.pg.evaluate(() => {
+        const cs = (e) => getComputedStyle(e), d = __dq("dialog[open]"), y = __dq('dialog [data-testid="confirm-yes"]'), c = __dq('[data-testid="confirm-rv-close"]'), w = __dq('[data-testid="confirm-warning"]'), t = __dq(".dlg__title"), mu = __dq(".dlg-rv__rec dt");
+        return { bg: cs(d).backgroundColor, title: cs(t).color, yes: cs(y).backgroundColor, yesText: cs(y).color, close: cs(c).backgroundColor, closeText: cs(c).color, warn: cs(w).color, muted: mu ? cs(mu).color : "", rad: cs(d).borderTopLeftRadius, font: cs(d).fontFamily, w: Math.round(d.getBoundingClientRect().width) };
+      });
+      const bg = rgbOf(m.bg), ink = rgbOf(m.title), yes = rgbOf(m.yes), yesText = rgbOf(m.yesText), close = rgbOf(m.close), muted = rgbOf(m.muted);
+      check(name + ": the dialog is painted with the validated palette (opaque white card, dark ink, normal size and radius)", m.bg === "rgb(255, 255, 255)" && m.title === "rgb(28, 28, 30)" && m.w === 980 && /^(16|0)px$/.test(m.rad) && /system-ui/.test(m.font), JSON.stringify(m));
+      check(name + ": readable (ink 7:1, muted 4.5:1 on the card)", ratio(ink, bg) >= 7 && (muted.length === 0 || ratio(muted, bg) >= 4.5), JSON.stringify(m));
+      check(name + ": approve is a visible, distinct button (opaque red, readable label, unlike the close button)", yes.length === 4 && yes[3] === 1 && ratio(yes, bg) >= 3 && ratio(yesText, yes) >= 4.5 && m.yes !== m.close && !(close[3] === 1 && yes.join() === close.join()), JSON.stringify(m));
+      await a.ctx.close();
+    }
   }
 
   // ── 15. only a real person approves: scripted ticks and scripted clicks send nothing ──

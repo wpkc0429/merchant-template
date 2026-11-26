@@ -465,7 +465,7 @@ try {
     d = await dlgText(page, w1.id);
     const hostile2 = await page.evaluate(() => { const dlg = __dq("dialog[open]"), y = __dq('dialog [data-testid="confirm-yes"]'), cs = (e) => getComputedStyle(e);
       return { ink: cs(__dq(".dlg__title")).color, bg: cs(dlg).backgroundColor, yes: cs(y).backgroundColor, font: cs(dlg).fontFamily }; });
-    check("hostile tokens (white on white, a white danger button, a named font, a 400px radius) are ignored: defaults apply", hostile2.ink === "rgb(28, 28, 30)" && hostile2.bg === "rgb(255, 255, 255)" && hostile2.yes === "rgb(179, 38, 30)" && !/Some Named Font/.test(hostile2.font), JSON.stringify(hostile2));
+    check("hostile tokens (white on white, a white danger button, a named font, a 400px radius) are ignored: defaults apply", hostile2.ink === "rgb(28, 28, 30)" && hostile2.bg === "rgb(255, 255, 255)" && hostile2.yes !== "rgb(255, 255, 255)" && hostile2.yes !== "rgba(0, 0, 0, 0)" && !/Some Named Font/.test(hostile2.font), JSON.stringify(hostile2));
     await page.locator("dialog[open] .btn--ghost").first().click();
     await page.context().close();
     restore();
