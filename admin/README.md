@@ -144,6 +144,8 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
 
 `deploy/nginx.conf.template` 另需要環境變數 `ADMIN_SITE_ORIGIN`（店面的 origin）：用於內容的「預覽」按鈕（以 `/site-config.js` 提供給頁面）與 `/content.schema.json`（nginx 從店面讀取後以同源提供，後台才能 dry run／註冊內容結構，CSP 的 `connect-src` 仍只有 `'self'`）。
 
+**`ADMIN_SITE_ORIGIN` 格式**：`https://主機[:埠]`（小寫、無結尾斜線、無路徑、無引號或分號），否則容器啟動時會明確報錯並結束（`deploy/require-origins.sh`）。`/content.schema.json` 用變數 `proxy_pass` + `resolver`（`ADMIN_RESOLVER`，預設取自 `/etc/resolv.conf`，可自行設定）在請求時才解析店面網域，所以店面網域尚未解析時後台仍能啟動；容器需要可用的 DNS。這個代讀不轉送 Cookie／Authorization／Cloudflare Access 憑證，只接受 GET。
+
 依平台的 `docs/deploy/admin-exposure-runbook.md`（本專案不修改 tunnel／Cloudflare 設定，以下由你手動套用）：
 
 1. tunnel ingress：該網域兩條規則，`path: ^/api/v1/admin` → API，其餘 → 靜態檔；path 規則排在同 hostname 的萬用規則之前（範例見 `deploy/cloudflared-ingress.example.yml` 與平台 `docs/deploy/cloudflared-admin.example.yml`）。公開 API 網域的 `^/api/v1/admin → 404` 不動。

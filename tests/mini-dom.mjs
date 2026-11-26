@@ -109,6 +109,6 @@ export function makeWindow({ href = 'http://localhost:8788/', apiFetch, config =
     SHOP_CONFIG: config
   };
   win.window = win;
-  win.ShopCommerce = { _internal: { apiFetch, config, imageOrigins, allowlist } };
+  win.ShopCommerce = { _internal: { apiFetch, config, imageOrigins, imageOriginListeners: [], allowlist } };
   return { win, doc, store, calls };
 }

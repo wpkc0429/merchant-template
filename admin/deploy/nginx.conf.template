@@ -17,7 +17,11 @@
 #   ADMIN_SITE_ORIGIN    the storefront origin, e.g. https://www.example.com . Used for (1) the content PREVIEW button (served to
 #                        the page as /site-config.js) and (2) /content.schema.json, which this server reads from the storefront so
 #                        the store owner can dry-run and register the content schema from the admin (same-origin for the browser,
-#                        so the CSP connect-src stays 'self').
+#                        so the CSP connect-src stays 'self'). Must match ^https://[a-z0-9.-]+(:[0-9]+)?$ (no trailing slash, no path);
+#                        the image's start-up check (deploy/Dockerfile) refuses anything else.
+#   (set by the image itself) ADMIN_RESOLVER  the DNS server nginx uses to look ADMIN_SITE_ORIGIN up at REQUEST time (first
+#                        nameserver of /etc/resolv.conf). The schema proxy uses a variable proxy_pass + resolver, so the admin
+#                        starts even when the storefront hostname does not resolve yet (nginx would otherwise refuse to start).
 #
 # THE CSP BELOW IS REQUIRED, NOT OPTIONAL (decided 2026-11-25, docs/DECISIONS.md): production and every AI-edit preview
 # environment must serve it. Do not delete, comment out, loosen (unsafe-inline / unsafe-eval / wildcards) or make it
@@ -32,15 +36,16 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Security headers. nginx does NOT inherit add_header into a location that has its own add_header, so every location
+    # below that sets one repeats this whole block (tests/nginx-config.test.mjs checks that each location has all of them).
     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
-    # Transport and browser-feature hardening (the CSP above is unchanged). HSTS is only honoured over https, which
-    # Cloudflare terminates in front of this server.
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
     add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
     # No filename hashes, so no long caching: browsers revalidate and a publish takes effect at once.
     add_header Cache-Control "no-cache" always;
 
@@ -50,13 +55,58 @@ server {
     # Content store: the admin page reads these two same-origin paths (the storefront origin comes from ADMIN_SITE_ORIGIN).
     location = /site-config.js {
         default_type application/javascript;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header Cache-Control "no-cache" always;
         return 200 'window.ADMIN_CONFIG.siteOrigin = "${ADMIN_SITE_ORIGIN}";';
     }
+
+    # The storefront's content.schema.json, read server-side so the browser stays same-origin (CSP connect-src 'self').
+    # Hardened: GET/HEAD only; nothing of the admin session (cookies, Cloudflare Access JWT, Authorization) is forwarded;
+    # no body, no redirects followed, short timeouts; upstream cookies/headers/Content-Type are dropped and replaced.
+    # A variable proxy_pass + resolver: the hostname is resolved per request, not at nginx start.
     location = /content.schema.json {
-        proxy_pass ${ADMIN_SITE_ORIGIN}/content.schema.json;
+        limit_except GET { deny all; }
+        resolver ${ADMIN_RESOLVER} valid=30s ipv6=off;
+        set $schema_upstream "${ADMIN_SITE_ORIGIN}/content.schema.json";
+        proxy_pass $schema_upstream;
+        proxy_http_version 1.1;
         proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Cf-Access-Jwt-Assertion "";
+        proxy_set_header Cf-Access-Authenticated-User-Email "";
+        proxy_set_header CF_Authorization "";
+        proxy_set_header X-Preview-Token "";
+        proxy_set_header Content-Length "";
+        proxy_pass_request_body off;
+        proxy_redirect off;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+        proxy_send_timeout 5s;
         proxy_hide_header Set-Cookie;
+        proxy_hide_header Content-Type;
+        proxy_hide_header Content-Security-Policy;
+        proxy_hide_header Strict-Transport-Security;
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Access-Control-Allow-Origin;
+        default_type application/json;
+        add_header Content-Type "application/json" always;
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
         add_header Cache-Control "no-store" always;
     }
 

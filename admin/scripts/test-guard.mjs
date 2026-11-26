@@ -143,8 +143,8 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
     const ng = readFileSync(path.join(dir, "deploy/nginx.conf.template"), "utf8");
     const dk = readFileSync(path.join(dir, "deploy/Dockerfile"), "utf8");
     const dep = (nginx, docker = dk) => { write(dir, "deploy/nginx.conf.template", nginx); write(dir, "deploy/Dockerfile", docker); return deployChecks(dir).map((x) => x.rule).join(); };
-    ok("deploy: no CSP header at all -> csp-missing", /deploy\/csp-missing/.test(dep(ng.replace(/^\s*add_header Content-Security-Policy.*$/m, ""))));
-    ok("deploy: a commented-out CSP does not count", /deploy\/csp-missing/.test(dep(ng.replace(/^(\s*)add_header Content-Security-Policy(.*)$/m, "$1# add_header Content-Security-Policy$2"))));
+    ok("deploy: no CSP header at all -> csp-missing", /deploy\/csp-missing/.test(dep(ng.replace(/^\s*add_header Content-Security-Policy.*$/gm, ""))));
+    ok("deploy: a commented-out CSP does not count", /deploy\/csp-missing/.test(dep(ng.replace(/^(\s*)add_header Content-Security-Policy(.*)$/gm, "$1# add_header Content-Security-Policy$2"))));
     ok("deploy: script-src with 'unsafe-inline' -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"))));
     ok("deploy: a wildcard source -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("default-src 'self'", "default-src *"))));
     ok("deploy: object-src not 'none' -> csp-weak", /deploy\/csp-weak/.test(dep(ng.replace("object-src 'none'", "object-src 'self'"))));

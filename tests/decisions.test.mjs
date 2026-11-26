@@ -273,7 +273,7 @@ test('admin CSP guard: the shipped deploy files pass check-design; the check is 
 
 test('a merchant admin whose deploy config has lost its CSP fails the admin guard', () => {
   const m = makeMerchant(); const d = m.dir;
-  write(d, 'admin/deploy/nginx.conf.template', read(d, 'admin/deploy/nginx.conf.template').replace(/^\s*add_header Content-Security-Policy.*$/m, ''));
+  write(d, 'admin/deploy/nginx.conf.template', read(d, 'admin/deploy/nginx.conf.template').replace(/^\s*add_header Content-Security-Policy.*$/gm, ''));
   const r = node(['scripts/check-design.mjs'], path.join(d, 'admin'));
   assert.equal(r.status, 1);
   assert.match(r.out, /\[deploy\/csp-missing\]/);

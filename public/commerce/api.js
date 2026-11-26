@@ -80,7 +80,9 @@
   // Origins of the product images the platform returned. The content loader treats them, plus the optional
   // SHOP_CONFIG.imageOrigin, as the only hosts an `image` content value may point to.
   var imageOrigins = {};
+  var imageOriginListeners = [];   // content.js re-renders when the catalogue brings a new image origin
   function noteImageOrigins(products) {
+    var before = Object.keys(imageOrigins).length;
     products.forEach(function (p) {
       (p.images || []).forEach(function (im) {
         var u = im && im.urls;
@@ -90,6 +92,9 @@
         });
       });
     });
+    if (Object.keys(imageOrigins).length !== before) {
+      imageOriginListeners.slice().forEach(function (fn) { try { fn(); } catch (e) { /* a listener must not break the catalogue */ } });
+    }
   }
 
   function fetchAllProducts() {
@@ -136,5 +141,5 @@
   C.money = money;
   C.describeApiError = describeApiError;
   C.isSkuSellable = isSkuSellable;
-  C._internal = { apiFetch: apiFetch, config: CONFIG, imageOrigins: imageOrigins };
+  C._internal = { apiFetch: apiFetch, config: CONFIG, imageOrigins: imageOrigins, imageOriginListeners: imageOriginListeners };
 })(window);

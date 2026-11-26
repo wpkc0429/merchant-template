@@ -55,7 +55,7 @@ published documents at runtime (ETag, cache, preview mode `?content_preview=<tok
 `public/content.js`, which stay the fallback. Admin: new `ctx` content functions, a core form builder and default screens
 (documents, editor, revisions, schema status; permissions `content.view/edit/publish/manage`); registering a schema is a core
 action with a human confirmation dialog. The admin host needs `ADMIN_SITE_ORIGIN` (preview link, schema proxy). See
-`docs/CORE-CHANGELOG.md` v0.3.0 and `docs/DECISIONS.md` D7-D9.
+`docs/CORE-CHANGELOG.md` v0.3.0 and `docs/DECISIONS.md` D7-D10. Platform CORS: the platform API must allow the request headers `If-None-Match` and `X-Preview-Token` and expose `ETag` (`Access-Control-Expose-Headers: ETag`) for the storefront content request. Content images show only from catalogue image origins or `SHOP_CONFIG.imageOrigin` (set it to have them at first paint). `ADMIN_SITE_ORIGIN` must be `https://host[:port]` (validated at start-up; the schema proxy resolves it per request).
 
 Then load the catalogue (credentials only from the environment):
 

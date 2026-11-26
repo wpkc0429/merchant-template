@@ -1,0 +1,9 @@
+# Sourced (not executed) by the nginx entrypoint as /docker-entrypoint.d/06-resolver.envsh, before the template is rendered.
+# ADMIN_RESOLVER = the DNS server nginx uses at request time for the content.schema.json proxy (variable proxy_pass).
+# Override by setting ADMIN_RESOLVER yourself (a single IP or host[:port]).
+if [ -z "${ADMIN_RESOLVER:-}" ]; then
+  ADMIN_RESOLVER=$(awk '$1 == "nameserver" { print $2; exit }' /etc/resolv.conf 2>/dev/null)
+  case "$ADMIN_RESOLVER" in *:*) ADMIN_RESOLVER="[$ADMIN_RESOLVER]" ;; esac
+  : "${ADMIN_RESOLVER:=127.0.0.11}"
+fi
+export ADMIN_RESOLVER

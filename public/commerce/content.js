@@ -79,6 +79,10 @@
     return AL.allow_relative_urls ? v : '';
   }
 
+  // The catalogue (which names the platform's image origins) usually arrives AFTER the content: when it brings a new origin the
+  // images that were refused are now acceptable, so listeners (the page) re-render. Setting SHOP_CONFIG.imageOrigin avoids the wait.
+  if (I.imageOriginListeners) I.imageOriginListeners.push(function () { if (Object.keys(docs).length) notify(); });
+
   function imageOriginAllowed(origin) {
     if (I.imageOrigins && has(I.imageOrigins, origin)) return true;
     try { if (CONFIG.imageOrigin && new URL(String(CONFIG.imageOrigin)).origin === origin) return true; } catch (e) { /* ignore */ }

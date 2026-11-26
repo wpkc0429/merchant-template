@@ -116,23 +116,30 @@ export function requiredPointers(root) {
 
 // ── Value checks the platform repeats on write ────────────────────────
 const CONTROL = /[\u0000-\u001f\u007f]/;
-/** link: https:, http:, mailto:, tel:, or a site-relative path starting with / or # (not //host). "" is allowed (empty link). */
+/** link: https:, http:, mailto:, tel:, or a site-relative path starting with / or # (not //host, no backslash anywhere: same as the storefront safeHref). "" is allowed (empty link). */
 export function linkOK(v) {
   const s = String(v);
   if (s === "") return true;
   if (s.length > MAX_URL || CONTROL.test(s) || /\s/.test(s)) return false;
+  if (s.includes("\\")) return false; // "/\host", "\host" or any backslash: browsers treat it as "/"
   if (s.startsWith("//")) return false;
   if (s.startsWith("/") || s.startsWith("#")) return true;
   return /^(https?:\/\/[^/\s]|mailto:[^\s]|tel:[^\s])/i.test(s);
 }
 
-/** image: "" or an https URL under the configured image domain (prefix ends with "/"). Unconfigured: any https URL. */
+/**
+ * image: "" or an https URL under the configured image domain (public_base_url). The storefront only renders images from the
+ * catalogue/imageOrigin hosts, so with NO configured domain nothing but "" is accepted (never "any https host").
+ */
 export function imageOK(v, prefix = "") {
   const s = String(v);
   if (s === "") return true;
-  if (s.length > MAX_URL || CONTROL.test(s) || /\s/.test(s)) return false;
-  if (prefix) return s.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`);
-  return /^https:\/\/[^/\s]/i.test(s);
+  if (s.length > MAX_URL || CONTROL.test(s) || /\s/.test(s) || s.includes("\\")) return false;
+  if (!prefix) return false;
+  const p = prefix.endsWith("/") ? prefix : `${prefix}/`;
+  if (!s.startsWith(p) || !/^https:\/\/[^/\s]/i.test(s)) return false;
+  try { const u = new URL(s); if (u.username || u.password) return false; } catch { return false; }
+  return true;
 }
 
 export const colorOK = (v) => v === "" || /^#[0-9a-fA-F]{6}$/.test(String(v));

@@ -21,10 +21,9 @@ COPY ui/ /usr/share/nginx/html/ui/
 COPY design/ /usr/share/nginx/html/design/
 COPY design-defaults/ /usr/share/nginx/html/design-defaults/
 COPY vendor/ /usr/share/nginx/html/vendor/
-# The CSP needs both origins: fail at start-up instead of shipping a policy that blocks image upload.
-RUN printf '%s\n' '#!/bin/sh' \
-  ': "${ADMIN_IMG_ORIGIN:?set ADMIN_IMG_ORIGIN (image public origin)}"' \
-  ': "${ADMIN_UPLOAD_ORIGIN:?set ADMIN_UPLOAD_ORIGIN (R2/S3 direct-upload origin)}"' \
-  ': "${ADMIN_SITE_ORIGIN:?set ADMIN_SITE_ORIGIN (storefront origin: content preview and content.schema.json)}"' \
-  > /docker-entrypoint.d/05-require-origins.sh && chmod +x /docker-entrypoint.d/05-require-origins.sh
+# Start-up checks and the DNS resolver (deploy/require-origins.sh validates the three origins and fails with a clear message; deploy/resolver.envsh
+# exports ADMIN_RESOLVER for the variable proxy_pass of /content.schema.json, so the storefront hostname is resolved per request, not at start-up).
+COPY deploy/require-origins.sh /docker-entrypoint.d/05-require-origins.sh
+COPY deploy/resolver.envsh /docker-entrypoint.d/06-resolver.envsh
+RUN chmod +x /docker-entrypoint.d/05-require-origins.sh
 EXPOSE 80

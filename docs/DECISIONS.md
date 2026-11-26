@@ -4,6 +4,14 @@ Standing decisions about the merchant template and every merchant repo made from
 (the template's owner) and is enforced by the tooling named next to it; changing one is a human decision, recorded here
 first. Newest first. This file is part of the locked core (it is synced to merchant repos so design sessions can read it).
 
+## 2026-11-26, decided by the owner
+
+### D10. Locked-core changes: independent review replaces the owner for non-capability changes; v0.3.0 scope
+
+Decided by the owner on 2026-11-26. **Policy**: a locked-core change no longer needs the owner personally when (1) an independent review (a fresh subagent, security-focused, that did not write the change) finds nothing open and (2) all guards and tests pass (check-layers --check, check-design, test-guard, content-schema --lint, tests/run.mjs, the admin and content tests). The maintainer assistant may then merge and tag, and reports to the owner afterwards. The owner is STILL required for changes that alter what the AI design layer can do: adding to `ctx` (or `ShopCommerce` / `SHOP_CONFIG`), changing the guard scripts or their rules, changing `lockedPaths`, or changing the manifest procedure itself (`--update` stays a maintainer action after a reviewed core change, never an AI action).
+
+**v0.3.0 direction (decided by the owner, approved 2026-11-26)**: the design layer may READ the content store and DRY-RUN schemas, but must NOT register schemas or write content (save, publish, restore and so on stay core-owned actions behind permissions and human confirmation).
+
 ## v0.3.0 (PROPOSED on branch core/content-store-0.3.0; become standing decisions when the human reviewer merges)
 
 Source: the platform decisions of change `headless-content-store` (design D8 runtime fetch by default, D9 security, D10 template follow-up T1-T5) and the user's task brief of 2026-11-25. The choices marked "maintainer choice" were made by the preparing session and need the reviewer's approval.

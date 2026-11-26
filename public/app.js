@@ -147,7 +147,7 @@
 
   // CONTENT = DEFAULTS with every published platform field laid over it. A document that is not published (or whose
   // field is missing or of the wrong type) leaves the content.js default in place. Pure function of the two inputs.
-  function applyPlatformContent() {
+  function buildPlatformContent() {
     var g = Commerce.content.get('global'), h = Commerce.content.get('home'), st = Commerce.content.get('story');
     var D = DEFAULTS;
     var next = {};
@@ -174,8 +174,18 @@
     }
     next.faq = pairs(Commerce.content.get('faq'), D.faq);
     next.pinfo = pairs(Commerce.content.get('product-info'), D.pinfo);
-    CONTENT = next;
-    document.documentElement.style.setProperty('--accent', CONTENT.accent);
+    return next;
+  }
+  // Malformed platform content must never blank the page: any failure while overlaying keeps the shipped defaults.
+  function applyPlatformContent() {
+    try {
+      var next = buildPlatformContent();
+      document.documentElement.style.setProperty('--accent', next.accent);
+      CONTENT = next;
+    } catch (e) {
+      CONTENT = DEFAULTS;
+      try { document.documentElement.style.setProperty('--accent', DEFAULTS.accent); } catch (e2) { /* nothing more to do */ }
+    }
   }
 
   // Product images are API URLs (CSS background). A URL that fails to load
@@ -1805,7 +1815,7 @@
   function boot() {
     if (booted) return;
     booted = true;
-    applyPlatformContent();
+    applyPlatformContent(); // never throws (falls back to the defaults)
     // A visitor bounced back from an off-site payment page with no more
     // specific return target lands here with a stored order-access token —
     // route them to the order-status check rather than the homepage.

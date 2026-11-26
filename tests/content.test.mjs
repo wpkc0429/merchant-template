@@ -291,3 +291,54 @@ describe('preview mode', () => {
     assert.equal(C.isPreview(), false); assert.equal(calls.calls?.length ?? 0, 0); assert.equal(win.location.href, 'http://localhost:8788/?a=1');
   });
 });
+
+describe('catalogue image origins arriving after the content', () => {
+  test('a new catalogue image origin makes the loader notify so the page re-renders and the image is now allowed', async () => {
+    const { C, win } = load({ apiFetch: () => ok(docs({ home: { hero: { image: 'https://img.example.com/a.webp' } } })) });
+    await C.ready(['home']);
+    assert.equal(C.safeImageSrc('https://img.example.com/a.webp'), '', 'refused before the catalogue names the origin');
+    let n = 0; C.onChange(() => { n++; });
+    const I = win.ShopCommerce._internal;
+    I.imageOrigins['https://img.example.com'] = true;     // what api.js noteImageOrigins does ...
+    I.imageOriginListeners.forEach((fn) => fn());          // ... followed by its listener call
+    assert.equal(n, 1);
+    assert.equal(C.safeImageSrc('https://img.example.com/a.webp'), 'https://img.example.com/a.webp');
+  });
+  test('api.js calls the listeners only when the catalogue adds an origin', () => {
+    const src = rd('api.js');
+    assert.match(src, /imageOriginListeners/);
+    assert.match(src, /Object\.keys\(imageOrigins\)\.length !== before/);
+  });
+});
+
+describe('public/app.js: malformed platform content cannot blank the page', () => {
+  // Runs the real buildPlatformContent/applyPlatformContent source from app.js with stubbed inputs.
+  const src = readFileSync(path.join(TEMPLATE, 'public', 'app.js'), 'utf8');
+  const start = src.indexOf('var CONTENT_KEYS');
+  const end = src.indexOf(['', '  }', ''].join(String.fromCharCode(10)), src.indexOf('function applyPlatformContent')) + 5;
+  assert.ok(start > 0 && end > start, 'app.js layout changed: update this test');
+  const run = (get) => {
+    const prop = [];
+    const fn = new Function('Commerce', 'DEFAULTS', 'document', 'var CONTENT = DEFAULTS;\n' + src.slice(start, end) + '\napplyPlatformContent(); return CONTENT;');
+    const DEFAULTS = { accent: '#112233', brand: { name: 'D', footer: 'F' }, hero: { eyebrow: 'e', title: 't', lede: 'l' }, faq: [], pinfo: [], story: { paragraphs: [] } };
+    const document = { documentElement: { style: { setProperty: (k, v) => prop.push([k, v]) } } };
+    return { out: fn({ content: { get } }, DEFAULTS, document), DEFAULTS, prop };
+  };
+  test('wrong types fall back field by field (no throw)', () => {
+    const { out, DEFAULTS } = run((k) => (k === 'global' ? 'x' : k === 'home' ? { hero: 5 } : k === 'faq' ? { items: 'no' } : null));
+    assert.equal(out.hero.title, DEFAULTS.hero.title);
+    assert.equal(out.accent, DEFAULTS.accent);
+  });
+  test('a content getter that throws leaves the defaults in place and the accent set', () => {
+    const { out, DEFAULTS, prop } = run((k) => { if (k === 'home') return { get hero() { throw new Error('boom'); } }; return null; });
+    assert.equal(out, DEFAULTS);
+    assert.ok(prop.some(([k, v]) => k === '--accent' && v === DEFAULTS.accent));
+  });
+  test('Commerce.content.get itself throwing is also survived', () => {
+    const { out, DEFAULTS } = run(() => { throw new Error('boom'); });
+    assert.equal(out, DEFAULTS);
+  });
+  test('boot() relies on applyPlatformContent (try/catch) and not on a bare overlay', () => {
+    assert.match(src, /function applyPlatformContent\(\) \{\s*try \{/);
+  });
+});

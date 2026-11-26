@@ -4,6 +4,7 @@ export default async function contentRevisions(root, ctx) {
   const { h, clear, pageHeader, button, busy, toast, dataTable, loading, errorState, emptyState, badge, card, showDialog } = ctx.ui;
   const { t, data, actions, can, format, errorMessage } = ctx;
   const key = ctx.route.params.key;
+  let seenRev = 0; // the draft revision the person is looking at: sent as If-Match on restore
 
   const box = h("div", { class: "list-area", "data-testid": "content-revisions" });
   const notice = h("div", { "data-testid": "content-restored-slot" });
@@ -14,7 +15,7 @@ export default async function contentRevisions(root, ctx) {
   async function load() {
     clear(box).append(loading());
     let list;
-    try { list = await data.listContentRevisions(key); } catch (e) { if (ctx.alive()) clear(box).append(errorState(e, load)); return; }
+    try { [list, seenRev] = await Promise.all([data.listContentRevisions(key), data.getContentDocument(key).then((d) => d.rev)]); } catch (e) { if (ctx.alive()) clear(box).append(errorState(e, load)); return; }
     if (!ctx.alive()) return;
     clear(box).append(dataTable({
       rows: list,
@@ -46,13 +47,14 @@ export default async function contentRevisions(root, ctx) {
 
   async function restore(r) {
     try {
-      const res = await actions.restoreContentRevision(key, r.rev);
+      const res = await actions.restoreContentRevision(key, r.rev, { rev: seenRev });
       if (res.cancelled) return;
+      if (res.doc && res.doc.rev) seenRev = res.doc.rev;
       const msg = res.restoredValid ? t("content.rev.restored") : t("content.rev.restoredInvalid");
       clear(notice).append(h("p", { class: "notice", role: "status", "data-testid": "content-restored" }, msg, " ",
         h("a", { href: `#/content/${key}`, "data-testid": "content-restored-edit" }, t("content.rev.openEditor"))));
       toast(msg);
-    } catch (e) { toast(errorMessage(e), "error"); }
+    } catch (e) { toast(errorMessage(e), "error"); if (e.kind === "stale") await load(); } // stale: someone saved first, re-read the revision
   }
 
   await load();

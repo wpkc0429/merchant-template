@@ -122,10 +122,12 @@ export function createContentActions({ ask }) {
   async function publishContentDocument(key, opts = {}) {
     need("content.publish");
     requireKey(key);
+    // The revision the person SAW is mandatory: never default to one read after (or without) their review.
+    const rev = Number(opts.rev);
+    if (!(Number.isInteger(rev) && rev > 0)) throw new ActionError("internal", t("cf.err.internal"), { reason: "no_rev" });
     const cur = await guarded(() => content.getDocument(S(), key));
     if (cur.needsAttention) throw blocked("needsAttention", t("cf.err.needsAttention"));
     if (!(await ask("confirm.publishContent", { key, title: cur.title || key }, { danger: false }))) return CANCELLED;
-    const rev = Number.isInteger(Number(opts.rev)) && Number(opts.rev) > 0 ? Number(opts.rev) : cur.rev;
     const doc = await guarded(() => content.publishDocument(S(), key, rev), cur.schemaNode);
     return { ok: true, doc: doc };
   }
@@ -153,8 +155,11 @@ export function createContentActions({ ask }) {
     requireKey(key);
     const n = Number(rev);
     if (!Number.isInteger(n) || n < 1) throw invalid({ "": t("err.422") });
+    // If-Match is mandatory: the draft revision the person saw (a missing one is a programming error, not a blind restore).
+    const ifRev = Number(opts.rev);
+    if (!(Number.isInteger(ifRev) && ifRev > 0)) throw new ActionError("internal", t("cf.err.internal"), { reason: "no_rev" });
     if (!(await ask("confirm.restoreContent", { key, rev: n }))) return CANCELLED;
-    const doc = await guarded(() => content.restoreRevision(S(), key, n, Number(opts.rev) || undefined));
+    const doc = await guarded(() => content.restoreRevision(S(), key, n, ifRev));
     // The restore response has no schema_node either: re-read the document (also gives the ETag revision) for the screen.
     const fresh = await guarded(() => content.getDocument(S(), key));
     return { ok: true, restoredToDraft: true, restoredValid: doc.restoredValid !== false, doc: { ...fresh, draft: fresh.schemaNode ? hydrate(fresh.schemaNode, fresh.draft) : fresh.draft } };

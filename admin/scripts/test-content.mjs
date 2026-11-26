@@ -151,6 +151,9 @@ e = await rejects(() => actions.saveContentDocument("home", missing, { rev: 4 })
 ok("a required field cannot be omitted from the saved content", e && e.kind === "invalid" && e.fields["/title"] && calls.every((c) => c.method !== "PUT"));
 ok("validate: good content passes", Object.keys(S.validate(schemaNode, goodContent, { root: schemaNode })).length === 0);
 ok("link: https, http, mailto, tel, /path and #anchor pass; javascript:, data:, //host and spaces fail", ["https://a.b/c", "http://a.b", "mailto:a@b.c", "tel:+886", "/x", "#y", ""].every(S.linkOK) && ["javascript:x", "data:text/html,x", "//evil.example", "https:// a", "ftp://a.b"].every((v) => !S.linkOK(v)));
+ok("link: no backslash anywhere, no /\host, no leading backslash, no protocol-relative (same as the storefront safeHref)", ["/\\evil.example", "\\evil", "/a\\b", "https://a.b/c\\d", "//x", "a\\b", "#a\\b"].every((v) => !S.linkOK(v)));
+ok("image without a configured image domain accepts only the empty value (the storefront only trusts catalogue/imageOrigin hosts)", S.imageOK("", "") && !S.imageOK("https://anything.example/a.webp", "") && !S.imageOK("https://anything.example/a.webp"));
+ok("image: no credentials, no http, no whitespace/backslash even under the prefix", !S.imageOK("https://u:p@img.example.com/a", "https://img.example.com") && !S.imageOK("https://img.example.com/a\\b", "https://img.example.com"));
 ok("image: only under the configured image domain (with the trailing slash), or empty", S.imageOK("https://img.example.com/a.webp", "https://img.example.com") && !S.imageOK("https://img.example.com.evil.test/a.webp", "https://img.example.com") && S.imageOK("", "https://img.example.com") && !S.imageOK("http://img.example.com/a", "https://img.example.com"));
 ok("color: #RRGGBB only", S.colorOK("#a1B2c3") && !S.colorOK("#abc") && !S.colorOK("blue"));
 ok("requiredPointers lists required properties, recursively through required objects", JSON.stringify(S.requiredPointers({ type: "object", required: ["a"], properties: { a: { type: "object", required: ["b"], properties: { b: { type: "string" }, c: { type: "string" } } }, d: { type: "string" } } })) === '["/a","/a/b"]');
@@ -226,6 +229,26 @@ res = await actions.restoreContentRevision("home", 3, { rev: 5 });
 const rc = calls.find((c) => c.method === "POST");
 ok("restore: confirmation first; it only restores to the draft (nothing is published); If-Match is the screen's revision; restored_valid:false is reported", asked[0].key === "confirm.restoreContent" && res.restoredToDraft === true && res.restoredValid === false && rc.headers["If-Match"] === '"5"' && !calls.some((c) => /publish/.test(c.url)), JSON.stringify(res));
 ok("the restore warning says it is only a draft", /草稿/.test(fixedWarning("restoreContent")) && /不會發佈/.test(fixedWarning("restoreContent")));
+
+// restore / publish must carry the revision the person SAW (If-Match); nothing is defaulted
+reset(); asked.length = 0; answers = [];
+e = await rejects(() => actions.restoreContentRevision("home", 3));
+ok("restore without rev fails with an internal error before any dialog or request", e && e.kind === "internal" && asked.length === 0 && calls.length === 0, JSON.stringify(e));
+e = await rejects(() => actions.restoreContentRevision("home", 3, { rev: 0 }));
+ok("restore with a non-positive rev fails the same way", e && e.kind === "internal" && calls.length === 0);
+reset(); asked.length = 0;
+e = await rejects(() => actions.publishContentDocument("home", {}));
+ok("publish without rev fails with an internal error before any request (no default to a rev read later)", e && e.kind === "internal" && asked.length === 0 && calls.length === 0);
+reset(); asked.length = 0; answers = [];
+on("GET", "/content/documents/home", { body: docBody({ draft_rev: 9 }) });
+on("POST", "/content/documents/home/publish", { status: 200, body: docBody({ status: 1 }) });
+await actions.publishContentDocument("home", { rev: 4 });
+ok("publish sends the rev the person saw (4), never the one read after the dialog (9)", calls.find((c) => c.method === "POST").headers["If-Match"] === '"4"');
+reset(); asked.length = 0; answers = [];
+on("GET", "/content/documents/home", { body: docBody({ draft_rev: 9 }) });
+on("POST", "/revisions/3/restore", { status: 412, body: { error: { code: "precondition_failed", message: "stale", details: { current_rev: 9 } } } });
+e = await rejects(() => actions.restoreContentRevision("home", 3, { rev: 5 }));
+ok("restore with a stale rev -> 412 -> kind stale (the screen reloads), If-Match was sent", e && e.kind === "stale" && e.currentRev === 9 && calls.find((c) => c.method === "POST").headers["If-Match"] === '"5"', JSON.stringify(e));
 
 // ── 7. dry run is read-only; registration needs the human ──
 const schemaFile = { format: 2, types: { global: { title: "G", schema: { type: "object" } } } };
