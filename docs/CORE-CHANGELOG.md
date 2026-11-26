@@ -13,6 +13,12 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.5.0 (UNRELEASED: in progress on the T1-T4 PRs, not tagged; template.json stays 0.4.2 until the release PR)
+
+Design history, step 1 of 4 (decision D13 in docs/DECISIONS.md): the read layer. Human-reviewed core change; manifests re-locked with `--update` on the branch `core/design-history-read-layer`. Adds three read-only ctx.data functions (listDesignRequests, getDesignRequest, getDesignState, permission design.view) and the not-yet-registered route definitions design and designRequest; no action, no warning, no guard rule, no CSP change. The default screens, the actions (openDesignReview, requestDesignRevert, cancelDesignRequest) and their fixed warnings come in later PRs of this version.
+
+Design-layer action: none yet; the three ctx.data functions are additive
+
 ## v0.4.2
 
 Guard hardening (decision D12, approved by the owner on 2026-11-27) in two layers. Static: the design-layer scans refuse dialog, popover, fullscreen and pointer-lock use (rules js/dialog-api, js/dialog-element, js/popover-inert), synthetic input and auto-confirm (js/synthetic-input, js/core-ui-selector) and traversal out of the design's own subtree, ctx shadowing and enumeration (js/dom-escape, js/ctx-shadow, js/ctx-unknown); the storefront scan (scripts/check-layers.mjs 5d) covers the dialog and synthetic-input rules. Runtime (admin core, only restrictions, no new ctx function): h() throws on the dialog tag and the popover / inert / command attributes, core dialogs (confirmations and fixed warnings) ignore untrusted (synthetic) events, ctx.ui.$ / $$ are scoped to an element root and never return core dialog, toast or banner nodes, ctx.ui.showDialog returns only { close }. Human-reviewed core change; manifests re-locked with `--update` on the branch `core/guard-hardening-0.4.2`; nothing is tagged.
