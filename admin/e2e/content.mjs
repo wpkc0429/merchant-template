@@ -8,11 +8,12 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadPlaywright, SITE, OUT, OWNER, STAFF, API, req, apiLogin, ensureEditor, check, section, failureCount } from "./lib.mjs";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 import { PUBLISHABLE_KEY } from "./data.mjs";
 
 mkdirSync(OUT, { recursive: true });
 const { chromium } = loadPlaywright();
-const browser = await chromium.launch();
+const browser = hookBrowser(await chromium.launch());
 const T = (page, id) => page.locator(`[data-testid="${id}"]`);
 const F = (page, ptr) => page.locator(`[data-testid="cf:${ptr}"]`);
 const runId = Date.now().toString(36);

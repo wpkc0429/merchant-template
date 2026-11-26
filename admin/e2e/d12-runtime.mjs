@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const HOST = "admin.example.test";
@@ -23,7 +24,7 @@ function loadPlaywright() {
 const pw = loadPlaywright();
 if (!pw) { console.log("SKIP d12-runtime browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
 let browser;
-try { browser = await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] }); } catch (e) {
+try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
   console.log(`SKIP d12-runtime browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
 }
 
@@ -48,8 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   const bctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await bctx.newPage();
-  // core dialogs live in CLOSED shadow roots (ui/kit.js showCoreDialog); this test opens them (and records them) so it can look inside. e2e/design-review.mjs proves they are closed.
-  await page.addInitScript("(() => { const roots = []; const orig = Element.prototype.attachShadow; Element.prototype.attachShadow = function (o) { const r = orig.call(this, { ...o, mode: 'open' }); roots.push(r); return r; }; window.__dq = (q) => document.querySelector(q) || roots.map((r) => r.querySelector(q)).find(Boolean) || null; window.__dqa = (q) => [...document.querySelectorAll(q), ...roots.flatMap((r) => [...r.querySelectorAll(q)])]; })();");
+  // core dialogs live in CLOSED shadow roots; hookBrowser (e2e/lib/shadow-hook.mjs) opens them in THIS test browser only
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e.message)));
   await page.goto(URL0, { waitUntil: "load" });

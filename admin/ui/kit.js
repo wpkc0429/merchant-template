@@ -186,6 +186,51 @@ let coreSheet = null;
 const supportsShadow = () => { try { return typeof CSSStyleSheet === "function" && "replaceSync" in CSSStyleSheet.prototype && typeof Element.prototype.attachShadow === "function"; } catch { return false; } };
 const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "static"], ["visibility", "visible"], ["opacity", "1"], ["filter", "none"], ["transform", "none"],
   ["clip-path", "none"], ["mask", "none"], ["direction", "ltr"], ["unicode-bidi", "normal"], ["zoom", "1"], ["pointer-events", "auto"], ["contain", "none"]];
+// ── Theming of the core dialogs: ONLY these design tokens (custom properties inherit into the shadow root), each VALIDATED here ──
+//   --ink + --card      text and dialog colours; accepted only as opaque colours with a contrast of at least 7:1, else BOTH fall back to the defaults
+//   --brand-primary     (also set from the shop branding) primary buttons / checkbox; opaque, contrast >= 3 against the card, button text chosen for >= 4.5
+//   --error             danger buttons and the warning frame; same rules
+//   --accent            focus ring and note stripe; opaque, contrast >= 3 against the card
+//   --r-sm, --r-lg      radius of boxes and of the dialog; plain px values (at most 24 and 28)
+//   --f-sans            font family, honoured ONLY when it is one generic keyword (serif, sans-serif, system-ui, monospace, ui-*): a named font could be a
+//                       design-supplied @font-face that remaps glyphs, so named stacks are ignored and the dialog keeps its system font
+// Everything else of the design CSS (selectors, content, filters, positions, any other property) cannot reach the dialog.
+const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+const GENERIC_FONTS = new Set(["serif", "sans-serif", "system-ui", "monospace", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]);
+const DEF = { ink: [28, 28, 30], card: [255, 255, 255], prim: [28, 28, 30], err: [179, 38, 30], acc: [47, 93, 138] };
+const rgbCss = (c) => "rgb(" + c.join(", ") + ")";
+/** The accepted --k-* values for the tokens the design currently sets (a plain object; empty = all defaults). */
+function readCoreTheme(host, colorProbe) {
+  const cs = getComputedStyle(host);
+  const raw = (n) => String(cs.getPropertyValue(n) || "").trim();
+  const colorOf = (v) => {
+    if (!v) return null;
+    colorProbe.style.color = "rgb(1, 2, 3)"; colorProbe.style.color = v;
+    const c = getComputedStyle(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
+    if (!m || (c === "rgb(1, 2, 3)" && v.replace(/\s+/g, "") !== "rgb(1,2,3)")) return null; // invalid, or not opaque (rgba / color() are refused)
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  const out = {};
+  let ink = DEF.ink, card = DEF.card;
+  const ci = colorOf(raw("--ink")), cc = colorOf(raw("--card"));
+  if ((ci || cc) && contrast(ci || DEF.ink, cc || DEF.card) >= 7) { ink = ci || DEF.ink; card = cc || DEF.card; if (ci) out["--k-ink"] = rgbCss(ink); if (cc) out["--k-card"] = rgbCss(card); }
+  const pick = (custom, def) => [custom, def, ink].find((c) => c && contrast(c, card) >= 3);
+  const textFor = (bg) => { const w = [255, 255, 255], k = [0, 0, 0]; const best = contrast(w, bg) >= contrast(k, bg) ? w : k; return contrast(best, bg) >= 4.5 ? best : null; };
+  for (const [tok, key, def] of [["--brand-primary", "prim", DEF.prim], ["--error", "err", DEF.err]]) {
+    const c = pick(colorOf(raw(tok)), def), t = c && textFor(c);
+    if (c && t) { out["--k-" + key] = rgbCss(c); out["--k-" + key + "-text"] = rgbCss(t); }
+  }
+  const acc = pick(colorOf(raw("--accent")), DEF.acc);
+  if (acc) out["--k-acc"] = rgbCss(acc);
+  const px = (n, max) => { const m = /^(\d{1,2}(?:\.\d+)?)px$/.exec(raw(n)); return m && Number(m[1]) <= max ? m[1] + "px" : null; };
+  const rsm = px("--r-sm", 24), rlg = px("--r-lg", 28);
+  if (rsm) out["--k-rsm"] = rsm;
+  if (rlg) out["--k-rlg"] = rlg;
+  if (GENERIC_FONTS.has(raw("--f-sans").toLowerCase())) out["--k-font"] = raw("--f-sans").toLowerCase();
+  return out;
+}
+
 export function showCoreDialog(opts) {
   if (!supportsShadow()) return showDialog(opts); // an old browser: the light dialog (styled by styles.css), without the isolation
   const host = document.createElement("div");
@@ -201,7 +246,9 @@ export function showCoreDialog(opts) {
     let sane = () => true;
     const probe = document.createElement("div"); // 100 px wide, invisible: painted width / layout width = the zoom that html / body / any ancestor puts on the host
     probe.className = "zprobe";
-    root.append(probe);
+    const colorProbe = document.createElement("div");
+    colorProbe.className = "zprobe";
+    root.append(probe, colorProbe);
     const r = buildDialog({ ...opts, check: () => sane(), onClose: (v) => { release(); clearInterval(timer); cancelAnimationFrame(raf); host.remove(); opts.onClose?.(v); } }, (dialog) => { root.append(dialog); document.body.append(host); });
     // A CSS `zoom` on html / body (also animated or changed LATER by a transition or keyframes) compounds into the dialog whatever the host says. It is
     // measured with the probe and cancelled out with a counter-zoom on the dialog, on EVERY animation frame (rAF) and every 250 ms while the dialog is open.
@@ -214,17 +261,30 @@ export function showCoreDialog(opts) {
         else if (dialog.style.getPropertyValue("zoom")) dialog.style.removeProperty("zoom");
       } catch { /* no layout (a test DOM) */ }
     };
+    let themeKey = "";
+    const theme = () => {
+      try {
+        const vals = readCoreTheme(host, colorProbe), key = JSON.stringify(vals);
+        if (key === themeKey) return;
+        themeKey = key;
+        for (const k of ["--k-ink", "--k-card", "--k-prim", "--k-prim-text", "--k-err", "--k-err-text", "--k-acc", "--k-rsm", "--k-rlg", "--k-font"]) {
+          if (k in vals) dialog.style.setProperty(k, vals[k]); else dialog.style.removeProperty(k);
+        }
+      } catch { /* no layout (a test DOM) */ }
+    };
     let raf = 0, timer = 0;
     const loop = () => { correct(); if (counted) raf = requestAnimationFrame(loop); };
-    correct();
+    correct(); theme();
     if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
-    timer = setInterval(correct, 250);
+    timer = setInterval(() => { correct(); theme(); }, 250);
     // At the moment of a confirmation: is the dialog really shown at its normal scale, fully inside the screen? Otherwise nothing is submitted.
     sane = () => {
       try {
-        correct();
+        // Measure FIRST: a dialog that was distorted a moment ago (so the person may have seen it so) is refused even if it is corrected right now.
+        const was = dialog.offsetWidth > 0 ? dialog.getBoundingClientRect().width / dialog.offsetWidth : 0;
+        correct(); theme();
         const rc = dialog.getBoundingClientRect(), w = dialog.offsetWidth;
-        return dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
+        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
           && rc.left >= -1 && rc.top >= -1 && rc.right <= innerWidth + 1 && rc.bottom <= innerHeight + 1;
       } catch { return true; }
     };

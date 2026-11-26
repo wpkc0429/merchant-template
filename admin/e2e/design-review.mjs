@@ -15,16 +15,12 @@ import { createRequire } from "node:module";
 import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hookBrowser } from "./lib/shadow-hook.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Under the REAL strict CSP of admin/deploy/nginx.conf.template (style-src 'self': no inline style, constructable stylesheets are what the core dialog uses).
-// The test patches attachShadow to OPEN roots (and records them) so Playwright and __dq() can look inside; one scenario runs unpatched to prove the root is closed.
+// The shared test hook (e2e/lib/shadow-hook.mjs) opens the shadow roots in the test browser so Playwright and __dq() can look inside; the unpatched scenarios use a second, RAW browser to prove the root is closed.
 const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
-const OPEN_ROOTS = "(() => { const roots = []; const orig = Element.prototype.attachShadow; Element.prototype.attachShadow = function (o) { const r = orig.call(this, { ...o, mode: 'open' }); roots.push(r); return r; };"
-  + " window.__roots = roots; window.__dq = (q) => document.querySelector(q) || roots.map((r) => r.querySelector(q)).find(Boolean) || null;"
-  + " window.__dqa = (q) => [...document.querySelectorAll(q), ...roots.flatMap((r) => [...r.querySelectorAll(q)])];"
-  + " window.__active = () => { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; return a; };"
-  + " window.__html = () => document.documentElement.outerHTML + roots.map((r) => r.innerHTML).join(''); })();";
 const SHOTS = process.env.REVIEW_SHOTS || resolve(ADMIN, "e2e/out/review-ui");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -35,11 +31,13 @@ function loadPlaywright() {
 }
 const pw = loadPlaywright();
 if (!pw) { console.log("SKIP design-review browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
-let browser;
-try { browser = await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] }); } catch (e) {
+let browser, rawBrowser;
+try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
   console.log(`SKIP design-review browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
 }
 mkdirSync(SHOTS, { recursive: true });
+// RAW browser on purpose: no shadow hook, to prove the root is closed
+rawBrowser = await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] });
 
 // ── PNG fixtures (valid PNGs built here, no dependencies) ──
 const CRC = (() => { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -169,9 +167,8 @@ const cspLines = [];
 
 async function open({ width = 1280, height = 900, unpatched = false, ...state } = {}) {
   resetState(state);
-  const ctx = await browser.newContext({ viewport: { width, height } });
+  const ctx = await (unpatched ? rawBrowser : browser).newContext({ viewport: { width, height } });
   const pg = await ctx.newPage();
-  if (!unpatched) await pg.addInitScript(OPEN_ROOTS);
   pg.on("console", (m) => { if (/Content Security Policy|Refused to/i.test(m.text())) cspLines.push(m.text()); });
   const errors = [];
   pg.on("pageerror", (e) => errors.push(String(e.message)));
@@ -554,7 +551,7 @@ try {
     await atk.pg.waitForSelector("dialog[open]", { state: "attached" }); await sleep(400);
     const c = await atk.pg.evaluate(() => { const w = __dq('[data-testid="confirm-warning"]'), y = __dq('dialog [data-testid="confirm-yes"]'), b = w.getBoundingClientRect(), cs = getComputedStyle(w);
       return { font: cs.fontSize, after: getComputedStyle(y, "::after").content, text: y.textContent, w: b.width, h: b.height, vis: cs.visibility, label: [...__dqa("dialog .btn")].map((x) => x.textContent) }; });
-    check("attacked: the shared confirm dialog keeps its warning size / text and its real button labels", c.font === "14px" && c.after === "none" && c.text === "建立還原請求" && c.w > 200 && c.h > 20 && c.vis === "visible" && c.label.join() === "先不要,建立還原請求", JSON.stringify(c));
+    check("attacked: the shared confirm dialog keeps its warning size / text and its real button labels", c.font === "15px" && c.after === "none" && c.text === "建立還原請求" && c.w > 200 && c.h > 20 && c.vis === "visible" && c.label.join() === "先不要,建立還原請求", JSON.stringify(c));
     await atk.pg.screenshot({ path: join(SHOTS, "css-attack-confirm-unchanged.png") });
     await atk.ctx.close();
   }
@@ -643,6 +640,45 @@ try {
     await sleep(400);
     check("the shared confirm dialog refuses too: no revert request, a message, the confirm button disabled", S.revertCalls.length === 0 && (await b.pg.locator(T("confirm-display-error")).count()) === 1 && (await b.pg.locator("dialog " + T("confirm-yes")).isDisabled()));
     await b.ctx.close();
+  }
+
+  // ── 14c. THEMING by design tokens (validated), never by arbitrary CSS ──
+  console.log("token theming");
+  {
+    const SHOTS3 = process.env.REVIEW_SHOTS3 || SHOTS;
+    mkdirSync(SHOTS3, { recursive: true });
+    const BRAND = ":root { --brand-primary: rgb(11, 107, 58); --error: rgb(138, 28, 124); --accent: rgb(200, 60, 0); --r-lg: 6px; --r-sm: 2px; --f-sans: serif; --ink: rgb(20, 20, 40); --card: rgb(252, 250, 244); }";
+    for (const [w, h] of [[1280, 900], [390, 844]]) {
+      const a = await open({ width: w, height: h, theme: BRAND });
+      await a.pg.evaluate(() => document.querySelector('[data-testid="go-revert"]').click());
+      await a.pg.waitForSelector("dialog[open]", { state: "attached" }); await sleep(500);
+      const c = await a.pg.evaluate(() => { const y = __dq('dialog [data-testid="confirm-yes"]'), d = __dq("dialog[open]"), cs = (e) => getComputedStyle(e); return { yes: cs(y).backgroundColor, rad: cs(d).borderTopLeftRadius, font: cs(d).fontFamily, ink: cs(__dq(".dlg__title")).color, card: cs(d).backgroundColor }; });
+      check("branded tokens at " + w + ": --brand-primary / --ink / --card / --r-lg / generic --f-sans reach the confirmation dialog", c.yes === "rgb(11, 107, 58)" && c.rad === "6px" && /serif/.test(c.font) && c.ink === "rgb(20, 20, 40)" && c.card === "rgb(252, 250, 244)", JSON.stringify(c));
+      await a.pg.screenshot({ path: join(SHOTS3, "themed-confirm-" + w + ".png") });
+      await a.pg.locator("dialog [data-testid=confirm-yes]").click({ trial: true }).catch(() => {});
+      await a.pg.keyboard.press("Escape");
+      await a.pg.waitForFunction(() => !__dq("dialog[open]"));
+      await sleep(400); // the action finishes (and releases the one-dialog gate) just after the dialog closed
+      await a.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+      await a.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached", timeout: 8000 }).catch(async () => { console.log("DBG out:", await a.pg.locator(T("out")).textContent()); }); await sleep(500); await waitImages(a.pg, 1);
+      const r = await a.pg.evaluate(() => { const y = __dq('dialog [data-testid="confirm-yes"]'); return getComputedStyle(y).backgroundColor; });
+      check("branded tokens at " + w + ": the review's approve button uses --error", r === "rgb(138, 28, 124)", r);
+      await a.pg.screenshot({ path: join(SHOTS3, "themed-review-" + w + ".png") });
+      await a.ctx.close();
+    }
+    const bad = await open({ width: 1280, height: 900, theme: ":root { --ink: rgb(250, 250, 250); --card: rgb(255, 255, 255); --error: rgb(255, 255, 255); --brand-primary: rgb(254, 254, 254); --accent: rgb(255, 255, 255); --f-sans: 'Some Named Font', serif; --r-lg: 400px; } @keyframes t { to { --ink: rgb(255,255,255); } }" });
+    await bad.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+    await bad.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" }); await sleep(500);
+    const b = await bad.pg.evaluate(() => { const d = __dq("dialog[open]"), cs = (e) => getComputedStyle(e); return { ink: cs(__dq(".dlg__title")).color, card: cs(d).backgroundColor, yes: cs(__dq('dialog [data-testid="confirm-yes"]')).backgroundColor, font: cs(d).fontFamily, rad: cs(d).borderTopLeftRadius }; });
+    check("hostile tokens (white on white, white buttons, a named font, a 400px radius) are ignored: the defaults keep the dialog readable", b.ink === "rgb(28, 28, 30)" && b.card === "rgb(255, 255, 255)" && b.yes === "rgb(179, 38, 30)" && !/Some Named Font/.test(b.font) && b.rad === "16px", JSON.stringify(b));
+    await bad.ctx.close();
+    // tokens that turn hostile LATER (keyframes on :root) are caught by the 250 ms re-read and by the approve-time check
+    const late = await open({ width: 1280, height: 900, theme: "@keyframes tk { to { --ink: rgb(255, 255, 255); --card: rgb(255, 255, 255); } } :root:has([data-core]) { animation: tk 1ms 400ms forwards; }" });
+    await late.pg.evaluate(() => document.querySelector('[data-testid="go-review"]').click());
+    await late.pg.waitForSelector("dialog[open] .dlg-rv", { state: "attached" }); await sleep(1500);
+    const lt = await late.pg.evaluate(() => getComputedStyle(__dq(".dlg__title")).color);
+    check("tokens made hostile later (keyframes) are re-validated within 250 ms: the text stays dark", lt === "rgb(28, 28, 30)", lt);
+    await late.ctx.close();
   }
 
   // ── 15. only a real person approves: scripted ticks and scripted clicks send nothing ──
@@ -756,6 +792,7 @@ try {
   failures++; console.error("  FAIL test crashed:", e && e.stack || e);
 } finally {
   await browser.close();
+  await rawBrowser.close();
   server.close();
 }
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall checks passed");
