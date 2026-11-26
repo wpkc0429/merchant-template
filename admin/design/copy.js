@@ -808,7 +808,7 @@ export default {
   "cf.image.done": "已上傳。",
   "cf.image.failed": "上傳失敗，請再試一次。",
 
-  // Version preview (core 0.4.0). vp.limits is FIXED by the core (lib/fixed-text.js): it is shown even if design/copy.js changes it.
+  // Version preview (core 0.4.0). The limits text next to the preview button is FIXED by the core (lib/fixed-text.js).
   "vp.title": "版本預覽",
   "vp.eyebrow": "DESIGN HISTORY",
   "vp.button": "預覽此版本",
@@ -833,5 +833,4 @@ export default {
   "vp.err.hourlyCap": "你這個小時的預覽次數已用完，請約 {minutes} 分鐘後再試。",
   "vp.err.dailyCap": "本店今天的預覽次數已用完，請約 {minutes} 分鐘後再試。",
   "err.readOnly": "預覽畫面是唯讀的，不能儲存任何變更。",
-  "vp.limits": "版本預覽是用「目前的核心與目前的資料」即時畫出來、用來幫你決定的畫面，不是那一版當時被核准內容的紀錄：它可能和那一版當時的樣子不同，會在到期後消失，也不會被保存。歷史紀錄以並排截圖為準。預覽是唯讀的，不能儲存任何變更。",
 };

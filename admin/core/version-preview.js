@@ -8,16 +8,17 @@ import { session } from "../lib/session.js";
 import { ApiError } from "../lib/api.js";
 import * as vp from "../lib/versionpreview.js";
 import { t } from "../lib/design.js";
-import { allowImageOrigin } from "../ui/kit.js";
+import { allowPreviewLinkOrigin } from "../ui/kit.js";
 import { need } from "./guard.js";
 import { ActionError, denied } from "./errors.js";
 
 const S = () => session.shopID;
 const gone = () => new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
 const requireId = (v) => { if (!vp.isId(v)) throw gone(); };
-// A ready preview's origin (scheme + host, checked in lib/versionpreview.js) may be used as a link target by the screens: the safe DOM
-// builder drops hrefs to unknown origins, so the core registers exactly this one. (The CSP still decides what any page may load.)
-const shown = (p) => { if (p.origin) allowImageOrigin(p.origin); return p; };
+// A ready preview's origin (https, scheme + host, checked in lib/versionpreview.js) may be used as a LINK target (href only, not an image
+// source) by the screens: the safe DOM builder drops hrefs to unknown origins, so the core registers exactly this one in a single slot
+// that the next preview replaces. The global image/link allowlist is not touched. (The CSP still decides what any page may load.)
+const shown = (p) => { if (p.origin) allowPreviewLinkOrigin(p.origin); return p; };
 const detailOf = (e) => String(e.body?.error?.message || "").slice(0, 300);
 
 /** ApiError -> ActionError. 409 reasons and 429 caps keep their machine code in `reason`; 429 carries `retryAfter` (seconds). Anything else is returned untouched. */

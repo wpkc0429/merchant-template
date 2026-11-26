@@ -14,13 +14,14 @@ export const fetchVersionPreview = (shopID, previewId) => api("GET", `${base(sho
 const RULE_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 const ACTIVE = new Set(["queued", "claimed", "ready"]);
 
-/** An origin the browser may be sent to: scheme + host only (no path, query, fragment or credentials), https (http only for localhost). "" otherwise. */
+/** An origin the browser may be sent to: https only, scheme + host only (no path, query, fragment or credentials), a real DNS name (a dot inside, no trailing dot, no IP literal). "" otherwise. */
 export function safeOrigin(v) {
   try {
     const u = new URL(String(v));
-    const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
-    if (!(u.protocol === "https:" || (u.protocol === "http:" && local))) return "";
+    if (u.protocol !== "https:") return "";
     if (u.username || u.password || u.search || u.hash || (u.pathname && u.pathname !== "/")) return "";
+    const host = u.hostname;
+    if (!host.includes(".") || host.endsWith(".") || host.startsWith("[") || /^[0-9.]+$/.test(host)) return "";
     return u.origin;
   } catch { return ""; }
 }

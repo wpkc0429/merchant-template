@@ -3,7 +3,7 @@
 // A real-nginx run was done by hand when this was written (see docs/CORE-CHANGELOG.md v0.3.0); these tests keep the properties.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -101,11 +101,54 @@ describe('start-up checks (deploy/require-origins.sh)', () => {
     const f = path.join(dir, 'preview-config.js');
     const go = (env) => spawnSync('sh', ['-c', script], { env: { PATH: process.env.PATH, OUTFILE: f, ...env }, encoding: 'utf8' });
     try {
-      assert.equal(go({}).status, 0); assert.match(readFileSync(f, 'utf8'), /preview = null;/);
+      assert.equal(go({}).status, 0); assert.match(readFileSync(f, 'utf8'), /preview = null;\nwindow\.ADMIN_CONFIG\.previewConfig = true;\n$/);
       assert.equal(go({ ADMIN_PREVIEW_MODE: 'version', ADMIN_PREVIEW_TAG: 'design-2026-10-01', ADMIN_PREVIEW_EXPIRES: '2026-11-27T12:00:00Z' }).status, 0);
-      assert.match(readFileSync(f, 'utf8'), /preview = \{"kind":"version","tag":"design-2026-10-01","expiresAt":"2026-11-27T12:00:00Z"\};/);
+      assert.match(readFileSync(f, 'utf8'), /preview = \{"kind":"version","tag":"design-2026-10-01","expiresAt":"2026-11-27T12:00:00Z"\};\nwindow\.ADMIN_CONFIG\.previewConfig = true;\n$/);
       for (const bad of [{ ADMIN_PREVIEW_MODE: 'x' }, { ADMIN_PREVIEW_MODE: 'change', ADMIN_PREVIEW_TAG: 'a"; alert(1)' }, { ADMIN_PREVIEW_MODE: 'change', ADMIN_PREVIEW_EXPIRES: 'tomorrow' }]) assert.notEqual(go(bad).status, 0, JSON.stringify(bad));
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test('newline and control characters are refused everywhere (a per-line grep would pass them) and nothing is written', { skip }, () => {
+    const script = readFileSync(path.join(DEPLOY, 'preview-config.sh'), 'utf8').replace('/usr/share/nginx/html/preview-config.js', '$OUTFILE');
+    const dir = mkdtempSync(path.join(tmpdir(), 'pvc-'));
+    const f = path.join(dir, 'preview-config.js');
+    const go = (env) => spawnSync('sh', ['-c', script], { env: { PATH: process.env.PATH, OUTFILE: f, ...env }, encoding: 'utf8' });
+    const evil = ['ok\n"};alert(1);//', 'ok\n', '\nok', 'a\tb', 'a\rb', 'a\x01b', 'a\x1bb', 'a\x7fb', 'aéb'];
+    const good = { ADMIN_PREVIEW_MODE: 'version', ADMIN_PREVIEW_TAG: 'design-1', ADMIN_PREVIEW_EXPIRES: '2026-11-27T12:00:00Z' };
+    try {
+      for (const v of evil) {
+        for (const k of ['ADMIN_PREVIEW_MODE', 'ADMIN_PREVIEW_TAG', 'ADMIN_PREVIEW_EXPIRES']) {
+          const r = go({ ...good, [k]: k === 'ADMIN_PREVIEW_EXPIRES' ? '2026-11-27T12:00:00Z' + v : v });
+          assert.notEqual(r.status, 0, `${k} accepted ${JSON.stringify(v)}`);
+          assert.match(r.stderr, /ADMIN_PREVIEW_/);
+        }
+        assert.equal(existsSync(f), false, 'nothing may be written for a bad value');
+      }
+      assert.equal(go(good).status, 0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test('preview mode aborts when the config cannot be written, and the file always ends with the completeness marker', { skip }, () => {
+    const script = readFileSync(path.join(DEPLOY, 'preview-config.sh'), 'utf8').replace('/usr/share/nginx/html/preview-config.js', '$OUTFILE');
+    const dir = mkdtempSync(path.join(tmpdir(), 'pvc-'));
+    const go = (out, env) => spawnSync('sh', ['-c', script], { env: { PATH: process.env.PATH, OUTFILE: out, ...env }, encoding: 'utf8' });
+    try {
+      for (const env of [{ ADMIN_PREVIEW_MODE: 'version', ADMIN_PREVIEW_TAG: 'design-1' }, {}]) {
+        const r = go(path.join(dir, 'no-such-dir', 'preview-config.js'), env);
+        assert.notEqual(r.status, 0, 'writing into a missing directory must abort');
+        assert.match(r.stderr, /cannot write/);
+      }
+      const f = path.join(dir, 'ok.js');
+      assert.equal(go(f, { ADMIN_PREVIEW_MODE: 'change' }).status, 0);
+      assert.ok(readFileSync(f, 'utf8').trimEnd().endsWith('window.ADMIN_CONFIG.previewConfig = true;'));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test('require-origins refuses a newline or control character in any origin', { skip }, () => {
+    for (const k of ['ADMIN_IMG_ORIGIN', 'ADMIN_UPLOAD_ORIGIN', 'ADMIN_SITE_ORIGIN']) {
+      for (const tail of ['\nx', '\n', '\n"; return 200', '\t', '\r', '\x01']) {
+        const r = run({ ...base, [k]: base[k] + tail });
+        assert.notEqual(r.status, 0, `${k} accepted ${JSON.stringify(tail)}`);
+        assert.match(r.stderr, new RegExp(k));
+      }
+    }
   });
   test('the Dockerfile installs the check and the resolver script', () => {
     const d = readFileSync(path.join(DEPLOY, 'Dockerfile'), 'utf8');

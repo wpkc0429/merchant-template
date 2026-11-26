@@ -808,7 +808,7 @@ export default {
   "cf.image.done": "已上傳。",
   "cf.image.failed": "上傳失敗，請再試一次。",
 
-  // Version preview (core 0.4.0). vp.limits is FIXED by the core (lib/fixed-text.js): it is shown even if design/copy.js changes it.
+  // Version preview (core 0.4.0). The limits text next to the preview button is FIXED by the core (lib/fixed-text.js).
   "vp.title": "版本預覽",
   "vp.eyebrow": "DESIGN HISTORY",
   "vp.button": "預覽此版本",

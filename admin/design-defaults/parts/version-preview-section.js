@@ -4,7 +4,9 @@
 //     with `reason`: revert_below_core_floor, already_current, hourly_cap_reached, daily_cap_reached; `retryAfter` in seconds).
 //   * the states waiting / ready / failed (with failureRuleIds) / expired come from ctx.data.getVersionPreview(id), polled while waiting.
 //   * the limits text is FIXED and core-owned (t("vp.limits"): copy cannot change it); keep it next to the button.
-//   * "改成這個版本" is shown only to people who hold design.revert and only leads INTO the existing revert flow via onRevert(requestId):
+//   * "改成這個版本" is NOT rendered unless the caller passes onRevert. The default view does not pass it: its target (the history list and
+//     the restore flow T1-T4) does not exist yet, so a button would lead to notFound. Pass onRevert when that route exists.
+//     When passed it is shown only to people who hold design.revert and only leads INTO the existing revert flow via onRevert(requestId):
 //     a preview is not an approval and shortens nothing.
 const POLL_MS = 3000;
 const POLL_MAX = 100; // about 5 minutes, then the person can press the button again

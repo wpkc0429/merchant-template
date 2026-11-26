@@ -3,9 +3,15 @@
 # into nginx.conf, so anything that is not a plain origin must stop the container with a clear message instead of producing a
 # broken or injectable config.
 fail() { echo "admin: $1" >&2; exit 1; }
+# A value with a newline or any control character is refused first: grep -E works line by line, so "https://a.b<newline>x" would pass it.
+clean() { [ "$(printf '%s' "$1" | LC_ALL=C tr -d '[:print:]' | wc -c | tr -d ' ')" = "0" ]; }
 : "${ADMIN_IMG_ORIGIN:?set ADMIN_IMG_ORIGIN (image public origin)}"
 : "${ADMIN_UPLOAD_ORIGIN:?set ADMIN_UPLOAD_ORIGIN (R2/S3 direct-upload origin)}"
 : "${ADMIN_SITE_ORIGIN:?set ADMIN_SITE_ORIGIN (storefront origin: content preview and content.schema.json)}"
+for v in ADMIN_IMG_ORIGIN ADMIN_UPLOAD_ORIGIN ADMIN_SITE_ORIGIN; do
+  eval "val=\${$v}"
+  clean "$val" || fail "$v has a newline or control character"
+done
 # Image and upload origins: scheme://host[:port], nothing else (no path, quotes, semicolons, spaces, $ or braces).
 for v in ADMIN_IMG_ORIGIN ADMIN_UPLOAD_ORIGIN; do
   eval "val=\${$v}"

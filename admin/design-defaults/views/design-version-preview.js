@@ -8,5 +8,5 @@ export default async function designVersionPreview(root, ctx) {
   const requestId = ctx.route.params.id;
   root.append(
     pageHeader(ctx.t("vp.title"), { eyebrow: ctx.t("vp.eyebrow") }),
-    card(versionPreviewSection(ctx, { requestId, onRevert: (id) => ctx.navigate(`/design/${id}`) })));
+    card(versionPreviewSection(ctx, { requestId })));
 }

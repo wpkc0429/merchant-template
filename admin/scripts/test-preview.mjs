@@ -83,7 +83,7 @@ const { FIXED_COPY } = await imp("lib/fixed-text.js");
 const { ActionError } = await imp("core/errors.js");
 const banner = await imp("ui/preview-banner.js");
 const defaults = (await imp("design-defaults/copy.js")).default;
-const origWarn = console.warn; console.warn = () => {}; await loadDesign(); console.warn = origWarn;
+await loadDesign();
 tokens.set({ access_token: "test-token" });
 session.shopID = 7;
 const RID = "11111111-2222-4333-8444-555555555555";
@@ -94,7 +94,13 @@ const as = (who) => setPermissions(perms[who]);
 
 // ── mode ──
 ok("preview mode matches the host config", PREVIEW ? (isReadOnly() && previewMode.kind === PREVIEW && previewMode.tag === "design-2026-11-01") : (!isReadOnly() && previewMode === null));
-ok("fixed limits text: built-in copy equals the fixed text", defaults["vp.limits"] === FIXED_COPY["vp.limits"] && t("vp.limits") === FIXED_COPY["vp.limits"]);
+ok("fixed limits text: built-in copy equals the fixed text, t() answers it from the core", defaults["vp.limits"] === FIXED_COPY["vp.limits"] && t("vp.limits") === FIXED_COPY["vp.limits"]);
+{
+  const copySrc = (await import("node:fs")).readFileSync(path.join(ROOT, "design/copy.js"), "utf8");
+  ok("design/copy.js does not mention vp.limits", !copySrc.includes("vp.limits"));
+  const warns = []; const w0 = console.warn; console.warn = (...a) => warns.push(a.join(" ")); await loadDesign(); console.warn = w0;
+  ok("loading the default design prints no console warning", warns.length === 0, warns.join(" | "));
+}
 {
   const ctx = makeContext({ routeId: "home" });
   ok("ctx exposes the two new functions", typeof ctx.actions.requestVersionPreview === "function" && typeof ctx.data.getVersionPreview === "function");
@@ -126,9 +132,43 @@ if (!PREVIEW) {
   reset(); on("GET", `/design/version-previews/${PID}`, { body: apiPreview({ status: "ready", ready_at: "2026-11-26T10:01:00Z", origin: "https://p-1.preview.example" }) });
   const r = await data.getVersionPreview(PID);
   ok("ready with a plain https origin: origin handed over", r.state === "ready" && r.origin === "https://p-1.preview.example");
-  for (const o of ["https://p.example/path", "https://p.example/?q=1", "https://p.example/#x", "http://p.example", "javascript:alert(1)", "https://u:p@p.example", "ftp://p.example", "not a url"]) {
+  for (const o of ["https://p.example/path", "https://p.example/?q=1", "https://p.example/#x", "http://p.example", "http://localhost:3000", "http://127.0.0.1", "http://[::1]", "https://localhost.", "https://p.example.", "https://localhost", "https://127.0.0.1", "https://[::1]", "javascript:alert(1)", "https://u:p@p.example", "ftp://p.example", "not a url"]) {
     reset(); on("GET", "/version-previews/", { body: apiPreview({ status: "ready", origin: o }) });
     ok(`origin ${o} dropped`, (await data.getVersionPreview(PID)).origin === "");
+  }
+  {
+  // the preview link may be opened without widening the global image allowlist
+  const kit = await imp("ui/kit.js");
+  const mkEl = () => g.document.createElement("a");
+  g.document.createElement = (t) => { const e = new FakeEl(t); e.addEventListener = () => {}; e.append = (...c) => { e.children.push(...c); }; return e; };
+  g.location.href = "http://localhost:3001/";
+  kit.allowPreviewLinkOrigin("https://p-9.preview.example");
+  const link = (u) => kit.h("a", { href: u }); const img = (u) => kit.h("img", { src: u });
+  const w0 = console.warn; console.warn = () => {};
+  ok("preview origin works as a link href", link("https://p-9.preview.example/x").attrs.has("href"));
+  ok("preview origin is NOT an image source", !img("https://p-9.preview.example/x.png").attrs.has("src"));
+  ok("another https origin is still refused as a link", !link("https://other.example/").attrs.has("href"));
+  kit.allowPreviewLinkOrigin("https://p-10.preview.example");
+  ok("a newer preview replaces the old one (single slot)", !link("https://p-9.preview.example/").attrs.has("href") && link("https://p-10.preview.example/").attrs.has("href"));
+  console.warn = w0; void mkEl;
+  }
+  {
+  // the "改成這個版本" button: implemented, but only rendered when the caller passes onRevert; the default view does not (no target route yet)
+  const { versionPreviewSection } = await imp("design/parts/version-preview-section.js");
+  const node = (tag, attrs, ...kids) => { const n = { tag, attrs: attrs || {}, kids: kids.flat(Infinity), append(...c) { n.kids.push(...c.flat(Infinity)); } }; return n; };
+  const find = (n, id) => (n && typeof n === "object" ? (n.attrs && n.attrs["data-testid"] === id ? n : (n.kids || []).map((k) => find(k, id)).find(Boolean)) : null);
+  const mkctx = () => ({ ui: { h: node, clear: (b) => { b.kids = []; }, button: (label, o) => node("button", o, label), busy() {}, toast() {}, badge: (x) => node("span", {}, x), loading: (x) => node("div", {}, x) },
+    t: (k) => k, data: {}, actions: {}, can: () => true, format: { dateTime: String }, errorMessage: String, alive: () => true });
+  const body = (box) => { const b = find(box, "vp-body"); return b; };
+  const withoutCb = versionPreviewSection(mkctx(), { requestId: RID });
+  const calls2 = []; const withCb = versionPreviewSection(mkctx(), { requestId: RID, onRevert: (id) => calls2.push(id) });
+  ok("no onRevert (default view): the revert CTA is not rendered", !find(withoutCb, "vp-revert") && !!find(withoutCb, "vp-limits"));
+  ok("with onRevert: the CTA renders and calls it with the request id", (() => { const b = find(withCb, "vp-revert"); if (!b) return false; b.attrs.onClick(); return calls2.join() === RID; })());
+  const noPerm = mkctx(); noPerm.can = () => false;
+  ok("with onRevert but without design.revert: not rendered", !find(versionPreviewSection(noPerm, { requestId: RID, onRevert() {} }), "vp-revert"));
+  const viewSrc = (await import("node:fs")).readFileSync(path.join(ROOT, "design/views/design-version-preview.js"), "utf8");
+  const viewSrc2 = (await import("node:fs")).readFileSync(path.join(ROOT, "design-defaults/views/design-version-preview.js"), "utf8");
+  ok("the default views do not pass onRevert (target route does not exist yet)", !/onRevert/.test(viewSrc) && !/onRevert/.test(viewSrc2)); void body;
   }
   reset(); on("GET", "/version-previews/", { body: apiPreview({ status: "queued" }) });
   ok("another member (no origin key): waiting, origin empty", (await data.getVersionPreview(PID)).origin === "");

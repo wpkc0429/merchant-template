@@ -35,7 +35,7 @@ export async function loadDesign() {
     const mod = await import(`${DESIGN}copy.js`);
     const r = validateCopy(mod.default, defaultCopy);
     copy = r.copy;
-    for (const k of Object.keys(FIXED_COPY)) if (k in copy) { delete copy[k]; warn(`copy: "${k}" is a FIXED core text and cannot be changed in design/copy.js; the core's text is shown`); }
+    for (const k of Object.keys(FIXED_COPY)) if (k in copy) { const own = mod.default && Object.hasOwn(mod.default, k); delete copy[k]; if (own) warn(`copy: "${k}" is a FIXED core text and cannot be changed in design/copy.js; the core's text is shown`); }
     r.warnings.forEach((w) => warn(w));
     (r.retired || []).forEach((w) => warn(w));
   } catch (e) { warn("design/copy.js could not be loaded; using the built-in copy", e); copy = {}; }
