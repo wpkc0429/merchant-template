@@ -5,7 +5,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ECOM="${ECOMMERCE_DIR:-$(cd "$HERE/../../.." && pwd)/ecommerce}"
+ECOM="${PLATFORM_DIR:-$(cd "$HERE/../../.." && pwd)/ecommerce}"
 DB=merchant_template_dev
 
 set -a

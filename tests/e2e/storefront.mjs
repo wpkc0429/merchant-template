@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 const SITE = process.env.E2E_STOREFRONT_URL || 'http://localhost:8788';
 const API = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:8180';
 const OUT = process.env.E2E_OUT || resolve(tmpdir(), 'merchant-template-shots');
-const ECOM = process.env.ECOMMERCE_DIR || resolve(import.meta.dirname, '../../../ecommerce');
+const ECOM = process.env.PLATFORM_DIR || resolve(import.meta.dirname, '../../../ecommerce');
 const SECRET = process.env.E2E_MOCK_WEBHOOK_SECRET || 'e2e-mock-webhook-secret-for-throwaway-stack-only-0001';
 mkdirSync(OUT, { recursive: true });
 const { chromium } = createRequire(resolve(ECOM, 'e2e/package.json'))('playwright');

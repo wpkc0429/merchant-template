@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 export const API = process.env.E2E_API_BASE_URL || "http://127.0.0.1:8180";
 export const SITE = process.env.E2E_SITE_URL || "http://localhost:3001";
 export const OUT = process.env.E2E_OUT || resolve(import.meta.dirname, "out");
-export const ECOMMERCE = process.env.ECOMMERCE_DIR || resolve(import.meta.dirname, "../../../ecommerce");
+export const ECOMMERCE = process.env.PLATFORM_DIR || resolve(import.meta.dirname, "../../../ecommerce");
 
 export const OWNER = { email: "demo-owner@example.com", password: process.env.E2E_OWNER_PASSWORD || "demo-owner-change-me" };
 export const STAFF = { email: "demo-staff@example.com", password: process.env.E2E_STAFF_PASSWORD || "demo-staff-change-me" };

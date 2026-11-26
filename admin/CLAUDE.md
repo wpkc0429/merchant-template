@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-商家後台：繁體中文，無建置的靜態站（原生 ES modules），透過 `../../ecommerce`（平台 repo）的後台 API 運作。**本目錄是商家 repo／範本的 `admin/`**（店面在上層的 `public/`，由根目錄的 `CLAUDE.md` 管；兩種工作階段的規則——設計層 vs 鎖定核心——也在那裡）。設計語彙來自店面（`../public/styles.css` 的 tokens）。**不要修改 ecommerce**，後台工作階段也不要動店面（`../public/`、`../scripts/`）；發現 API 缺口或 bug 只描述、不修。以下指令一律在 `admin/` 目錄下執行；範圍規則的根目錄入口是 `node ../scripts/check-scope.mjs admin --base <ref>`（AI 只能改 `admin/design/**`）。README.md 有結構、執行、測試、部署的完整說明，這裡只記慣例。
+商家後台：繁體中文，無建置的靜態站（原生 ES modules），透過平台 checkout 的後台 API 運作。**本目錄是商家 repo／範本的 `admin/`**（店面在上層的 `public/`，由根目錄的 `CLAUDE.md` 管；兩種工作階段的規則——設計層 vs 鎖定核心——也在那裡）。設計語彙來自店面（`../public/styles.css` 的 tokens）。**不要修改 ecommerce**，後台工作階段也不要動店面（`../public/`、`../scripts/`）；發現 API 缺口或 bug 只描述、不修。以下指令一律在 `admin/` 目錄下執行；範圍規則的根目錄入口是 `node ../scripts/check-scope.mjs admin --base <ref>`（AI 只能改 `admin/design/**`）。README.md 有結構、執行、測試、部署的完整說明，這裡只記慣例。
 
 ## 指令
 
@@ -14,7 +14,7 @@ node e2e/run.mjs                                         # 端對端（含 e2e/d
 node e2e/parity.mjs capture <dir> | compare <a> <b>      # 390／1280 逐頁截圖與逐像素比對
 ```
 
-沒有 build、沒有 npm 相依、沒有 linter。Playwright 借用 `../../ecommerce/e2e/node_modules`（`ecommerce` 與本 repo 同層；可用 `ECOMMERCE_DIR` 覆寫）。`check-design.mjs --base` 在子目錄 `admin/` 內運作：admin 以外的任何變更（店面、repo 根）一律算範圍違規。
+沒有 build、沒有 npm 相依、沒有 linter。Playwright 借用平台 checkout 的 `e2e/node_modules`（用 `PLATFORM_DIR` 指定；或用 `PLAYWRIGHT_DIR` 指定 Playwright 所在資料夾）。`check-design.mjs --base` 在子目錄 `admin/` 內運作：admin 以外的任何變更（店面、repo 根）一律算範圍違規。
 
 ## 分層規則：鎖定的核心 vs 設計層
 
@@ -66,6 +66,6 @@ node e2e/parity.mjs capture <dir> | compare <a> <b>      # 390／1280 逐頁截�
 - 訪客結帳也有限流（`RATE_LIMIT_GUEST_CHECKOUT_*`），拋棄式 API 要調高；webhook 簽章用 `E2E_MOCK_WEBHOOK_SECRET`。
 
 - 套件登入次數多，拋棄式 API 要調高登入限流；每次跑前清 Redis DB 1。
-- 絕不碰主 `ecommerce` 資料庫、使用者的 tunnel／Cloudflare；絕不 `docker compose down -v`。
+- 絕不碰主平台資料庫、使用者的 tunnel／Cloudflare；絕不 `docker compose down -v`。
 - 截圖放 scratchpad／`E2E_OUT`，不進 git。
 - e2e 要用 `http://localhost:3001`（MinIO CORS）；`e2e/design.mjs` 會暫時改 `design/` 的檔案並在結束時還原，跑到一半被殺掉要用 `git status design` 檢查並還原。

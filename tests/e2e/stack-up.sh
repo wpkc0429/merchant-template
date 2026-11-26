@@ -13,7 +13,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ECOM="${ECOMMERCE_DIR:-$(cd "$HERE/../../.." && pwd)/ecommerce}"
+ECOM="${PLATFORM_DIR:-$(cd "$HERE/../../.." && pwd)/ecommerce}"
 RUN="${E2E_RUN_DIR:-${TMPDIR:-/tmp}/merchant-template-e2e}"
 DB=merchant_template_dev
 PORT=8180

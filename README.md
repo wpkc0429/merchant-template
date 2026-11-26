@@ -79,6 +79,8 @@ python3 -m http.server 8080 --directory public
 cd admin && node scripts/serve.mjs --proxy http://127.0.0.1:8080
 ```
 
+Dev servers and preview mode: the admin treats every host that is not `localhost`, `127.0.0.1` or `[::1]` as a deployed host that must serve `preview-config.js` (written by the official nginx image). A host that is neither (for example `serve.mjs` reached through an internal IP or a custom hostname) counts as "preview config missing": the page is locked read-only and the app stops with a notice. Run dev servers on `localhost:3001` (or `127.0.0.1`), or use the official image for any other host name. See `admin/README.md`.
+
 For a throwaway API and the end-to-end suites see `admin/README.md` ("測試"); never use the production database.
 
 ## Layout

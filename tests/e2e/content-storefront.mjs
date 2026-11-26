@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 const API_PORT = Number(process.env.E2E_FAKE_API_PORT || 8790), SITE_PORT = Number(process.env.E2E_SITE_PORT || 8789);
 const API = `http://127.0.0.1:${API_PORT}`, SITE = `http://localhost:${SITE_PORT}`;
 const OUT = process.env.E2E_OUT || resolve(tmpdir(), 'merchant-template-content-shots');
-const ECOM = process.env.ECOMMERCE_DIR || resolve(import.meta.dirname, '../../../ecommerce');
+const ECOM = process.env.PLATFORM_DIR || resolve(import.meta.dirname, '../../../ecommerce');
 mkdirSync(OUT, { recursive: true });
 const { chromium } = createRequire(resolve(ECOM, 'e2e/package.json'))('playwright');
 

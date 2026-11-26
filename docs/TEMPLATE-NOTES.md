@@ -112,7 +112,7 @@ Behaviour of the locked code is unchanged except for the items marked **(behavio
 * `import-catalog.mjs` reads JSON only (no CSV), never deletes, and detects "image already uploaded" by file name only
   (replacing a photo under the same name is not detected).
 * Placeholder prices, copy and images are placeholders. Never ship the sample catalogue to a real shop.
-* The sample admin e2e needs a platform checkout next to this repo (`../ecommerce`, override `ECOMMERCE_DIR`) and a
+* The sample admin e2e needs a platform checkout next to this repo (override its location with `PLATFORM_DIR`) and a
   throwaway stack; the full multi-section run takes 40+ minutes.
 
 ## 4. Open decisions
@@ -155,8 +155,8 @@ Items 1 to 3 were decided on 2026-11-25 (docs/DECISIONS.md D5): merchants are cr
 
 ## 5. Running the browser tests on a throwaway stack
 
-Never against the main `ecommerce` database, the tunnel or Cloudflare; never `docker compose down -v`. Needs the
-platform checkout next to this repo (`../ecommerce`, or `ECOMMERCE_DIR`) with its docker-compose infra running.
+Never against the main platform database, the tunnel or Cloudflare; never `docker compose down -v`. Needs the
+platform checkout next to this repo (set `PLATFORM_DIR`) with its docker-compose infra running.
 
 ```bash
 bash tests/e2e/stack-up.sh                      # DB merchant_template_dev, migrate + seed -demo, API on 127.0.0.1:8180 (REDIS_DB=1, mock payments)

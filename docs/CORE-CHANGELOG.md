@@ -13,6 +13,18 @@ Format rules (the sync script parses them):
   until the human passes `--ack-design-actions`. Write `Design-layer action: none` (or omit the line) when no action
   is needed. Additions to the two `public-api.json` files are also detected automatically.
 
+## v0.4.1
+
+Banner hardening (low findings of the independent review of v0.4.0). Human-reviewed core change; manifests re-locked with `--update` on the branch `core/banner-hardening-0.4.1`; nothing is tagged.
+
+Design-layer action: none
+
+* `admin/ui/preview-banner.js`: the banner is rendered in the browser top layer (Popover API, `popover="manual"` + `showPopover()`), so no z-index, fixed overlay or `body::after` can cover it, including `pointer-events:none` overlays that `elementFromPoint` cannot see. The popover UA styles are overridden by the core's `!important` styles (same bar, same text); a cosmetic spacer keeps page content below the bar. A closed popover (`hidePopover()`) or a removed or changed `popover` attribute is detected (also through the `toggle` event) and rebuilt under the existing rebuild cap, then fail closed once. A modal `<dialog>` or another top-layer element is handled by re-raising the banner (no rebuild); the hit-test is skipped while a modal is open because inert nodes are not hit-testable. Without the Popover API the old behaviour stays and an interval scan also looks for fixed/absolute elements and `body`/`html` pseudo-elements painted over the bar.
+* Re-review fix (same version): raising the banner above a modal dialog / popover now happens at once on DOM, `toggle` and `close` events (not only on the 1 s timer), only when a top-layer element appeared that the banner is not already above (no churn while a legitimate modal stays open), and every raise counts in the rebuild window (4 per 3 s, then fail closed once), so a design layer that keeps closing and re-opening full-screen modals or popovers ends in one fail-closed instead of covering the banner. Ordinary confirm dialogs (`ui/kit.js`) keep working.
+* `admin/e2e/preview-banner.mjs`: new cases (pointer-events:none div and `body::after`, clickable overlays, modal dialog, normal confirm dialogs, showModal / popover=manual loops every 40 ms, `hidePopover()` and attribute removal, a `hidePopover()` loop, and the whole overlay set again with the Popover API removed), new 390 and 1280 screenshots, and a pixel check of what is painted.
+* Docs: an admin host that is not the official nginx image and not `localhost`, `127.0.0.1` or `[::1]` is treated as "preview config missing" and locked read-only (README, admin/README). The test and docs use `PLATFORM_DIR` / `PLAYWRIGHT_DIR` and "a platform checkout" (the env var of the platform e2e scripts is now `PLATFORM_DIR`).
+* No guard rule was changed; the ctx surface is unchanged.
+
 ## v0.4.0
 
 Version preview (platform change design-history, D25; decision D11 in docs/DECISIONS.md). Human-reviewed core change: the manifests were re-locked with `--update` on the branch `core/version-preview-0.4.0`; nothing is tagged. The owner approved exactly two new ctx functions (option A); nothing else was added to ctx.
@@ -31,7 +43,7 @@ Design-layer action: deploy (host, not design layer): a preview host must start 
 Review fixes (same version, before merge; PR #2 review "fix before merge"):
 
 * Banner: styles are compared with the browser's own serialization (a detached probe element), not the strings written (they were always "not intact" in real browsers, which failed closed on every preview page and looped the MutationObserver); re-entrancy flag, rebuild rate limit (4 per 3 s, then fail closed once, observers and timer stopped), observer throttled (animation frame, at most one check per 200 ms) and scoped to html/body/head/banner. `visible()` also checks ancestors (opacity, filter, transform, clip-path, mask, content-visibility), `text-indent`, `-webkit-text-fill-color`, font size, text/background colour, `::before`/`::after`/`::first-line`, geometry and `document.elementFromPoint` (covered). More fixed styles are `!important` in the CSSOM. No guard rule changed; limitation: a covering element with `pointer-events: none` is not seen by `elementFromPoint`.
-* Real-browser test: `admin/e2e/preview-banner.mjs` (Playwright from `$PLAYWRIGHT_DIR` or the sibling `ecommerce/e2e`; skips cleanly when absent; run by `tests/preview-banner-browser.test.mjs`): normal page, preview page (390 and 1280 screenshots), config missing, repairable tampering, attacks that fail closed exactly once.
+* Real-browser test: `admin/e2e/preview-banner.mjs` (Playwright from `$PLAYWRIGHT_DIR`; skips cleanly when absent; run by `tests/preview-banner-browser.test.mjs`): normal page, preview page (390 and 1280 screenshots), config missing, repairable tampering, attacks that fail closed exactly once.
 * Deploy: `preview-config.sh` and `require-origins.sh` refuse any newline or control character (the per-line grep passed `ok
 "};alert(1);//`), preview-config.sh aborts when it cannot write, and the file ends with the marker `window.ADMIN_CONFIG.previewConfig = true;`. `lib/preview.js` treats a non-localhost host without that marker as a preview host whose config failed: read-only, banner text "預覽設定未載入", the app is stopped (fail closed). Operations: hosts built from older images without the marker must be redeployed with the new image.
 * The "改成這個版本" button stays implemented but the default view no longer passes `onRevert` (its target `/design/:id` does not exist: history list and restore flow T1-T4 are not built). Version preview is NOT reachable by users until the history list (T1-T4) exists.
@@ -66,7 +78,7 @@ Operations notes (v0.3.0 review fixes):
 
 ## v0.2.1
 
-Security headers fix (audit findings H2 and M7 of the ecommerce launch checklist). Approved by the owner on 2026-11-26 (docs/DECISIONS.md D1 amendment).
+Security headers fix (audit findings H2 and M7 of the platform launch checklist). Approved by the owner on 2026-11-26 (docs/DECISIONS.md D1 amendment).
 
 Design-layer action: none
 

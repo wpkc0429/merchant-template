@@ -8,15 +8,26 @@
 //     removed, reworded, hidden (also through an ancestor, opacity, filter, clip, text-indent, text-fill, content-visibility), shrunk,
 //     covered (document.elementFromPoint) or moved out of <body> it is rebuilt, and if it still cannot be made visible, or keeps
 //     needing a rebuild (rate limit), the page FAILS CLOSED once (the app is removed from the page and a plain message is shown);
-//   * styles are compared with the browser's own serialization of the same declarations, never with the strings written here.
+//   * styles are compared with the browser's own serialization of the same declarations, never with the strings written here;
+//   * TOP LAYER: where the Popover API exists the banner is a `popover="manual"` element shown with showPopover(), so it is rendered in
+//     the browser's top layer and no z-index, fixed overlay or body::after of the design layer can sit above it (a pointer-events:none
+//     overlay is invisible to elementFromPoint, so the covered-check alone could not see it). The popover UA styles (inset, margin, border,
+//     background, color) are overridden by the fixed !important styles below. A spacer keeps the page content below the bar (a top-layer
+//     element is out of flow). If the popover is closed or loses its attribute it is rebuilt (rate limited), else the page fails closed.
+//     Without the Popover API the old behaviour stays (sticky bar, covered-check) plus a scan for fixed/absolute elements and
+//     body/html pseudo-elements that sit over the bar.
 // It has no design-layer input at all except what the host wrote into preview-config.js (lib/preview.js).
 import { previewMode } from "../lib/preview.js";
 
 export const BANNER_ID = "core-preview-banner";
 const KIND_LABEL = { version: "版本預覽", change: "改版預覽" };
+export const SPACER_ID = "core-preview-banner-spacer";
+const hasPopover = () => typeof HTMLElement === "function" && typeof HTMLElement.prototype.showPopover === "function" && typeof HTMLElement.prototype.hidePopover === "function" && "popover" in HTMLElement.prototype;
+const POPOVER = hasPopover();
 const STYLE = {
-  display: "block", visibility: "visible", opacity: "1", position: "sticky", top: "0", left: "0", right: "0", width: "auto", "min-height": "2.25rem",
-  margin: "0", padding: "0.5rem 1rem", "z-index": "2147483647", background: "#fff3c4", color: "#3b2f00", "border-bottom": "2px solid #b58900",
+  display: "block", visibility: "visible", opacity: "1", position: POPOVER ? "fixed" : "sticky", top: "0", left: "0", right: "0", bottom: "auto", width: "auto", "min-height": "2.25rem",
+  margin: "0", padding: "0.5rem 1rem", "z-index": "2147483647", background: "#fff3c4", color: "#3b2f00",
+  "border-top": "0 none", "border-left": "0 none", "border-right": "0 none", "border-bottom": "2px solid #b58900", "outline": "none",
   font: "600 14px/1.4 system-ui, sans-serif", "text-align": "center", transform: "none", translate: "none", rotate: "none", scale: "none",
   filter: "none", "clip-path": "none", clip: "auto", "mask-image": "none", "mix-blend-mode": "normal", "pointer-events": "auto",
   "content-visibility": "visible", "text-indent": "0", "-webkit-text-fill-color": "#3b2f00", "letter-spacing": "normal", "text-transform": "none",
@@ -54,6 +65,8 @@ let busy = false;      // re-entrancy: our own rebuild must not start another ch
 let failed = false;    // fail-closed happened: stop everything, do it only once
 let rebuilds = [];     // timestamps of recent rebuilds (rate limit)
 let lastCheck = 0;
+let poke = null;       // set at install: asks for a (throttled) check; used by the banner's own `toggle` event (hidePopover() is not a DOM mutation)
+let selfToggle = 0;    // when WE last re-raised the popover (hide+show): the closed toggle event of that is ours, not news
 let scheduled = false;
 const OBSERVE = { childList: true, attributes: true, characterData: true };
 
@@ -81,9 +94,65 @@ function build(mode) {
   b.setAttribute("role", "status");
   b.setAttribute("data-testid", "preview-banner");
   b.setAttribute("data-kind", mode.kind);
+  if (POPOVER) { b.setAttribute("popover", "manual"); b.addEventListener("toggle", (e) => { if (poke && e.newState === "closed" && Date.now() - selfToggle > 50) poke(); }); }
   b.textContent = bannerText(mode);
   for (const [k, v] of Object.entries(STYLE)) b.style.setProperty(k, v, "important");
   return b;
+}
+
+const isOpen = (b) => { try { return b.matches(":popover-open"); } catch { return true; } };
+/** Keeps the page content below the (out-of-flow) top-layer bar. The spacer is cosmetic, not security: a missing one is just re-added. */
+function syncSpacer(b) {
+  if (!POPOVER || !b || !document.body) return;
+  try {
+    let sp = document.getElementById(SPACER_ID);
+    if (!sp || sp.parentNode !== document.body) {
+      if (sp) sp.remove();
+      sp = document.createElement("div");
+      sp.setAttribute("id", SPACER_ID);
+      sp.setAttribute("aria-hidden", "true");
+      document.body.prepend(sp);
+      if (observer) { if (typeof observer.takeRecords === "function") observer.takeRecords(); }
+    }
+    const h = `${Math.ceil(b.getBoundingClientRect().height)}px`;
+    if (sp.style.height !== h) { sp.style.setProperty("height", h, "important"); sp.style.setProperty("margin", "0", "important"); if (observer && typeof observer.takeRecords === "function") observer.takeRecords(); }
+  } catch { /* cosmetic */ }
+}
+let raisedOver = []; // the OTHER top-layer elements the banner was last raised above (it is known to be on top of these)
+/**
+ * Something else is in the top layer (a modal dialog, another popover): raise the banner above it. Only when an element appeared that the banner
+ * is not known to be above (no constant churn while a legitimate modal stays open), and every raise counts in the rebuild window: a design layer
+ * that keeps opening full-screen modals ends in ONE fail-closed, never a loop. Runs at once on DOM / `toggle` / `close` events, not only on the timer.
+ */
+function raise(b = el) {
+  if (!POPOVER || failed || !b || !b.isConnected) return;
+  try {
+    const others = [...document.querySelectorAll(":modal, :popover-open")].filter((n) => n !== b);
+    const fresh = others.filter((n) => !raisedOver.includes(n));
+    raisedOver = others.filter((n) => raisedOver.includes(n)); // forget the ones that closed (a re-opened one is new again)
+    if (!fresh.length || !isOpen(b)) return;
+    const now = Date.now();
+    rebuilds = rebuilds.filter((t) => now - t < REBUILD_WINDOW_MS);
+    if (rebuilds.length >= REBUILD_MAX) { failClosed(); return; }
+    rebuilds.push(now);
+    selfToggle = now; b.hidePopover(); b.showPopover();
+    raisedOver = others;
+  } catch { /* ignore */ }
+}
+/** No Popover API: a fixed/absolute element (even pointer-events:none, which elementFromPoint skips) or a body/html pseudo-element painted over the bar. */
+function coveredByOverlay(b, r) {
+  const hits = (x) => x.right > r.left && x.left < r.right && x.bottom > r.top && x.top < r.bottom;
+  const paints = (c) => c.visibility === "visible" && Number(c.opacity) > 0 && (alpha(c.backgroundColor) > 0 || (c.backgroundImage && c.backgroundImage !== "none"));
+  for (const host of [document.documentElement, document.body]) for (const pseudo of ["::before", "::after"]) {
+    const c = getComputedStyle(host, pseudo);
+    if (c.content && c.content !== "none" && c.content !== "normal" && (c.position === "fixed" || c.position === "absolute") && (paints(c) || c.content !== '""')) return true;
+  }
+  for (const n of document.body.querySelectorAll("*")) {
+    if (n === b || b.contains(n) || n.id === SPACER_ID) continue;
+    const c = getComputedStyle(n);
+    if ((c.position === "fixed" || c.position === "absolute") && paints(c) && hits(n.getBoundingClientRect())) return true;
+  }
+  return false;
 }
 
 const px = (v) => parseFloat(v) || 0;
@@ -123,7 +192,11 @@ function visible(b) {
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
     if (r.height < 16 || r.width < 8 || (vw && r.width < vw * 0.8)) return false;
     if (vw && vh && (r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh)) return false; // moved out of the viewport
-    if (typeof document.elementFromPoint === "function" && vw && vh) {
+    // a modal <dialog> (ui/kit.js) makes everything outside it inert, and inert nodes are skipped by hit-testing: the banner is then raised above
+    // the dialog in the top layer (raise) and the hit-test below cannot say anything, so it is skipped while a modal is open
+    let modal = false;
+    if (POPOVER) { try { modal = Boolean(document.querySelector(":modal")); } catch { modal = false; } }
+    if (!modal && typeof document.elementFromPoint === "function" && vw && vh) {
       // covered? the top element in the middle and near both ends of the bar must be the banner (or something inside it)
       const y = Math.min(Math.max(r.top + r.height / 2, 1), vh - 1);
       for (const x of [r.left + r.width / 2, r.left + 6, r.right - 6]) {
@@ -131,6 +204,7 @@ function visible(b) {
         if (!top || !(top === b || b.contains(top))) return false;
       }
     }
+    if (!POPOVER && coveredByOverlay(b, r)) return false;
     return true;
   } catch { return true; }
 }
@@ -138,6 +212,7 @@ function visible(b) {
 /** Is the banner exactly as the core made it? (in <body>, the right id, the right text, every fixed style still set, visible.) */
 export function bannerIntact(b, mode) {
   if (!b || !b.parentNode || b.parentNode !== document.body) return false;
+  if (POPOVER && (b.getAttribute("popover") !== "manual" || !isOpen(b))) return false; // closed (hidePopover) or the attribute removed
   if (b.getAttribute("id") !== BANNER_ID || b.textContent !== bannerText(mode)) return false;
   // The inline styles are compared with the browser's own serialization of the same declarations, never with the strings written here.
   for (const [k, v, p] of expectedStyles()) if (b.style.getPropertyValue(k) !== v || b.style.getPropertyPriority(k) !== p) return false;
@@ -173,7 +248,7 @@ export function verifyBanner(mode = previewMode) {
   if (busy) return true; // our own rebuild is running; its caller decides
   busy = true;
   try {
-    if (bannerIntact(el, mode)) return true;
+    if (bannerIntact(el, mode)) { raise(el); syncSpacer(el); return true; }
     const now = Date.now();
     rebuilds = rebuilds.filter((t) => now - t < REBUILD_WINDOW_MS);
     if (rebuilds.length >= REBUILD_MAX) { failClosed(); return false; } // something keeps undoing the banner: stop, do not loop
@@ -181,8 +256,9 @@ export function verifyBanner(mode = previewMode) {
     try { if (el && el.parentNode) el.parentNode.removeChild(el); } catch { /* ignore */ }
     el = build(mode);
     document.body.prepend(el);
+    if (POPOVER) { try { el.showPopover(); raisedOver = [...document.querySelectorAll(":modal, :popover-open")].filter((n) => n !== el); } catch { /* checked below */ } }
     if (observer) { observer.observe(el, { ...OBSERVE, subtree: true }); if (typeof observer.takeRecords === "function") observer.takeRecords(); } // our own DOM change is not news
-    if (bannerIntact(el, mode)) return true;
+    if (bannerIntact(el, mode)) { syncSpacer(el); return true; }
     failClosed();
     return false;
   } finally { busy = false; }
@@ -214,6 +290,20 @@ export function installPreviewBanner(mode = previewMode) {
     scheduled = true;
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(run); else setTimeout(run, 0);
   };
+  poke = check;
+  if (POPOVER && typeof document.addEventListener === "function") {
+    const quick = (e) => {
+      if (e && e.target === el) return;
+      if (e && e.target && e.newState !== "open") raisedOver = raisedOver.filter((n) => n !== e.target); // closed (a later open of the same element is new)
+      raise();
+    };
+    document.addEventListener("toggle", quick, true);
+    document.addEventListener("close", quick, true);
+    if (typeof MutationObserver === "function") new MutationObserver((records) => {
+      for (const r of records) if (r.attributeName) raisedOver = raisedOver.filter((n) => n !== r.target); // `open` toggled: it may have been re-opened on top of the banner
+      raise();
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "popover"] });
+  }
   if (typeof MutationObserver === "function" && !observer) {
     observer = new MutationObserver(check);
     const opts = OBSERVE;
@@ -222,6 +312,7 @@ export function installPreviewBanner(mode = previewMode) {
     if (document.head) observer.observe(document.head, { ...opts, subtree: true });
     if (el) observer.observe(el, { ...opts, subtree: true });
   }
+  if (POPOVER && typeof addEventListener === "function") addEventListener("resize", () => syncSpacer(el));
   if (!timer && typeof setInterval === "function") timer = setInterval(() => { lastCheck = Date.now(); verifyBanner(mode); }, 1000);
   return true;
 }
