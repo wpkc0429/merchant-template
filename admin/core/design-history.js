@@ -7,6 +7,7 @@
 import { session } from "../lib/session.js";
 import { ApiError } from "../lib/api.js";
 import * as dh from "../lib/design-history.js";
+import { allowPreviewLinkOrigin } from "../ui/kit.js";
 import { t } from "../lib/design.js";
 import { need } from "./guard.js";
 import { ActionError, denied, invalid } from "./errors.js";
@@ -62,7 +63,10 @@ export async function getDesignRequest(id) {
   const shopID = S();
   try {
     const [d, ev] = await Promise.all([dh.fetchRequest(shopID, id), dh.fetchEvents(shopID, id)]);
-    return dh.normalizeRequest(d, ev && ev.events);
+    const request = dh.normalizeRequest(d, ev && ev.events);
+    // The change-preview link on the request screen: ONE href-only slot (ui/kit.js), the origin of the request just read; never a global allowlist.
+    allowPreviewLinkOrigin(request.previewOrigin || "");
+    return request;
   } catch (e) { throw toActionError(e); }
 }
 

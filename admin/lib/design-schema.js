@@ -9,7 +9,7 @@ export const ROUTE_IDS = [
   "shell", "login", "setPassword", "acceptInvite", "notFound", "noPermission", "bootError",
   "home", "orders", "orderDetail", "deliveries", "members", "tiers", "memberDetail", "reports", "team",
   "products", "productNew", "productEdit", "categories", "categoryOrder", "shipping",
-  "content", "contentDocument", "contentRevisions", "contentSchema", "designVersionPreview",
+  "content", "contentDocument", "contentRevisions", "contentSchema", "designVersionPreview", "design", "designRequest",
 ];
 
 /** Icon names the core can draw (ui/icons.js keeps this list in sync; the guard test checks it). */

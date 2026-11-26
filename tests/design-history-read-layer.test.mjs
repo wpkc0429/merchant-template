@@ -39,22 +39,19 @@ test('ctx: exactly the three read functions were added to ctx.data and no action
   for (const n of ['listDesignRequests', 'getDesignRequest', 'getDesignState']) assert.ok(api['ctx.data'].includes(n), n);
   // PR2 (D14) added the three actions on purpose; tests/design-review.test.mjs pins exactly that.
   const schema = f('admin/lib/design-schema.js');
-  assert.ok(!/"design"|"designRequest"/.test(schema.slice(0, schema.indexOf('ICON_NAMES'))), 'ROUTE_IDS unchanged');
+  // PR3 (D15) registered the two routes together with their views; tests/design-history-screens.test.mjs pins that.
   // PR2 (D14) added the five fixed warnings; tests/design-review.test.mjs pins them.
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /`listDesignRequests\(\{site\?, status\?, kind\?, page, pageSize\}\)`/);
 });
 
-test('routes: design and designRequest are defined with design.view but not registered; NAV has no design entry', () => {
+test('routes: design and designRequest are defined with design.view (PR3 registered them; the all-or-nothing rule is pinned in design-history-screens.test.mjs)', () => {
   const r = f('admin/core/routes.js');
-  assert.match(r, /id: "design", pattern: "\/design", perm: \["design\.view"\], nav: "design", ready: false/);
-  assert.match(r, /id: "designRequest", pattern: "\/design\/:id", perm: \["design\.view"\], nav: "design", ready: false/);
+  assert.match(r, /id: "design", pattern: "\/design", perm: \["design\.view"\], nav: "design", ready: (true|false)/);
+  assert.match(r, /id: "designRequest", pattern: "\/design\/:id", perm: \["design\.view"\], nav: "design", ready: (true|false)/);
   assert.match(r, /export const ROUTES = \[\.\.\.BASE_ROUTES, \.\.\.DESIGN_HISTORY_ROUTES\.filter\(\(r\) => r\.ready\)/);
-  const nav = r.slice(r.indexOf('export const NAV'));
-  assert.ok(!/design/i.test(nav), 'no design nav item');
 });
 
-test('the version preview revert button stays hidden and the read layer never exposes the ETag or a signed URL', () => {
-  for (const p of ['admin/design/views/design-version-preview.js', 'admin/design-defaults/views/design-version-preview.js']) assert.ok(!f(p).includes('onRevert'), p);
+test('the read layer never exposes the ETag or a signed URL', () => {
   const core = f('admin/core/design-history.js'), lib = f('admin/lib/design-history.js');
   assert.ok(!/reviewBasis|etag/i.test(core.split('\n').filter((l) => !isComment(l)).join('\n')), 'core/design-history.js never touches the ETag');
   assert.match(lib, /export const reviewBasis/);

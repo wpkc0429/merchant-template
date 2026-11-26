@@ -99,7 +99,7 @@ ok("the three design actions exist (PR2, D14) and nothing else design-related wa
 
 // routing groundwork: defined, but not registered and no nav entry
 ok("routes design and designRequest are defined with design.view", DESIGN_HISTORY_ROUTES.map((r) => `${r.id}${r.pattern}${r.perm}`).join() === "design/designdesign.view,designRequest/design/:iddesign.view");
-ok("...but not registered, not in ROUTES, NAV or ROUTE_IDS (no dead nav item, no view-less route)", DESIGN_HISTORY_ROUTES.every((r) => !ROUTES.some((x) => x.id === r.id) && !NAV.some((n) => n.key === r.nav || n.href === `#${r.pattern}`) && !ROUTE_IDS.includes(r.id) && r.ready === false));
+ok("...and registered since PR3 (D15): in ROUTES, in ROUTE_IDS and one NAV item with design.view, all together", DESIGN_HISTORY_ROUTES.every((r) => ROUTES.some((x) => x.id === r.id && x.pattern === r.pattern) && ROUTE_IDS.includes(r.id) && r.ready === true) && NAV.filter((n) => n.key === "design").length === 1 && NAV.find((n) => n.key === "design").perm.join() === "design.view");
 ok("every registered route still has a view id the design layer can map", ROUTES.filter((r) => !r.public).every((r) => ROUTE_IDS.includes(r.id)));
 
 // permission matrix, before any request
@@ -204,7 +204,7 @@ if (PREVIEW) {
   const v1 = readFileSync(path.join(ROOT, "design/views/design-version-preview.js"), "utf8"), v2 = readFileSync(path.join(ROOT, "design-defaults/views/design-version-preview.js"), "utf8");
   ok("version preview CTA onRevert stays hidden in the default views", !/onRevert/.test(v1) && !/onRevert/.test(v2));
   const dr = (await imp("design-defaults/routes.js")).default;
-  ok("no default view is registered for design / designRequest yet", !("design" in dr) && !("designRequest" in dr));
+  ok("both default views are registered (PR3, D15) in design-defaults and design", dr.design === "views/design-history.js" && dr.designRequest === "views/design-request.js" && (await imp("design/routes.js")).default.design === "views/design-history.js");
 }
 
 process.stdout.write(`test-design-history [${MODE}]: ${pass} passed, ${fail} failed

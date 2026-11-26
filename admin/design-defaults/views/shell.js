@@ -12,7 +12,22 @@ export default function shell(root, ctx) {
   const rest = items.filter((n) => !tabs.includes(n));
   const shopName = ctx.session.shopName || t("app.name");
 
-  const navLink = (n, cls) => h("a", { class: cls, href: n.href, "data-nav": n.key, "data-testid": `nav-${n.key}` }, icon(n.icon), h("span", {}, t(`nav.${n.key}`)));
+  let pending = 0, counting = false;
+  const badges = new Map(); // link -> its badge element
+  function paintOne(a) {
+    const old = badges.get(a);
+    if (old) { old.remove(); badges.delete(a); }
+    if (pending <= 0) return;
+    const b = h("span", { class: "nav-badge", "data-testid": "nav-design-badge", "aria-label": t("dh.nav.pending", { n: pending }) }, String(pending > 99 ? "99+" : pending));
+    badges.set(a, b);
+    a.append(b);
+  }
+  const designLinks = []; // every link to the design history (sidebar, tab bar, "more" sheet): they carry the pending-approval badge
+  const navLink = (n, cls) => {
+    const a = h("a", { class: cls, href: n.href, "data-nav": n.key, "data-testid": `nav-${n.key}` }, icon(n.icon), h("span", {}, t(`nav.${n.key}`)));
+    if (n.key === "design") { designLinks.push(a); paintOne(a); }
+    return a;
+  };
   const brand = () => h("a", { class: "brand", href: "#/" }, h("img", { class: "brand-logo", alt: "", hidden: true }), h("span", { class: "brand-name" }, shopName));
 
   const sidebar = h("nav", { class: "sidebar", "aria-label": t("nav.aria") }, brand(),
@@ -28,6 +43,16 @@ export default function shell(root, ctx) {
   const main = h("main", { class: "main", id: "main" });
   root.append(h("div", { class: "shell" }, sidebar, h("div", { class: "content" }, topbar, main), tabbar));
 
+  // The design history item shows how many designs wait for approval. Loaded lazily (only when the item exists); a failure is ignored.
+  async function refreshBadge() {
+    if (counting || !items.some((n) => n.key === "design") || !ctx.can("design.view")) return;
+    counting = true;
+    try { pending = (await ctx.data.getDesignState()).pendingApproval; } catch { pending = 0; }
+    counting = false;
+    for (const a of designLinks) paintOne(a);
+  }
+  refreshBadge();
+
   function openMore() {
     const list = h("div", { class: "sheet-list" },
       rest.map((n) => navLink(n, "sheet-link")),
@@ -41,6 +66,7 @@ export default function shell(root, ctx) {
     for (const a of sidebar.querySelectorAll("[data-nav]")) a.classList.toggle("is-on", a.dataset.nav === key);
     for (const a of tabbar.querySelectorAll("[data-nav]")) a.classList.toggle("is-on", a.dataset.nav === key);
     moreBtn.classList.toggle("is-on", rest.some((n) => n.key === key));
+    if (key === "design") refreshBadge();
   }
 
   return { main, setActive };

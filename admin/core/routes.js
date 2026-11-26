@@ -31,13 +31,14 @@ const BASE_ROUTES = [
   // Version preview of a past published design (platform change design-history, D25). No nav entry: the history screen links here.
   { id: "designVersionPreview", pattern: "/design/:id/version-preview", perm: ["design.view"], nav: "" },
 ];
-// Design history routes (T1-T4, docs/DECISIONS.md D13). DEFINED here (ids, patterns, permission) but NOT registered and NOT in ROUTES / NAV /
-// lib/design-schema.js ROUTE_IDS until the default views exist (PR3): a registered route without a view would make mountView throw for a
-// legitimate user, and a nav item would be a dead link. PR3 flips `ready` to true and adds the views, the ROUTE_IDS and the NAV entry together
-// (tests/design-history-read-layer.test.mjs fails if only part of that happens).
+// Design history routes (T1-T4, docs/DECISIONS.md D13, D15). Defined here with `ready`: a route is registered (ROUTES), listed in
+// lib/design-schema.js ROUTE_IDS and offered in NAV only together with its default views (design-defaults/views/design-history.js and
+// design-request.js, routed in design-defaults/routes.js). PR3 (D15) shipped the views, so both are ready; a registered route without a
+// view would make mountView throw for a legitimate user and a nav item would be a dead link
+// (tests/design-history-read-layer.test.mjs and tests/design-history-screens.test.mjs fail if only part of that is true).
 export const DESIGN_HISTORY_ROUTES = [
-  { id: "design", pattern: "/design", perm: ["design.view"], nav: "design", ready: false },
-  { id: "designRequest", pattern: "/design/:id", perm: ["design.view"], nav: "design", ready: false },
+  { id: "design", pattern: "/design", perm: ["design.view"], nav: "design", ready: true },
+  { id: "designRequest", pattern: "/design/:id", perm: ["design.view"], nav: "design", ready: true },
 ];
 export const DESIGN_HISTORY_READY = DESIGN_HISTORY_ROUTES.every((r) => r.ready);
 
@@ -56,5 +57,6 @@ export const NAV = [
   { key: "members", icon: "members", href: "#/members", perm: ["member.view"] },
   { key: "reports", icon: "reports", href: "#/reports", perm: ["report.view"] },
   { key: "content", icon: "content", href: "#/content", perm: ["content.view"] },
+  { key: "design", icon: "image", href: "#/design", perm: ["design.view"] },
   { key: "team", icon: "team", href: "#/team", perm: ["user.manage_members"] },
 ];

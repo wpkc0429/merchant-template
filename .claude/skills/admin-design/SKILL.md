@@ -46,6 +46,10 @@ Worked examples (colour change, rename a label, hide a field, reorder nav, resty
 5. Preview (details in `references/workflow.md`): `node scripts/serve.mjs --proxy <throwaway API>` and open `http://localhost:3001`. Look for `[design]` console warnings (a refused entry or a fallback to the built-in screen). Check 390 px and 1280 px, no horizontal scroll, and sign in as an owner and as a staff member when navigation or permissions are involved.
 6. **Stop.** Report the changed files, a plain-language summary, the guard output, how to preview, and any limits. Wait for the merchant's approval. You never merge, push, deploy, or open a PR yourself.
 
+## The design history screens (v0.5.0)
+
+`views/design-history.js` (/design) and `views/design-request.js` (/design/:id), with `parts/design-history-parts.js` and the nav item "設計歷史", are ordinary design-layer screens: restyle or rearrange them freely (details and rules: `docs/DESIGN-LAYER.md` section 4, "The design history screens"). Keep the two regions ("what the service claims (not verified by the platform)" and "platform record") labelled and apart, render every prompt, name and path as text, keep buttons behind `can()`, and never draw your own approve or reject: `ctx.actions.openDesignReview` is the only way and its dialog is core. A preview host sets `ctx.route.state.readOnly`: leave actions out there. A merchant design that predates v0.5.0 adopts these screens by copying the two views, the part, the routes `design` and `designRequest`, the `dh.*` and `nav.design` copy keys and the theme.css block from `admin/design-defaults/`.
+
 ## Escalate (say so and stop; never work around)
 
 - Adding a function or action to `ctx`, a new copy key, or any other locked-core change: that is a human-reviewed core change (`.claude/skills/core-change`). Only a human runs `check-design.mjs --update`; you never do.

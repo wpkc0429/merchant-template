@@ -38,7 +38,9 @@ function newTemplate(version = V2, extraMutate = () => {}, opts) {
     write(d, 'public/config.js', read(d, 'public/config.js').replace('showPrices: true,', 'showPrices: false,'));
     write(d, 'admin/design/tokens.css', read(d, 'admin/design/tokens.css').replace('#2f5d8a', '#112233'));
     write(d, 'wrangler.jsonc', read(d, 'wrangler.jsonc').replace('merchant-template', 'changed-template'));
-    write(d, 'docs/CORE-CHANGELOG.md', read(d, 'docs/CORE-CHANGELOG.md').replace(`## v${V1}`, `## v${version}\n\nDesign-layer action: none\n\n* test change\n\n## v${V1}`));
+    // the fixture models a hypothetical NEXT release: the real unreleased section (## vX.Y.Z (UNRELEASED ...)) is not part of it
+    const unreleased = (t) => t.replace(/^## v\d+\.\d+\.\d+ \(UNRELEASED[\s\S]*?(?=^## v\d)/m, '');
+    write(d, 'docs/CORE-CHANGELOG.md', unreleased(read(d, 'docs/CORE-CHANGELOG.md')).replace(`## v${V1}`, `## v${version}\n\nDesign-layer action: none\n\n* test change\n\n## v${V1}`));
     extraMutate(d);
   }, opts);
 }
