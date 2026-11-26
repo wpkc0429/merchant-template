@@ -96,7 +96,7 @@ test('hardening: the five confirmations have CORE titles and labels; the core di
   assert.match(kit, /showCoreDialog\(\{\s*title,/, 'confirmDialog uses the core dialog');
   assert.match(f('admin/ui/design-review.js'), /showCoreDialog\(\{/);
   const css = f('admin/ui/core-dialog-css.js');
-  assert.ok(!/var\(--/.test(css.replace(/var\(--(ink|soft|muted|card|band|line|err|acc|prim)\)/g, '')), 'the core dialog stylesheet uses no design token');
+  assert.ok(![...css.matchAll(/var\(--([a-z-]+)/g)].some((m) => !m[1].startsWith('k-')), 'the core dialog stylesheet reads only its own --k-* variables (design tokens are validated in ui/kit.js first)');
   assert.ok(!/(^|[\s;{])content\s*:/m.test(css.split('\n').filter((l) => !l.startsWith('//')).join('\n')), 'no generated content in the core dialog stylesheet');
 });
 
