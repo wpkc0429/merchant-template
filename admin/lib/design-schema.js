@@ -15,7 +15,7 @@ export const ROUTE_IDS = [
 /** Icon names the core can draw (ui/icons.js keeps this list in sync; the guard test checks it). */
 export const ICON_NAMES = [
   "home", "orders", "shipments", "products", "categories", "shippingMethods", "members", "reports", "team",
-  "more", "logout", "back", "up", "down", "left", "right", "plus", "close", "image", "content",
+  "more", "logout", "back", "up", "down", "left", "right", "plus", "close", "image", "content", "profile",
 ];
 
 export const LIMITS = {

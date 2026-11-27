@@ -101,7 +101,7 @@ ok("the three design actions exist (PR2, D14) and nothing else design-related wa
 // routing groundwork: defined, but not registered and no nav entry
 ok("routes design and designRequest are defined with design.view", DESIGN_HISTORY_ROUTES.map((r) => `${r.id}${r.pattern}${r.perm}`).join() === "design/designdesign.view,designRequest/design/:iddesign.view");
 ok("...and registered since PR3 (D15): in ROUTES, in ROUTE_IDS and one NAV item with design.view, all together", DESIGN_HISTORY_ROUTES.every((r) => ROUTES.some((x) => x.id === r.id && x.pattern === r.pattern) && ROUTE_IDS.includes(r.id) && r.ready === true) && NAV.filter((n) => n.key === "design").length === 1 && NAV.find((n) => n.key === "design").perm.join() === "design.view");
-ok("every registered route still has a view id the design layer can map", ROUTES.filter((r) => !r.public).every((r) => ROUTE_IDS.includes(r.id)));
+ok("every registered route still has a view id the design layer can map", ROUTES.filter((r) => !r.public && !r.core).every((r) => ROUTE_IDS.includes(r.id)) && ROUTES.filter((r) => r.core).every((r) => !ROUTE_IDS.includes(r.id)));
 
 // permission matrix, before any request
 as("staff"); reset();

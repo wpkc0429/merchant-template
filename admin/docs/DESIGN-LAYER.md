@@ -461,6 +461,10 @@ Your modules are loaded from `/design/`. The page carries an import map (`index.
 - The console shows one 404 for `/deny/lib/canary/target.js` on every load: that is the start-up check, expected.
 - Not isolation: a module can still read the page and call whatever `ctx` gives it. Firefox and Safari are unverified; there the check fails closed (design off) if the map is not enforced.
 
+### The personal profile page (decision D21, v0.5.0)
+
+Each signed-in person sets their own display name on a CORE page (`#/profile`, label "個人資料"); teammates see it in the design history instead of "Team member". You do not draw, replace or call this page: it is not a route id you can map in `routes.js`, its wording has no copy key, and there is no `ctx` function for it. What you can see: one more item `profile` in `ctx.nav.items` (same `{key, icon, href}` shape, icon `profile`, label `ctx.t("nav.profile")`, a fixed core text). The default shell shows it under the email (sidebar) and in the "more" sheet instead of the main list; a shell that lists every item shows it last, and that is fine. The page and the one-time "set your name" hint above the design history are styled by the locked `styles.css` and the tokens (`.profile*`, `.profile-hint`); do not hide them in `theme.css` (the guard cannot tell, but the person then cannot find where to set a name).
+
 ### Preview hosts: what the operator sets (decision D18)
 
 A preview host serves the same files with `ADMIN_PREVIEW_MODE=version|change` (plus `ADMIN_PREVIEW_TAG`, `ADMIN_PREVIEW_EXPIRES`; `deploy/preview-config.sh`) on its **own origin**, which the platform operator registers in the platform's `ADMIN_PREVIEW_ORIGINS` (exact `https://p-1.preview.example` or one wildcard label `https://*.preview.example`; never the normal admin origin, never a `Domain=` cookie over a parent domain). Sessions started from that origin are **read-only on the server**: the platform issues `scope: "preview_ro"` tokens (and the host-only cookie `__Secure-admin_preview_refresh`) that last at most 30 minutes in total, whatever you click. The template then does the following, and the design layer cannot change any of it:

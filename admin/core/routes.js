@@ -9,6 +9,9 @@ const BASE_ROUTES = [
   { id: "setPassword", pattern: "/set-password/:token", public: true },
   { id: "acceptInvite", pattern: "/accept-invite/:token", public: true },
   { id: "home", pattern: "/", perm: [], nav: "home" },
+  // The personal profile (D21): reachable for EVERY signed-in person, drawn by the CORE (ui/profile.js), not a design view: it has no
+  // ROUTE_IDS entry, so design/routes.js cannot replace it (an entry for "profile" is ignored with a warning).
+  { id: "profile", pattern: "/profile", perm: [], nav: "profile", core: true },
   { id: "orders", pattern: "/orders", perm: ["order.view"], nav: "orders" },
   { id: "orderDetail", pattern: "/orders/:id", perm: ["order.view"], nav: "orders" },
   { id: "deliveries", pattern: "/deliveries", perm: ["order.view"], nav: "deliveries" },
@@ -59,4 +62,6 @@ export const NAV = [
   { key: "content", icon: "content", href: "#/content", perm: ["content.view"] },
   { key: "design", icon: "image", href: "#/design", perm: ["design.view"] },
   { key: "team", icon: "team", href: "#/team", perm: ["user.manage_members"] },
+  // Last on purpose (D21): the default shell shows it in the account area, a shell that lists every item shows it after the others.
+  { key: "profile", icon: "profile", href: "#/profile", perm: [] },
 ];

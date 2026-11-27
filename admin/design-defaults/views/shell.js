@@ -14,7 +14,9 @@ export default function shell(root, ctx) {
   let designOn = false;
   const shown = (n) => n.key !== "design" || designOn;
   // The design item goes LAST: showing it after the state call resolves never moves an item that was already there.
-  const ordered = [...items.filter((n) => n.key !== "design"), ...items.filter((n) => n.key === "design")];
+  // The personal profile item (D21) is listed by the core for everyone; this shell shows it in the account area (sidebar foot, "more" sheet), not in the main list.
+  const profileItem = items.find((n) => n.key === "profile");
+  const ordered = [...items.filter((n) => n.key !== "design" && n.key !== "profile"), ...items.filter((n) => n.key === "design")];
   const restItems = () => ordered.filter((n) => !tabs.includes(n) && shown(n));
   const shopName = ctx.session.shopName || t("app.name");
 
@@ -52,6 +54,7 @@ export default function shell(root, ctx) {
     sideList,
     h("div", { class: "sidebar__foot" },
       h("div", { class: "who", title: ctx.session.userEmail }, ctx.session.userEmail),
+      profileItem ? navLink(profileItem, "navlink") : "",
       h("button", { class: "navlink navlink--btn", type: "button", "data-testid": "logout", onclick: () => ctx.auth.logout() }, icon("logout"), h("span", {}, t("nav.logout")))));
 
   const moreBtn = h("button", { class: "tab", type: "button", "data-testid": "tab-more", onclick: openMore }, icon("more"), h("span", {}, t("nav.more")));
@@ -77,6 +80,7 @@ export default function shell(root, ctx) {
   function openMore() {
     const list = h("div", { class: "sheet-list" },
       restItems().map((n) => navLink(n, "sheet-link")),
+      profileItem ? navLink(profileItem, "sheet-link") : "",
       h("div", { class: "sheet-who" }, ctx.session.userEmail),
       h("button", { class: "sheet-link", type: "button", "data-testid": "logout-sheet", onclick: () => ctx.auth.logout() }, icon("logout"), h("span", {}, t("nav.logout"))));
     const { close } = showDialog({ title: t("nav.more"), content: list, actions: [{ label: t("nav.close"), kind: "ghost" }] });
@@ -87,7 +91,7 @@ export default function shell(root, ctx) {
     current = key;
     for (const a of sidebar.querySelectorAll("[data-nav]")) a.classList.toggle("is-on", a.dataset.nav === key);
     for (const a of tabbar.querySelectorAll("[data-nav]")) a.classList.toggle("is-on", a.dataset.nav === key);
-    moreBtn.classList.toggle("is-on", restItems().some((n) => n.key === key));
+    moreBtn.classList.toggle("is-on", restItems().some((n) => n.key === key) || key === "profile");
     if (key === "design") refreshBadge();
   }
 

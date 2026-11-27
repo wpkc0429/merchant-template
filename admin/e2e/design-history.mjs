@@ -464,11 +464,11 @@ try {
     await o.ctx.close();
     o = await open("/", { designEnabled: false });
     await sleep(600);
-    const teamY = await o.pg.locator(`.sidebar [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top);
+    const teamY = await o.pg.locator(`.sidebar__list [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top);
     await o.ctx.close();
     o = await open("/", { designEnabled: true });
     await o.pg.waitForSelector(`.sidebar ${T("nav-design")}`);
-    check("enabling the item moves no existing item (Team link at the same place; the item is last)", (await o.pg.locator(`.sidebar [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top)) === teamY && (await o.pg.locator(`.sidebar [data-nav]`).last().getAttribute("data-nav")) === "design");
+    check("enabling the item moves no existing item (Team link at the same place; the item is last)", (await o.pg.locator(`.sidebar__list [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top)) === teamY && (await o.pg.locator(`.sidebar__list [data-nav]`).last().getAttribute("data-nav")) === "design");
     check("design_enabled=true: the item appears (sidebar) with the pending badge", (await o.pg.locator(`.sidebar ${T("nav-design")}`).count()) === 1 && (await o.pg.locator(`.sidebar ${T("nav-design-badge")}`).innerText()) === "2");
     await o.ctx.close();
     for (const [label, st] of [["state call failing", { stateFail: true, expectHttp: true }], ["field absent", { noDesignEnabledField: true }], ["field malformed (string)", { designEnabledRaw: "true" }]]) {

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { TEMPLATE } from './helpers.mjs';
 
-const { isCanary404, canaryNoise, CANARY_DENY_PATH } = await import(pathToFileURL(path.join(TEMPLATE, 'admin/e2e/lib/expected-noise.mjs')).href);
+const { isCanary404, canaryNoise, CANARY_DENY_PATH, isHttpFailure } = await import(pathToFileURL(path.join(TEMPLATE, 'admin/e2e/lib/expected-noise.mjs')).href);
 const O = 'http://admin.example.test:1234';
 const msg = (type, text, url) => ({ type: () => type, text: () => text, location: () => ({ url }) });
 const L404 = 'Failed to load resource: the server responded with a status of 404 (Not Found)';
@@ -40,4 +40,15 @@ test('the suites that fail on console errors use the shared helper (no private /
   const dir = path.join(TEMPLATE, 'admin/e2e');
   for (const f of ['smoke.mjs', 'hardening.mjs', 'design-history.mjs']) assert.match(readFileSync(path.join(dir, f), 'utf8'), /canaryNoise\(/, f);
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.mjs'))) assert.ok(!/includes\("\/deny\/"\)/.test(readFileSync(path.join(dir, f), 'utf8')), `${f} has a blanket /deny/ filter`);
+});
+
+test('isHttpFailure allows exactly one status on exactly one path (the provoked failure of a suite) and nothing else', () => {
+  const T = 'Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)';
+  assert.ok(isHttpFailure('error', T, O + '/api/v1/admin/me', '/api/v1/admin/me', 422));
+  assert.ok(!isHttpFailure('error', T, O + '/api/v1/admin/me', '/api/v1/admin/me', 500), 'another status is a real failure');
+  assert.ok(!isHttpFailure('error', T, O + '/api/v1/admin/shops/1/me', '/api/v1/admin/me', 422), 'another path is a real failure');
+  assert.ok(!isHttpFailure('error', T, O + '/api/v1/admin/me/x', '/api/v1/admin/me', 422));
+  assert.ok(!isHttpFailure('warning', T, O + '/api/v1/admin/me', '/api/v1/admin/me', 422));
+  assert.ok(!isHttpFailure('error', 'Refused to connect (status of 4220)', O + '/api/v1/admin/me', '/api/v1/admin/me', 422));
+  assert.ok(!isHttpFailure('error', T, '', '/api/v1/admin/me', 422));
 });
