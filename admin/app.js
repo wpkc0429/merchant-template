@@ -2,9 +2,12 @@
 // including the shell (navigation) and the login / set-password / accept-invite screens, is a design-layer
 // view mounted through core/host.js with a ctx from core/context.js. This file decides WHICH screen
 // shows and WHETHER the person may see it; the design layer decides only how it looks.
-import { onUnauthorized } from "./lib/api.js";
+import { takeApi, sealApi } from "./lib/api.js";
+import { lockdownIntrinsics } from "./lib/lockdown.js";
+import { sealUpload } from "./lib/upload.js";
+import { coreText } from "./lib/fixed-text.js";
 import { route, start, navigate, scrub } from "./lib/router.js";
-import { session, loadSession, logout, restoreSession, clearSession, fetchHostBranding } from "./lib/session.js";
+import { session, loadSession, logout, clearSession, fetchHostBranding } from "./lib/session.js";
 import { can } from "./lib/perm.js";
 import { loadMediaConfig, mediaConfig } from "./lib/upload.js";
 import { loadDesign, t } from "./lib/design.js";
@@ -16,6 +19,8 @@ import { mountView } from "./core/host.js";
 import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
 import { isReadOnly } from "./lib/preview.js";
 
+const { onUnauthorized, restoreSession } = takeApi(); // boot phase only; sealApi() below closes it before the design layer is imported
+
 const visibleNav = () => NAV.filter((n) => n.perm.every((p) => can(p)));
 
 const root = document.getElementById("app");
@@ -23,6 +28,7 @@ let shell = null;          // {main, setActive}
 let viewToken = 0;         // invalidates in-flight view renders on navigation
 let pendingPath = "/";     // where to go after login
 let hostBranding = null;
+let bootNotice = ""; // why the login screen is shown at boot (a preview host that is not registered as one)
 let bootState = "pending"; // pending | in | out | error
 
 const holder = () => h("div", { class: "view" });
@@ -47,19 +53,26 @@ const authFor = (linkToken) => makeAuth({ linkToken, hooks });
 
 // ── Boot ───────────────────────────────────────────────────────────────
 async function boot() {
+  // 1. Close the API capability: every core module has been evaluated (static imports; the core has no lazy imports), no design module yet.
+  sealApi();
+  // 2. Freeze the conversion hooks and the intrinsics: nothing a design module does later can poison them.
+  sealUpload();
+  lockdownIntrinsics();
   installPreviewBanner(); // preview hosts only (lib/preview.js): the core-owned banner the design layer cannot remove
   await loadDesign();
-  onUnauthorized((why) => { showLogin({ notice: why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
+  onUnauthorized((why) => { showLogin({ notice: why === "preview" ? coreText("pv.expired") : why === "preview_scope" ? coreText("pv.scopeMissing") : why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
   fetchHostBranding().then((b) => { hostBranding = b; if (!session.user) applyBranding(b?.branding, b?.name); });
   start(onRoute);
 }
 
 async function establishSession() {
   try {
-    if (await restoreSession()) {
+    const restored = await restoreSession();
+    if (restored === true) {
       await enterApp();
       return true;
     }
+    if (restored === "preview_scope") bootNotice = coreText("pv.scopeMissing");
     return false;
   } catch (e) {
     bootState = "error";
@@ -103,7 +116,7 @@ async function onRoute(m) {
         const ok = await establishSession();
         if (ok === null) return;
         if (token !== viewToken) return;
-        if (!ok) { bootState = "out"; pendingPath = m.path === "/login" ? "/" : m.path; return showLogin({}); }
+        if (!ok) { bootState = "out"; pendingPath = m.path === "/login" ? "/" : m.path; return showLogin({ notice: bootNotice }); }
       } else {
         pendingPath = m.path === "/login" ? "/" : m.path;
         return showLogin({});

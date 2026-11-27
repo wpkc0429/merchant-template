@@ -32,7 +32,8 @@ p, h2, h3, dl, dd, ul, figure, pre { margin: 0; }
 .btn--danger { background: {err}; border-color: {err}; color: {err-text}; }
 .btn--danger-ghost { color: {err}; border-color: {errline}; }
 .btn--sm { min-height: 36px; padding: 0 14px; font-size: 13px; }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.dlg-rv__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .btn.is-busy { opacity: .6; cursor: progress; }
 :focus-visible { outline: 2px solid {acc}; outline-offset: 2px; }
 .muted { color: {muted}; }
@@ -50,6 +51,9 @@ p, h2, h3, dl, dd, ul, figure, pre { margin: 0; }
 .dlg-rv__main h3 { font-size: 14px; font-weight: 600; margin-top: 4px; }
 .dlg-rv__alert { background: {warnbg}; border: 1px solid {err}; border-radius: {rsm}; padding: 10px 14px; }
 .dlg-rv__prompt { white-space: pre-wrap; overflow-wrap: anywhere; background: {band}; border-radius: {rsm}; padding: 10px 12px; max-height: 9em; overflow: auto; }
+.dlg-rv__scan { border: 1px solid {line}; border-radius: {rsm}; padding: 4px 12px 8px; margin: 8px 0; }
+.dlg-rv__scan h4 { margin: 8px 0 4px; font-size: 14px; }
+.dlg-rv__scan p { margin: 4px 0; overflow-wrap: anywhere; }
 .dlg-rv__files ul { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; font-size: 13px; }
 .dlg-rv__files summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
 .dlg-rv__rec { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 14px; }

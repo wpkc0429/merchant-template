@@ -10,7 +10,7 @@ import * as dh from "../lib/design-history.js";
 import { allowPreviewLinkOrigin } from "../ui/kit.js";
 import { t } from "../lib/design.js";
 import { need } from "./guard.js";
-import { ActionError, denied, invalid } from "./errors.js";
+import { ActionError, denied, invalid, previewDenied } from "./errors.js";
 
 const S = () => session.shopID;
 const gone = () => new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
@@ -36,7 +36,7 @@ export function toActionError(e) {
   if (!(e instanceof ApiError)) return genericError(e);
   const detail = String(e.body?.error?.message || "").slice(0, 300);
   const mk = (kind, key, reason, status, params) => { const a = new ActionError(kind, t(key, params), { reason, status }); a.detail = detail; return a; };
-  if (e.status === 403) return denied();
+  if (e.status === 403) return e.code === "preview_read_only" ? previewDenied() : denied();
   if (e.status === 404) return gone();
   if (e.status === 422) return mk("invalid", "err.422", "invalid", 422);
   if (e.status === 429) {

@@ -1,5 +1,7 @@
 // Customers (members), their points, and member tiers.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 import { listOrders } from "./orders.js";
 
 const base = (shopID) => `/admin/shops/${shopID}`;

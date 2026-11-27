@@ -10,7 +10,7 @@ import * as vp from "../lib/versionpreview.js";
 import { t } from "../lib/design.js";
 import { allowPreviewLinkOrigin } from "../ui/kit.js";
 import { need } from "./guard.js";
-import { ActionError, denied } from "./errors.js";
+import { ActionError, denied, previewDenied } from "./errors.js";
 import { genericError } from "./design-history.js";
 
 const S = () => session.shopID;
@@ -32,7 +32,7 @@ export function toActionError(e) {
     a.detail = detailOf(e);
     return a;
   };
-  if (e.status === 403) return denied();
+  if (e.status === 403) return e.code === "preview_read_only" ? previewDenied() : denied();
   if (e.status === 404) return gone();
   if (e.status === 409) {
     switch (e.code) {

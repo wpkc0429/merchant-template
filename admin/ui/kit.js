@@ -8,6 +8,7 @@ import { t } from "../lib/design.js";
 import { buildCoreCss } from "./core-dialog-css.js";
 import { resolveTheme } from "./core-theme.js";
 import { coreText } from "../lib/fixed-text.js";
+import { gcs, raf as rafNative, hasRaf, viewport } from "../lib/natives.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -193,13 +194,13 @@ const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "stat
 // incompatible syntax just reads as an invalid colour and the default is used.
 /** The design's tokens as the core sees them: an opaque colour per token (or null) and a trimmed raw string. */
 function readTokens(host, colorProbe) {
-  const cs = getComputedStyle(host);
+  const cs = gcs(host);
   const raw = (n) => String(cs.getPropertyValue(n) || "").trim();
   const color = (n) => {
     const v = raw(n);
     if (!v) return null;
     colorProbe.style.color = "rgb(1, 2, 3)"; colorProbe.style.color = v;
-    const c = getComputedStyle(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
+    const c = gcs(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
     if (!m || (c === "rgb(1, 2, 3)" && v.replace(/\s+/g, "") !== "rgb(1,2,3)")) return null; // invalid, or not opaque (rgba / color() are refused)
     return [Number(m[1]), Number(m[2]), Number(m[3])];
   };
@@ -247,9 +248,9 @@ export function showCoreDialog(opts) {
       } catch { /* no layout (a test DOM) */ }
     };
     let raf = 0, timer = 0;
-    const loop = () => { correct(); if (counted) raf = requestAnimationFrame(loop); };
+    const loop = () => { correct(); if (counted) raf = rafNative(loop); };
     correct(); theme();
-    if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
+    if (hasRaf()) raf = rafNative(loop);
     timer = setInterval(() => { correct(); theme(); }, 250);
     // At the moment of a confirmation: is the dialog really shown at its normal scale, fully inside the screen? Otherwise nothing is submitted.
     sane = () => {
@@ -258,8 +259,8 @@ export function showCoreDialog(opts) {
         const was = dialog.offsetWidth > 0 ? dialog.getBoundingClientRect().width / dialog.offsetWidth : 0;
         correct(); theme();
         const rc = dialog.getBoundingClientRect(), w = dialog.offsetWidth;
-        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
-          && rc.left >= -1 && rc.top >= -1 && rc.right <= innerWidth + 1 && rc.bottom <= innerHeight + 1;
+        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, viewport().w * 0.8) && rc.height >= 100
+          && rc.left >= -1 && rc.top >= -1 && rc.right <= viewport().w + 1 && rc.bottom <= viewport().h + 1;
       } catch { return true; }
     };
     r.sane = sane;
@@ -435,6 +436,8 @@ export function fieldErrors(err) {
 export function errorMessage(err, over = {}) {
   if (err && err.isActionError) return err.message;
   if (!err || typeof err.status !== "number") return t("err.network");
+  if (err.status === 403 && err.code === "preview_read_only") return coreText("pv.readOnly"); // the platform refused a write on a preview host (D18): calm, never "no permission"
+  if (err.status === 403 && err.code === "preview_scope_missing") return coreText("pv.scopeMissing");
   if (over[err.status]) return over[err.status];
   switch (err.status) {
     case 401: return t("err.401");

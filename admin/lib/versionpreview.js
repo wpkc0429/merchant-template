@@ -2,7 +2,9 @@
 //   POST /admin/shops/{id}/design/requests/{requestId}/version-preview  -> 202 {id, status: "queued", ...}
 //   GET  /admin/shops/{id}/design/version-previews/{previewId}          -> the preview (`origin` only for the person who asked)
 // Everything the design layer receives is the plain object normalize() returns: no shop id, no token, no raw response.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isId = (v) => typeof v === "string" && UUID_RE.test(v);

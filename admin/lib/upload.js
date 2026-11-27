@@ -5,7 +5,9 @@
 // The server only accepts JPEG/PNG/WebP, so HEIC/HEIF MUST be converted here (quality 0.92,
 // original resolution; resizing and WebP are the server's job). Size limits are re-checked
 // AFTER conversion because HEIC->JPEG can be larger than the original.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 import { t } from "./design.js";
 
 const HEIC_TYPES = new Set(["image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"]);
@@ -56,19 +58,35 @@ async function heicNative(file) {
 }
 
 let heicLoader = null;
+let heicFn = null; // the decoder, taken from the page the moment its script ran; the global is removed so a later script cannot swap it
+// The vendored decoder starts a worker as soon as it loads, so it is loaded on the first HEIC upload, not at boot. By then the intrinsics are
+// frozen (lib/lockdown.js) and the design layer may be running, so the load is guarded: a window.heic2any that already exists was put there by
+// someone else (refused), and after the script ran the global must be a plain function-valued data property (anything else = tampered, refused).
 function loadHeic2any() {
-  if (window.heic2any) return Promise.resolve(window.heic2any);
+  if (heicFn) return Promise.resolve(heicFn);
   if (!heicLoader) {
     heicLoader = new Promise((resolve, reject) => {
+      try { if (Object.getOwnPropertyDescriptor(window, "heic2any")) delete window.heic2any; } catch { /* checked next */ }
+      if (Object.getOwnPropertyDescriptor(window, "heic2any")) { heicLoader = null; reject(new Error("heic2any is already defined")); return; }
       const s = document.createElement("script");
       s.src = new URL("../vendor/heic2any.min.js", import.meta.url).href;
-      s.onload = () => (window.heic2any ? resolve(window.heic2any) : reject(new Error("heic2any missing")));
+      s.onload = () => {
+        const d = Object.getOwnPropertyDescriptor(window, "heic2any");
+        if (d && "value" in d && typeof d.value === "function" && d.configurable && d.writable) {
+          heicFn = d.value;
+          try { delete window.heic2any; } catch { /* kept: heicFn is what the core uses */ }
+          resolve(heicFn);
+        } else { heicLoader = null; reject(new Error("heic2any missing or tampered")); }
+      };
       s.onerror = () => { heicLoader = null; reject(new Error("heic2any load failed")); };
       document.head.append(s);
     });
   }
   return heicLoader;
 }
+
+/** Boot phase (app.js): the conversion hook object cannot be replaced by anything that runs later. */
+export function sealUpload() { Object.freeze(heicHooks); }
 
 /** Exposed so tests can observe/replace the conversion step. */
 export const heicHooks = {
