@@ -463,11 +463,11 @@ test('storefront scan (D23): an index.html HTML comment that ends with --!> or i
   const idx = read(d, 'public/index.html');
   const withBody = (extra) => { write(d, 'public/index.html', idx.replace('</body>', extra + '\n</body>')); const r = layers(d); write(d, 'public/index.html', idx); return r; };
   assert.equal(layers(d).status, 0);
-  // a comment ended by --!> and a later --> : the browser runs the script, the old regex hid it
+  // (in a merchant repo the inline script is a WARNING, in the template an error; the message is what shows the script was seen) a comment ended by --!> and a later --> : the browser runs the script, the old regex hid it
   for (const extra of ['<!-- x --!><script>alert(1)</script><!-- y -->', '<!--> <script>alert(1)</script> -->', '<!---> <script>alert(1)</script> -->', '<!-- a --!> <script>alert(1)</script>', '<script>alert(1)']) {
-    const r = withBody(extra); assert.equal(r.status, 1, extra + r.out); assert.match(r.out, /inline <script>/, extra);
+    const r = withBody(extra); assert.match(r.out, /inline <script>/, extra + r.out);
   }
-  for (const extra of ['<!-- <script>alert(1)</script> -->', '<!-- <script>alert(1)</script> --!>', '<!-- plain -->']) { const r = withBody(extra); assert.equal(r.status, 0, extra + r.out); }
+  for (const extra of ['<!-- <script>alert(1)</script> -->', '<!-- <script>alert(1)</script> --!>', '<!-- plain -->']) { const r = withBody(extra); assert.equal(r.status, 0, extra + r.out); assert.doesNotMatch(r.out, /inline <script>/, extra); }
 });
 
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {

@@ -510,7 +510,8 @@ function declaredNames(masked) {
   for (const m of masked.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
   for (const m of masked.matchAll(/(?<![\w$.])([\w$]+)\s*=>/g)) names.add(m[1]);
   for (const m of masked.matchAll(/(?<![\w$.])catch\s*\(\s*([\w$]+)/g)) names.add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])(?:async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\(([^()]*)\)\s*\{/g)) add(m[1]);   // method parameters
+  // method parameters (D23: not the head of an if / for / while / switch / with block, whose condition would otherwise "declare" every name written in it)
+  for (const m of masked.matchAll(/(?<![\w$.])(?!(?:if|for|while|switch|catch|with|return|typeof|else|do|function|await|yield|void|delete|new|throw|case)(?![\w$]))(?:async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\(([^()]*)\)\s*\{/g)) add(m[1]);
   return names;
 }
 function storefrontNetworkFindings(source) {
