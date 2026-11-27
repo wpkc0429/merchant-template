@@ -404,6 +404,7 @@ test('storefront scan (D20, D23): a bare open(...) is window.open unless the fil
     "var open = pick(); open('https://evil.example.test');",
     "let open; open = pick(); open('https://evil.example.test');",
     "function wrap(open) { return open('https://evil.example.test'); }",
+    "const open = (x) => x; open(2);",
     "const f = (open) => open('https://evil.example.test');",
     "const { open } = api; open('https://evil.example.test');",
     "var o = { open: 1 }; var open = o.x; open('https://evil.example.test');"
@@ -509,7 +510,6 @@ test('storefront scan (D20): copy text, comments, data keys and look-alike ident
     "var drawer = { open() { return 1; }, close() { return 0; } }; drawer.open();",
     "class Menu { open() { this.shown = true; } static open() { return 1; } }",
     "function open(x) { return x; } open(1);",
-    "const open = (x) => x; open(2);",
     "var el = {}; el.dataset.ping = '1'; el.style.ping = 'x'; var props = {}; props.ping = 2; state.ping = 3; options.ping = 4;",
     "var w = window.innerWidth; var h = window.innerHeight; var s = window.scrollY; var z = self === window;"
   ];
