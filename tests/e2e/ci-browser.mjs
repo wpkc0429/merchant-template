@@ -10,22 +10,23 @@ import { appendFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '../..');
+// [suite, minimum executed checks] = about 80% of the count when this was written (69, 39, 89, 73, 63, 97, 185, 32): a suite that exits early after a few ok lines fails.
 export const SUITES = [
-  'admin/e2e/preview-banner.mjs',
-  'admin/e2e/d12-runtime.mjs',
-  'admin/e2e/import-map.mjs',
-  'admin/e2e/hardening.mjs',
-  'admin/e2e/profile.mjs',
-  'admin/e2e/design-history.mjs',
-  'admin/e2e/design-review.mjs',
-  'tests/e2e/content-storefront.mjs',
+  ['admin/e2e/preview-banner.mjs', 55],
+  ['admin/e2e/d12-runtime.mjs', 31],
+  ['admin/e2e/import-map.mjs', 71],
+  ['admin/e2e/hardening.mjs', 58],
+  ['admin/e2e/profile.mjs', 50],
+  ['admin/e2e/design-history.mjs', 77],
+  ['admin/e2e/design-review.mjs', 148],
+  ['tests/e2e/content-storefront.mjs', 25],
 ];
 
 if (process.env.REQUIRE_BROWSER_TESTS !== '1') { console.error('ci-browser: REQUIRE_BROWSER_TESTS=1 must be set (a CI run may not skip)'); process.exit(1); }
 if (!process.env.PLAYWRIGHT_DIR) { console.error('ci-browser: PLAYWRIGHT_DIR must point at a folder with node_modules/playwright'); process.exit(1); }
 
 let total = 0; const bad = []; const rows = [];
-for (const rel of SUITES) {
+for (const [rel, min] of SUITES) {
   const t0 = Date.now();
   const r = spawnSync(process.execPath, [resolve(ROOT, rel)], { cwd: ROOT, encoding: 'utf8', timeout: 600000, maxBuffer: 256 * 1024 * 1024, env: process.env });
   const out = (r.stdout || '') + (r.stderr || '');
@@ -33,7 +34,7 @@ for (const rel of SUITES) {
   const skipped = /^SKIP /m.test(out);
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   total += executed;
-  const problem = r.status !== 0 ? `exit ${r.status ?? r.signal}` : skipped ? 'SKIPPED' : executed === 0 ? 'zero checks executed' : '';
+  const problem = r.status !== 0 ? `exit ${r.status ?? r.signal}` : skipped ? 'SKIPPED' : executed < min ? `only ${executed} checks executed (minimum ${min})` : '';
   console.log(`${problem ? 'FAIL' : 'ok  '} ${rel}: ${executed} checks executed, ${secs}s${problem ? ' <- ' + problem : ''}`);
   rows.push(`| ${rel} | ${executed} | ${problem || 'ok'} |`);
   if (problem) { bad.push(rel); console.log(out.split('\n').slice(-60).join('\n')); }

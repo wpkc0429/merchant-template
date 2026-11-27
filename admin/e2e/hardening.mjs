@@ -631,6 +631,7 @@ try {
   {
     const { ctx, pg } = await open(`/design/${RID}`);
     await pg.waitForSelector(T("dh-review"));
+    const tBeforeOpen = await pg.evaluate(() => performance.now()); // taken BEFORE the dialog exists, so the 1 s bound below is measured from a point no later than the real start
     await pg.locator(T("dh-review")).click();
     await pg.waitForSelector("dialog[open] .dlg-rv");
     await pg.evaluate(() => { window.__muts = 0; const h = __dq('[data-testid="confirm-rv-delay"]'); new MutationObserver((m) => { window.__muts += m.length; }).observe(h, { childList: true, characterData: true, subtree: true }); });
@@ -646,8 +647,8 @@ try {
     await sleep(100);
     check("a trusted click before 1 s does nothing (no request)", S.approveCalls.length === 0 && (await pg.locator("dialog[open] .dlg-rv").count()) === 1);
     await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 4000 });
-    const late = (await pg.evaluate(() => performance.now())) - t0;
-    check("the button became enabled no earlier than 1 s after the dialog appeared", late >= 900, `late=${late}`);
+    const late = (await pg.evaluate(() => performance.now())) - tBeforeOpen;
+    check("the button became enabled no earlier than 1 s after the dialog appeared", late >= 1000, `late=${late}`);
     check("the hint is gone once the button is usable", (await hint.innerText()).trim() === "");
     const a11y = await pg.evaluate(() => { const h = __dq('[data-testid="confirm-rv-delay"]'), r = __dq('[data-testid="confirm-rv-ready"]'), b = __dq('dialog [data-testid="confirm-yes"]'); return { muts: window.__muts, hintLive: h.getAttribute("aria-live"), hintRole: h.getAttribute("role"), readyRole: r.getAttribute("role"), readyLive: r.getAttribute("aria-live"), ready: r.textContent, dis: b.disabled, aria: b.getAttribute("aria-disabled"), desc: b.getAttribute("aria-describedby") }; });
     check("a11y: the countdown is NOT a live region and changed at most 3 times in about a second (not every 100 ms)", a11y.hintLive === null && a11y.hintRole === null && a11y.muts <= 3, JSON.stringify(a11y));
