@@ -8,7 +8,7 @@ import { t } from "../lib/design.js";
 import { buildCoreCss } from "./core-dialog-css.js";
 import { resolveTheme } from "./core-theme.js";
 import { coreText } from "../lib/fixed-text.js";
-import { gcs, raf as rafNative, hasRaf } from "../lib/natives.js";
+import { gcs, raf as rafNative, hasRaf, viewport } from "../lib/natives.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -259,8 +259,8 @@ export function showCoreDialog(opts) {
         const was = dialog.offsetWidth > 0 ? dialog.getBoundingClientRect().width / dialog.offsetWidth : 0;
         correct(); theme();
         const rc = dialog.getBoundingClientRect(), w = dialog.offsetWidth;
-        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, innerWidth * 0.8) && rc.height >= 100
-          && rc.left >= -1 && rc.top >= -1 && rc.right <= innerWidth + 1 && rc.bottom <= innerHeight + 1;
+        return Math.abs(was - 1) <= 0.02 && dialog.isConnected && dialog.open && host.isConnected && w > 0 && Math.abs(rc.width / w - 1) <= 0.02 && rc.width >= Math.min(280, viewport().w * 0.8) && rc.height >= 100
+          && rc.left >= -1 && rc.top >= -1 && rc.right <= viewport().w + 1 && rc.bottom <= viewport().h + 1;
       } catch { return true; }
     };
     r.sane = sane;

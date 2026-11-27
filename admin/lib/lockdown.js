@@ -112,6 +112,13 @@ export function lockdownIntrinsics() {
       try { Object.defineProperty(g, name, { writable: false, configurable: false }); locked.push(name); } catch { /* skip */ }
     }
   }
+  // 3b. every configurable ACCESSOR on the global object (innerWidth, innerHeight, devicePixelRatio, scrollX, visualViewport, name, opener, sessionStorage, on* handlers ...):
+  // keep the getter (reads keep working), drop the setter, make it non-configurable. The core captured what it needs in lib/natives.js first.
+  for (const name of Object.getOwnPropertyNames(g)) {
+    let d; try { d = Object.getOwnPropertyDescriptor(g, name); } catch { continue; }
+    if (!d || !d.configurable || !d.get) continue;
+    try { Object.defineProperty(g, name, { get: d.get, set: undefined, enumerable: d.enumerable, configurable: false }); locked.push(name); } catch { /* skip */ }
+  }
   // 4. the singleton instances (accessors on window)
   for (const name of INSTANCES) {
     try {

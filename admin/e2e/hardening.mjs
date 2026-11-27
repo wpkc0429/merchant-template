@@ -296,6 +296,10 @@ T("defineProperty(document, querySelector)", () => Object.defineProperty(documen
 T("window.performance replaced", () => { Object.defineProperty(window, "performance", { value: performance, configurable: true }); }, () => Object.getOwnPropertyDescriptor(window, "performance").configurable === false);
 T("window.performance = x (replaceable setter)", () => { window.performance = { now: () => 1e12 }; }, () => String(performance.now).includes("[native code]"));
 T("Notification / PerformanceObserver / FileList / DataTransfer statics and prototypes", () => { Notification.requestPermission = () => 1; PerformanceObserver.prototype.observe = () => 1; FileList.prototype.item = () => null; DataTransfer.prototype.setData = () => 1; }, () => String(Notification.requestPermission).includes("[native code]") && String(PerformanceObserver.prototype.observe).includes("[native code]") && String(FileList.prototype.item).includes("[native code]") && String(DataTransfer.prototype.setData).includes("[native code]"));
+T("defineProperty(window, innerWidth / innerHeight / devicePixelRatio)", () => { Object.defineProperty(window, "innerWidth", { value: 99999 }); Object.defineProperty(window, "innerHeight", { value: 99999 }); Object.defineProperty(window, "devicePixelRatio", { value: 7 }); }, () => window.innerWidth < 99999 && window.innerHeight < 99999 && window.devicePixelRatio !== 7);
+T("defineProperty(window, visualViewport / name / sessionStorage / scrollX)", () => { Object.defineProperty(window, "visualViewport", { value: { width: 1 } }); Object.defineProperty(window, "name", { value: "x" }); Object.defineProperty(window, "sessionStorage", { value: {} }); Object.defineProperty(window, "scrollX", { value: 5 }); }, () => window.visualViewport && window.visualViewport.width !== 1 && typeof sessionStorage.getItem === "function");
+T("window.onerror / onload = f (handler setters)", () => { window.onerror = () => 1; window.onload = () => 1; }, () => window.onerror === null && window.onload === null);
+T("defineProperty(document, visibilityState / hidden / activeElement)", () => { Object.defineProperty(document, "visibilityState", { value: "hidden" }); Object.defineProperty(document, "hidden", { value: true }); Object.defineProperty(document, "activeElement", { value: null }); }, () => document.visibilityState === "visible" && document.hidden === false);
 T("new property on a frozen prototype (Array.prototype.sneaky)", () => { Array.prototype.sneaky = () => 1; }, () => !("sneaky" in []));
 T("Object.setPrototypeOf(Object.prototype, {})", () => Object.setPrototypeOf(Object.prototype, { evil: 1 }), () => !("evil" in {}));
 export default out;
@@ -315,6 +319,7 @@ for (const name of Object.getOwnPropertyNames(globalThis)) {
     if ((typeof v === "function" || (v && typeof v === "object" && v !== globalThis)) && (d.writable || d.configurable)) off.push("binding " + name);
   }
 }
+for (const name of Object.getOwnPropertyNames(globalThis)) { if (ex.includes(name)) continue; const d = Object.getOwnPropertyDescriptor(globalThis, name); if (d && d.get) { audited++; if (d.configurable || (d.set && name !== "location")) off.push("accessor " + name); } }
 for (const n of ["document", "performance", "navigator", "screen", "history", "crypto", "customElements"]) { try { const v = globalThis[n]; if (v && !Object.isFrozen(v)) off.push("instance " + n); audited++; } catch {} }
 export default { off, audited, names: ["Temporal", "FileList", "DataTransfer", "ReadableStreamDefaultReader", "PerformanceObserver", "CustomElementRegistry", "Notification"].filter((n) => typeof globalThis[n] === "function") };
 `;
@@ -324,6 +329,8 @@ try { performance.now = () => 1e12; n++; } catch {}
 try { Object.defineProperty(performance, "now", { value: () => 1e12 }); n++; } catch {}
 try { window.getComputedStyle = () => ({ getPropertyValue: () => "", display: "none", width: "1px", zoom: "1", transform: "none", opacity: "1", visibility: "visible" }); n++; } catch {}
 try { window.matchMedia = () => ({ matches: true }); n++; } catch {}
+try { Object.defineProperty(window, "innerWidth", { value: 50, configurable: true }); Object.defineProperty(window, "innerHeight", { value: 50, configurable: true }); n++; } catch {}
+try { Object.defineProperty(window, "devicePixelRatio", { value: 9, configurable: true }); n++; } catch {}
 export default { shadowed: n, now: performance.now() };
 `;
 MODULES["/hostile/heic.js"] = `
@@ -421,7 +428,7 @@ try {
     await pg.waitForSelector(T("dh-review"));
     const r = await pg.evaluate(() => import("/hostile/clock.js").then((m) => JSON.parse(JSON.stringify(m.default))));
     APP_MODE = { noLockdown: false, noSeal: false, evalCsp: false };
-    check("control: the shadowing succeeded (the freeze is off in this run)", r.shadowed >= 3 && r.now > 1e11, JSON.stringify(r));
+    check("control: the shadowing succeeded (the freeze is off in this run)", r.shadowed >= 4 && r.now > 1e11, JSON.stringify(r));
     await pg.locator(T("dh-review")).click();
     await pg.waitForSelector("dialog[open] .dlg-rv");
     await pg.locator(T("confirm-rv-ack")).click();
@@ -434,6 +441,34 @@ try {
     await yes.click();
     await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("and after the delay the approval works (no display alarm from the shadowed getComputedStyle)", S.approveCalls.length === 1);
+    await ctx.close();
+  }
+
+  console.log("preview banner geometry keeps working when a module redefines innerWidth / innerHeight (control run: freeze off)");
+  {
+    APP_MODE = { noLockdown: true, noSeal: false, evalCsp: false };
+    const { ctx, pg } = await open("/design", { preview: "version" });
+    await settle(pg);
+    await pg.evaluate(() => import("/hostile/clock.js"));
+    await sleep(1800); // the banner re-checks itself on a timer and on mutations
+    check("the banner is still there and the app did not fail closed although the viewport size reads 50x50", (await pg.evaluate(() => Boolean(document.getElementById("core-preview-banner")))) && (await pg.locator(".shell").count()) === 1 && (await pg.evaluate(() => window.innerWidth)) === 50);
+    APP_MODE = { noLockdown: false, noSeal: false, evalCsp: false };
+    await ctx.close();
+  }
+  console.log("accessibility tree: the waiting approve button (Chromium AX tree)");
+  {
+    const { ctx, pg } = await open(`/design/${RID}`);
+    await pg.waitForSelector(T("dh-review"));
+    await pg.locator(T("dh-review")).click();
+    await pg.waitForSelector("dialog[open] .dlg-rv");
+    await pg.locator(T("confirm-rv-ack")).click();
+    const cdp = await ctx.newCDPSession(pg);
+    const approve = async () => { const { nodes } = await cdp.send("Accessibility.getFullAXTree"); const n = nodes.find((x) => !x.ignored && x.role && x.role.value === "button" && x.name && /核准並上線/.test(x.name.value || "")); if (!n) return null; const p = Object.fromEntries((n.properties || []).map((q) => [q.name, q.value && q.value.value])); return { name: n.name.value, desc: (n.description && n.description.value) || "", disabled: p.disabled === true, focusable: p.focusable === true }; };
+    const during = await approve();
+    check("AX tree, during the wait: a button named 核准並上線, exposed (not ignored), disabled, focusable, described by the countdown hint", Boolean(during) && during.disabled === true && during.focusable === true && /秒後才能使用/.test(during.desc), JSON.stringify(during));
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 5000 });
+    const after = await approve();
+    check("AX tree, after the wait: the same button is enabled and its description no longer carries a countdown", Boolean(after) && after.disabled === false && !/秒後才能使用/.test(after.desc), JSON.stringify(after));
     await ctx.close();
   }
 

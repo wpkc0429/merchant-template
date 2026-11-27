@@ -128,3 +128,16 @@ test('review follow-up: enumeration freeze, captured natives, aria-disabled coun
   for (const n of ['enumerates every own property', 'does not block approval', 'lib/natives.js', 'aria-disabled', 'EXCEPTIONS']) assert.ok(d.includes(n), n);
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /does not block the person from approving/);
 });
+
+test('window accessors: the viewport is read through getters captured at boot, and the lockdown makes every window accessor read-only (D18 item 6g)', () => {
+  const nat = f('admin/lib/natives.js');
+  assert.match(nat, /export const viewport/);
+  for (const p of ['ui/kit.js', 'ui/preview-banner.js']) {
+    const s = f(`admin/${p}`).replace(/\/\/.*$/gm, '');
+    assert.ok(!/\binnerWidth\b|\binnerHeight\b/.test(s), `${p} reads the viewport through a live global`);
+    assert.match(s, /viewport\(\)/, p);
+  }
+  assert.match(f('admin/lib/lockdown.js'), /set: undefined, enumerable: d\.enumerable, configurable: false/);
+  assert.match(f('docs/DECISIONS.md'), /WindowProperties/);
+  assert.match(f('admin/docs/DESIGN-LAYER.md'), /named-properties object/);
+});

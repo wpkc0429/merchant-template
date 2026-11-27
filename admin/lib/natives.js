@@ -12,6 +12,11 @@ const _raf = grab("requestAnimationFrame");
 
 /** Monotonic milliseconds (performance.now). */
 export const now = () => (_now ? _now() : performance.now());
+// The viewport size: the getters are captured, so redefining window.innerWidth / innerHeight later changes nothing for the core.
+const getter = (name) => { try { const d = Object.getOwnPropertyDescriptor(w, name); return d && typeof d.get === "function" ? d.get.bind(w) : null; } catch { return null; } };
+const _iw = getter("innerWidth"), _ih = getter("innerHeight");
+/** {w, h}: the layout viewport as the browser reports it (captured getters). */
+export const viewport = () => ({ w: _iw ? _iw() : w.innerWidth, h: _ih ? _ih() : w.innerHeight });
 export const hasGcs = () => typeof (_gcs || w.getComputedStyle) === "function";
 export const gcs = (...a) => (_gcs || w.getComputedStyle)(...a);
 export const matchMedia = (q) => (_mm || w.matchMedia)(q);

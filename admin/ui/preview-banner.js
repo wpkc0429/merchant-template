@@ -18,7 +18,7 @@
 //     body/html pseudo-elements that sit over the bar.
 // It has no design-layer input at all except what the host wrote into preview-config.js (lib/preview.js).
 import { previewMode } from "../lib/preview.js";
-import { gcs, raf as rafNative, hasRaf, hasGcs } from "../lib/natives.js";
+import { gcs, raf as rafNative, hasRaf, hasGcs, viewport } from "../lib/natives.js";
 
 export const BANNER_ID = "core-preview-banner";
 const KIND_LABEL = { version: "版本預覽", change: "改版預覽" };
@@ -189,8 +189,8 @@ function visible(b) {
       if (ac.display === "none" || ac.visibility !== "visible" || Number(ac.opacity) < 1 || hiddenBy(ac)) return false;
     }
     const r = b.getBoundingClientRect();
-    const vw = window.innerWidth || document.documentElement.clientWidth || 0;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    const vw = viewport().w || document.documentElement.clientWidth || 0;
+    const vh = viewport().h || document.documentElement.clientHeight || 0;
     if (r.height < 16 || r.width < 8 || (vw && r.width < vw * 0.8)) return false;
     if (vw && vh && (r.right <= 0 || r.bottom <= 0 || r.left >= vw || r.top >= vh)) return false; // moved out of the viewport
     // a modal <dialog> (ui/kit.js) makes everything outside it inert, and inert nodes are skipped by hit-testing: the banner is then raised above
