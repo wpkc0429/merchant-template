@@ -14,7 +14,7 @@ const ROOT = resolve(import.meta.dirname, '../..');
 export const SUITES = [
   ['admin/e2e/preview-banner.mjs', 55],
   ['admin/e2e/d12-runtime.mjs', 31],
-  ['admin/e2e/import-map.mjs', 71],
+  ['admin/e2e/import-map.mjs', 83],
   ['admin/e2e/hardening.mjs', 58],
   ['admin/e2e/profile.mjs', 50],
   ['admin/e2e/design-history.mjs', 77],
