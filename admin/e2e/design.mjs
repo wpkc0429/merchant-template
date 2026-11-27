@@ -126,12 +126,13 @@ try {
   page = await newPage();
   await login(page, OWNER);
   const order = await page.locator('[data-testid="custom-nav"] [data-nav]').evaluateAll((els) => els.map((e) => e.dataset.nav));
-  check("owner: nav is reordered (reversed) and reports is hidden", order[0] === "team" && order[order.length - 1] === "home" && !order.includes("reports"), order.join());
+  // the core lists the personal profile item (D21) LAST, so a shell that reverses every item shows it first, with its fixed label
+  check("owner: nav is reordered (reversed) and reports is hidden", order[0] === "profile" && order[1] === "team" && order[order.length - 1] === "home" && !order.includes("reports"), order.join());
   await page.context().close();
   page = await newPage();
   await login(page, STAFF);
   const staffNav = await page.locator('[data-testid="custom-nav"] [data-nav]').evaluateAll((els) => els.map((e) => e.dataset.nav));
-  check("staff: the shell only ever receives allowed destinations", staffNav.join() === "deliveries,orders,home", staffNav.join());
+  check("staff: the shell only ever receives allowed destinations", staffNav.join() === "profile,deliveries,orders,home", staffNav.join());
   await T(page, "nav-team-forced").click();
   await T(page, "no-permission").waitFor();
   check("staff: a hard-coded link to #/team still lands on the core's no-permission screen", (await T(page, "team-row").count()) === 0);
