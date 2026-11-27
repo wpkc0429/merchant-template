@@ -122,6 +122,8 @@ const checkOracle = (escapedIdents) => {
 // Constructs: every banned category of the D12 rules (see escaped-cases.mjs), plus a few that exercise the lexer around the name.
 const CONSTRUCTS = IDENT_CONSTRUCTS.map(([name, rule, build]) => ({ name, src: build(S1 + name + S2) }));
 // Statements before a construct that make the lexer's state hard: regex vs division, templates, comments with quotes, blocks.
+// Valid code whose "/" is ambiguous: the scanner reads it both ways, so these are for the forbidden-construct test only (the wrong reading of legitimate code may over-report).
+const HARD_PREFIXES = ['const of = 4; const z = of / 2 / 3;', "const f = () => {}\n/'/.test(1);", 'let i = 0; i\n++\n/x/.lastIndex;', 'function* g() { yield /\'/.test(1); }'];
 const PREFIXES = ['', '', 'const a = root.b / 2 / 3;', "if (root) /'/.test('x');", 'while (0) /"/.test(1);', 'function f() {}\n/\'/.test("x");', 'const t = `a${`b${root.c}`}d`;', "const r = /[//]/;", 'const n = 1_000 + 0x1f + .5 + 1e3;', "const s = '//', u = \"/*\";", 'let i = 0; const q = i++ / 2 / 3;', 'const o = { a: 1 }; const v = o.a / 2;', "const w = root.in / 2 / 3;", 'class A { #p = 1; m() { return this.#p; } }', 'const x = root?.y?.[0];', '/* \' */', '// it\'s\n'];
 
 test('D17 fuzz: forbidden constructs are flagged with the same rule in every transformed spelling (seeded)', (t) => {
@@ -130,7 +132,7 @@ test('D17 fuzz: forbidden constructs are flagged with the same rule in every tra
   const byRule = {};
   for (let n = 0; n < ITER; n++) {
     const c = rng.pick(CONSTRUCTS);
-    const prefix = rng.pick(PREFIXES);
+    const prefix = rng.pick(PREFIXES.concat(HARD_PREFIXES));
     const plainBody = prefix + ' ' + c.src.split(S1).join('').split(S2).join('');
     const want = rulesOf(scan(plainBody));
     assert.ok(want.size > 0, `the plain construct must be flagged: ${plainBody}`);

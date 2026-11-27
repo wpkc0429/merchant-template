@@ -210,6 +210,47 @@ for (const [how, body, rule = FI] of SEPARATED) {
   ESCAPED_CASES.push({ name: `D17 forbidden name: ${how}`, kind: "code", expect: rule, src: view(body) });
   if (/fetch/.test(body)) ESCAPED_CASES.push({ name: `D17 forbidden name, escaped: ${how}`, kind: "code", expect: rule, src: view(body.replaceAll(FETCH, idEsc(FETCH, "mid"))) });
 }
+// ── review round 2: ambiguous "/" and "}" places. Each of these is VALID JavaScript in which the "/" is a division or a regex; a quote or a
+// slash on the same line must not make the scanner lose sight of the fetch call. They must be reported whichever way the "/" reads. ──
+const AMBIGUOUS = [
+  ["of as a variable, then a division", `const of = 4; of / fetch("x") / 3;`],
+  ["of before a regex in for-of", `for (const x of /'/g.exec(y)) { fetch("x"); const q = '/'; }`],
+  ["arrow function body then a line break then a regex", `const f = () => {}\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["arrow function body then a division", `const f = () => {} / 2 / fetch("x") / 3;`],
+  ["yield before a regex in a generator", `function* g() { yield /'/.test(1); fetch('x'); const q = '/'; }`],
+  ["yield as a variable, then a division", `var yield_ = 1; function g() { var yield = 2; return yield / fetch("x") / 3; }`],
+  ["await before a regex in an async function", `async function g() { await /'/.test(1); fetch('x'); const q = '/'; }`],
+  ["await as a variable, then a division", `function g() { var await = 2; return await / fetch("x") / 3; }`],
+  ["let as a variable, then a division", `var let = 2; let / fetch("x") / 3;`],
+  ["get, set, async, static as variables, then divisions", `var get = 1, set = 2, async = 3, stat = 4; get / fetch("x") / 2; set / fetch("x") / 2; async / fetch("x") / 2;`],
+  ["a block statement then a regex", `if (root) { root.a(); }\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a bare block then a regex", `{ root.a(); }\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a function declaration then a regex", `function f() {}\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a function expression then a division", `const g = function () {} / 2 / fetch("x") / 3;`],
+  ["a class declaration then a regex", `class A {}\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a class expression then a division", `const C = class {} / 2 / fetch("x") / 3;`],
+  ["an object literal then a division", `const o = {} / 2 / fetch("x") / 3;`],
+  ["an object literal in a ternary then a regex-looking line", `const o = root ? {} : {}\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a label block then a regex", `lbl: { root.a(); }\n/'/.test(1); fetch('x'); const q = '/';`],
+  ["a case block then a regex", `switch (root.a) { case 1: { root.b(); }\n/'/.test(1); fetch('x'); const q = '/'; }`],
+  ["an if condition then a regex", `if (root) /'/.test(1); fetch('x'); const q = '/';`],
+  ["a while condition then a regex", `while (0) /'/.test(1); fetch('x'); const q = '/';`],
+  ["a for header then a regex", `for (;0;) /'/.test(1); fetch('x'); const q = '/';`],
+  ["a call then a division", `root.f(1) / 2 / fetch("x") / 3;`],
+  ["a call named like a statement on a property", `root.if(1) / 2 / fetch("x") / 3;`],
+  ["a postfix increment then a division", `let i = 1; i++ / 2 / fetch("x") / 3;`],
+  ["a prefix increment on the next line then a regex", `let i = 1; i\n++\n/'/.lastIndex; fetch('x'); const q = '/';`],
+  ["a regex inside a template expression", "const t = `${/'/.test(1)}`; fetch('x'); const q = '/';"],
+  ["nested ambiguity: of then arrow then block", `const of = 1; const f = () => {}\n/'/.test(1); of / fetch("x") / 3; const q = '/';`],
+];
+for (const [how, body] of AMBIGUOUS) ESCAPED_CASES.push({ name: `D17 ambiguous slash: ${how}`, kind: "code", expect: FI, src: view(body) }, { name: `D17 ambiguous slash, escaped name: ${how}`, kind: "code", expect: FI, src: view(body.replaceAll(FETCH, idEsc(FETCH, "mid"))) });
+// ctx may not be shadowed through any binding form
+for (const [how, body] of [
+  ["catch parameter", `try { root.a(); } catch (ctx) { root.b(); }`], ["array pattern", `const [ctx] = root.a;`], ["object pattern", `const { ctx } = root.a;`], ["renaming pattern", `const { a: ctx } = root.a;`],
+  ["nested pattern", `const { a: { ctx } } = root.a;`], ["array assignment", `[ctx] = root.a;`], ["object assignment", `({ ctx } = root.a);`], ["postfix increment", `ctx++;`], ["prefix decrement", `--ctx;`],
+  ["for-of variable", `for (ctx of root.a) {}`], ["for-of pattern", `for (const [ctx] of root.a) {}`], ["import as", `import { x as ctx } from "./a.js";`], ["default import", `import ctx from "./a.js";`],
+]) ESCAPED_CASES.push({ name: `D17 ctx shadow: ${how}`, kind: "code", expect: "js/ctx-shadow", src: view(body) }, { name: `D17 ctx shadow, escaped: ${how}`, kind: "code", expect: "js/ctx-shadow", src: view(body.replace("ctx", idEsc("ctx", "mid"))) });
+
 // computed access hidden behind "?.[" or after a number, regex or object literal
 for (const [how, body] of [
   ["?.[ with a call", `root?.[ctx.t("a")]; `], ["?.[ with a sum of calls", `root?.[a() + b()];`], ["[ after an object literal", `const v = { a: 1 }[a() + b()];`],
@@ -240,6 +281,10 @@ OK("class with private names and a static block", view(`class A { #p = 1; static
 OK("unicode identifiers and a zero-width joiner", view(`const caf${String.fromCharCode(0xe9)} = 1, ${String.fromCharCode(0x53d8)}${String.fromCharCode(0x91cf)} = 2, a${ZWJ}b = 3; return caf${String.fromCharCode(0xe9)} + ${String.fromCharCode(0x53d8)}${String.fromCharCode(0x91cf)} + a${ZWJ}b;`));
 OK("a forbidden word in comments, with line separators", view(`// fetch and window${LS} const a = 1; /* eval( */ return a; // innerHTML`));
 OK("exotic whitespace between tokens", view(`const${NBSP}a${LS}=${PS}1;${BOM}return a;`));
+OK("ctx read in patterns and literals is not a shadow", view(`const { t, can } = ctx; const o = { ctx }; const [a, b] = [ctx, 1]; const { x = ctx } = root.a; return [o, a, b, x, t, can];`));
+OK("a catch parameter with another name, for-of with another name", view(`try { root.a(); } catch (err) { root.b(err); } for (const item of root.items) root.c(item); for (const [k, v] of Object.entries(root.o)) root.d(k, v);`));
+OK("a division after of, let, get used as names is still fine code", view(`const of = 4, get = 2; return of / 2 / get;`));
+OK("an arrow body then a normal statement", view(`const f = () => { root.a(); }\nconst g = f;\nreturn g;`));
 OK("a hashbang first line", `#!/usr/bin/env node\nexport default function view(root, ctx) { return 1; }`);
 OK("an escaped relative import that stays under design/", `import { helper } from "${strEsc("../parts/helper.js", "u", "mid")}";\nexport default function view(root, ctx) { return helper; }`);
 OK("ctx used normally with an escaped property name that is allowed", view(`const { ${idEsc("ui", "first")} } = ctx; return ${idEsc("ctx", "last")}.t("a");`));

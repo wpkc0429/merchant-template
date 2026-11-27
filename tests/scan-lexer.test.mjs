@@ -128,6 +128,9 @@ test('D17 storefront scan: escaped identifiers and strings, hidden-comment trick
   const bad = [
     [`${idEsc('fetch', 'first')}('/x');`, 'escaped fetch'],
     [`${idEsc('fetch', 'all', true)}('/x');`, 'braced fetch'],
+    [`var a = {} / ${idEsc('fetch', 'last')}('/x') / 2;`, 'a division guessed as a regex still has its escapes decoded'],
+    [`var of = 1; of / ${idEsc('fetch', 'first')}('/x') / 2;`, 'of as a variable'],
+    [`var i = 1; i++ / ${idEsc('fetch', 'mid')}('/x') / 2;`, 'postfix increment then a division'],
     [`var s = ${idEsc('localStorage', 'mid')};`, 'escaped localStorage'],
     [`var s = {}; s.${idEsc('sessionStorage', 'last')};`, 'escaped sessionStorage property'],
     [`var s = {}; s.${idEsc('XMLHttpRequest', 'first')};`, 'escaped XMLHttpRequest'],
@@ -196,4 +199,45 @@ test('D17 is recorded (newest first) with the owner approval, the contract, the 
   assert.match(f('docs/CORE-CHANGELOG.md'), /decision D17/);
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /How the scan reads your code \(decision D17/);
   assert.match(f('admin/scripts/lib/design-scan.mjs'), /THE NORMALISATION CONTRACT \(decision D17\)/);
+});
+
+// ── performance: hostile input must not make the scan quadratic (jsFileMaxBytes is 128 KiB, so this is the worst a file can be) ──
+import { scanCode } from '../admin/scripts/lib/design-scan.mjs';
+test('D17 performance: 128 KiB of hostile input is scanned in bounded time (admin scan and storefront scan)', () => {
+  const N = 128 * 1024;
+  const rep = (str) => str.repeat(Math.ceil(N / str.length));
+  const w = (b) => `export default function view(root, ctx) { ${b} }`;
+  const cases = {
+    'object keys that are DOM names': w(`const o = { ${rep('parentNode:1,')} };`),
+    'a "<" followed by spaces in a string': w(`const s = "<${' '.repeat(N)}";`),
+    'many "<" in a template': w('const s = `' + '<'.repeat(N) + '`;'),
+    'nested parentheses': w('f(' + '('.repeat(N / 2) + ')'.repeat(N / 2) + ');'),
+    'unclosed parentheses': w('('.repeat(N)),
+    'nested index brackets': w('x = ' + 'a['.repeat(N / 4) + '0' + ']'.repeat(N / 4) + ';'),
+    'dollar calls': w(rep('$($(')),
+    'regex-like class openers': w(rep('/[')),
+    'file input builders': w(rep('x = h("input", { ')),
+    'destructuring from ctx': w(rep('} = ctx ')),
+    'a long .click chain': w('a' + rep('.click')),
+    'Object.keys calls': w(rep('Object.keys(')),
+    'arrow parameters named ctx': w(rep('(ctx) => ')),
+    'braces': w('{'.repeat(N)),
+    'ambiguous slashes': w(rep('of / 2 ')),
+    'ambiguous blocks': w(rep('{}\n/ ')),
+  };
+  for (const [name, src] of Object.entries(cases)) {
+    const t0 = Date.now();
+    scanCode(src, 'design/views/f.js', { designRelPath: 'design/views/f.js' });
+    const ms = Date.now() - t0;
+    assert.ok(ms < 10000, `${name}: ${ms} ms`);
+  }
+  const d = fresh();
+  const orig = read(d, 'public/app.js');
+  for (const line of ["var s = '" + '<'.repeat(200000) + "';", "var s = '<" + ' '.repeat(200000) + "';", 'var r = ' + '/['.repeat(60000) + ';', 'x' + '.click'.repeat(30000) + ';']) {
+    write(d, 'public/app.js', orig + '\n' + line + '\n');
+    const t0 = Date.now();
+    layers(d);
+    const ms = Date.now() - t0;
+    assert.ok(ms < 15000, `storefront scan: ${ms} ms for ${line.slice(0, 30)}`);
+  }
 });

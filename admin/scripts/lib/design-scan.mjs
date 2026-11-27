@@ -55,12 +55,15 @@ const NAMED_API_STRINGS = new Set([...DIALOG_API, ...SYNTHETIC_INPUT, ...DOM_ESC
 /** Core confirmation controls named in a string (ids, test ids, selectors): "confirm-yes", "confirm-warning", ... */
 const CORE_CONFIRM_REF = /confirm-(yes|no|ok|cancel|warning|detail|dialog|title|text)\b/i;
 
-const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal|dialog)\b/i;
+// (written without "s*/?s*": two adjacent optional groups backtrack quadratically on a long run of spaces)
+const HTML_IN_STRING = /<\s*(?:\/\s*)?(script|iframe|frame|object|embed|link|meta|style|base|form|svg|math|template|noscript|portal|dialog)\b/i;
 const SCHEME_IN_STRING = /(javascript|vbscript)\s*:|data\s*:\s*text\/html|:\/\//i;
 
 const KEYWORDS_BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await", "instanceof"]);
 /** Punctuators, longest first (so `&&=`, `>>>=`, `**=`, `?.` ... are one token; a missing entry would split an operator into pieces the rules misread). */
 const PUNCT = [">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"];
+/** Words that are keywords in some positions and plain identifiers in others: a `/` after them is lexed both ways. */
+const CONTEXTUAL_KEYWORDS = new Set(["of", "yield", "await"]);
 /** Assignment operators (a token right after `ctx` that changes it). */
 const ASSIGN_OPS = new Set(["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="]);
 
@@ -173,6 +176,8 @@ export function lex(src, mode = "div") {
   const last = (back = 1) => toks[toks.length - back];
   const isDot = (tk) => Boolean(tk) && tk.t === "punct" && (tk.v === "." || tk.v === "?.");
   toks.ambiguous = false;
+  let sites = 0; // ambiguous places met so far; `mode` decides each one (see lexAll)
+  const decide = () => { const i = sites++; toks.sites = sites; toks.ambiguous = true; return mode === "regex" ? true : Array.isArray(mode) ? Boolean(mode[i]) : false; };
 
   // is a `function` / `class` keyword after this token an EXPRESSION (so the body's "}" ends an operand)?
   const isExprStart = (tk) => {
@@ -197,7 +202,7 @@ export function lex(src, mode = "div") {
         }
         return "block"; // method body, get / set body
       }
-      if (p.v === "=>") return "expr";
+      if (p.v === "=>") return "amb"; // an arrow body ends an operand, but a newline after it can start a statement (ASI): `() => {} /re/.test(x)` on two lines
       if (p.v === ";" || p.v === "{" || p.v === "}") return "block";
       if (p.v === ":") return "amb"; // object value or ternary branch, or a case label / labelled block
       return "expr";
@@ -219,16 +224,22 @@ export function lex(src, mode = "div") {
     if (!p) return true;
     if (p.t === "num" || p.t === "str" || p.t === "regex") return false;
     if (p.t === "tpl") return !p.end;
-    if (p.t === "id") return !isDot(last(2)) && KEYWORDS_BEFORE_REGEX.has(p.v); // `a.in / 2`: a property named like a keyword
+    if (p.t === "id") {
+      if (isDot(last(2))) return false; // `a.in / 2`: a property named like a keyword
+      if (CONTEXTUAL_KEYWORDS.has(p.v)) return decide(); // `of`, `yield`, `await` are also plain identifiers: `of / 2` is a division
+      return KEYWORDS_BEFORE_REGEX.has(p.v);
+    }
     if (p.v === ")") return Boolean(p.stmtParen);
     if (p.v === "]") return false;
     if (p.v === "}") {
       if (p.exprEnd === true) return false;
       if (p.exprEnd === false) return true;
-      toks.ambiguous = true;
-      return mode === "regex";
+      return decide();
     }
-    if (p.v === "++" || p.v === "--") return !endsOperand(last(2)); // a++ / 2 is a division, ++/re/.lastIndex a regex
+    if (p.v === "++" || p.v === "--") { // a++ / 2 is a division, ++/re/.lastIndex a regex; after a line break the operator belongs to the NEXT statement
+      if (!endsOperand(last(2))) return true;
+      return last(2).line === p.line ? false : decide();
+    }
     return true;
   };
 
@@ -303,7 +314,7 @@ export function lex(src, mode = "div") {
     }
     if (c === "/" && regexAllowed()) {
       let j = i + 1, inClass = false, closed = false;
-      while (j < n && !isLT(src[j])) {
+      while (j < n && j < i + 1000 && !isLT(src[j])) { // (longer than 1000 characters: not read as a regex, keeps the lexer linear)
         if (src[j] === "\\") { j += 2; continue; }
         if (src[j] === "[") inClass = true; else if (src[j] === "]") inClass = false; else if (src[j] === "/" && !inClass) { closed = true; break; }
         j++;
@@ -321,10 +332,43 @@ export function lex(src, mode = "div") {
   return toks;
 }
 
-/** lex() once, or twice (both readings of an ambiguous `}` then `/`) when the source has such a place. Every rule must run on each result. */
+/**
+ * lex() once, plus one more reading for every combination of the places where a `/` could be a regex or a division (a `}` that may
+ * end a block or an object, an arrow body, `of` / `yield` / `await`, a `++` after a line break). Every rule must run on each result.
+ * At most MAX_READINGS readings are made; beyond that the "all division" and "all regex" readings are added.
+ */
 export function lexAll(src) {
-  const a = lex(src, "div");
-  return a.ambiguous ? [a, lex(src, "regex")] : [a];
+  const MAX_READINGS = 24;
+  const first = lex(src, []);
+  const out = [first], todo = [{ prefix: [], toks: first }];
+  while (todo.length) {
+    const { prefix, toks } = todo.shift();
+    for (let i = prefix.length; i < (toks.sites || 0); i++) {
+      if (out.length >= MAX_READINGS) { out.push(lex(src, "regex")); return out; }
+      const next = prefix.concat(new Array(i - prefix.length).fill(false), [true]);
+      const t = lex(src, next);
+      out.push(t); todo.push({ prefix: next, toks: t });
+    }
+  }
+  return out;
+}
+
+/**
+ * Does a tag in this text carry the popover or inert attribute (`<div popover>`, `<p inert=...`)? Linear: a tag runs from a "<" to the next ">",
+ * and a "<" inside an unfinished tag starts nothing new (the earlier "<" already covers everything after it up to the same ">").
+ */
+export function tagHasPopoverOrInert(text) {
+  let pos = 0;
+  while (pos < text.length) {
+    const lt = text.indexOf("<", pos);
+    if (lt < 0) return false;
+    const gt = text.indexOf(">", lt);
+    const end = gt < 0 ? text.length : gt;
+    if (/^<[^>]*\s(popover|inert)\b/i.test(text.slice(lt, end))) return true;
+    if (gt < 0) return false;
+    pos = gt + 1;
+  }
+  return false;
 }
 
 const v = (rule, msg, file, line) => ({ rule, msg, file, line });
@@ -388,6 +432,20 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
   const out = [];
   const at = (k) => toks[k];
   const isP = (tk, val) => tk && tk.t === "punct" && tk.v === val;
+  // Bracket structure, computed ONCE (every rule below used to rescan: quadratic on hostile input). enclosing[i] = the innermost open bracket
+  // before token i (-1 at top level); matchOf pairs ( [ { with their closers whatever the kinds; braceMatch / parenMatch pair one kind only.
+  const enclosing = new Array(toks.length).fill(-1), matchOf = new Array(toks.length).fill(-1), braceMatch = new Array(toks.length).fill(-1), parenMatch = new Array(toks.length).fill(-1);
+  {
+    const all = [], br = [], pa = [];
+    toks.forEach((t, i) => {
+      enclosing[i] = all.length ? all[all.length - 1] : -1;
+      if (t.t !== "punct") return;
+      if (t.v === "(" || t.v === "[" || t.v === "{") all.push(i);
+      else if ((t.v === ")" || t.v === "]" || t.v === "}") && all.length) { const o = all.pop(); matchOf[o] = i; matchOf[i] = o; }
+      if (t.v === "{") br.push(i); else if (t.v === "}" && br.length) { const o = br.pop(); braceMatch[o] = i; }
+      if (t.v === "(") pa.push(i); else if (t.v === ")" && pa.length) { const o = pa.pop(); parenMatch[o] = i; }
+    });
+  }
 
   // ── helpers for the v0.4.2 rules ──
   // ctxNames: names that are PURE aliases of ctx, ctx.actions, ctx.data or ctx.auth (never ctx.ui, never computed / spread / called). The only
@@ -407,7 +465,7 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
     if (isUi && toks[k - 2] && toks[k - 2].t === "id") uiNs.add(toks[k - 2].v);
     if (toks[k - 2] && toks[k - 2].t === "id" && pure && okNs) { ctxNames.add(toks[k - 2].v); if (seg === "auth") authNames.add(toks[k - 2].v); continue; }
     if (isP(toks[k - 2], "}") && pure) {
-      for (let j = k - 3; j >= 0 && !isP(toks[j], "{"); j--) {
+      for (let j = k - 3; j >= 0 && j > k - 400 && !isP(toks[j], "{"); j--) {
         if (toks[j].t !== "id") continue;
         if (isUi) uiNames.add(toks[j].v);
         else if (okNs && (seg === "auth" || (seg === null && toks[j].v === "auth") ? authNames.add(toks[j].v) || true : true) && !(seg === null && (toks[j].v === "ui" || (isP(toks[j - 1], ":") && toks[j - 2] && toks[j - 2].v === "ui")))) ctxNames.add(toks[j].v);
@@ -434,7 +492,7 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
     const viaH = t0.t === "id" && uiNames.has(t0.v) && isP(toks[k + 1], "(") && toks[k + 2] && toks[k + 2].t === "str" && toks[k + 2].v === "input" && isP(toks[k + 3], ",") && isP(toks[k + 4], "{");
     if (!viaH) continue;
     let depth = 0;
-    for (let j = k + 4; j < toks.length; j++) {
+    for (let j = k + 4; j < toks.length && j < k + 600; j++) {
       if (isP(toks[j], "{") || isP(toks[j], "(") || isP(toks[j], "[")) depth++;
       else if (isP(toks[j], "}") || isP(toks[j], ")") || isP(toks[j], "]")) { depth--; if (depth <= 0) break; }
       else if (depth === 1 && toks[j].t === "id" && toks[j].v === "type" && isP(toks[j + 1], ":") && toks[j + 2] && toks[j + 2].t === "str" && toks[j + 2].v === "file") { fileInputs.add(toks[k - 2].v); break; }
@@ -443,7 +501,7 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
   /** index of the root identifier of the member chain whose last member is toks[k] (a.b.c: k points at c), or -1 when it starts at a call/index. */
   const chainRoot = (k) => {
     let j = k;
-    while (isP(toks[j - 1], ".") || isP(toks[j - 1], "?.")) {
+    for (let steps = 0; (isP(toks[j - 1], ".") || isP(toks[j - 1], "?.")) && steps < 200; steps++) {
       const before = toks[j - 2];
       if (!before || before.t !== "id") return -1;
       j -= 2;
@@ -455,15 +513,9 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
   // { parentNode: 1 } as a plain object literal key is harmless data; as a destructuring pattern ({ parentNode: p } = el) it is an escape
   const isObjectLiteralKey = (k) => {
     if (!(isP(toks[k + 1], ":") && (isP(toks[k - 1], "{") || isP(toks[k - 1], ",")))) return false;
-    let d = 0, o = -1;
-    for (let j = k - 1; j >= 0; j--) {
-      if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) d++;
-      else if (isP(toks[j], "(") || isP(toks[j], "[")) { if (d === 0) return false; d--; }
-      else if (isP(toks[j], "{")) { if (d === 0) { o = j; break; } d--; }
-    }
-    if (o < 0) return false;
-    let c = -1; d = 0;
-    for (let j = o; j < toks.length; j++) { if (isP(toks[j], "{")) d++; else if (isP(toks[j], "}") && --d === 0) { c = j; break; } }
+    const o = enclosing[k];
+    if (o < 0 || !isP(toks[o], "{")) return false;
+    const c = braceMatch[o];
     if (c < 0) return false;
     const a1 = toks[c + 1], a2 = toks[c + 2];
     if (isP(a1, "=") || isP(a1, "=>")) return false;
@@ -483,7 +535,7 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
   const dollarAllowed = (k) => {
     if (!isP(toks[k + 1], "(")) return false;
     let depth = 0, j = k + 1, commaAt = -1;
-    for (; j < toks.length; j++) {
+    for (; j < toks.length && j < k + 500; j++) { // (a call with more than 500 tokens of arguments is not the allowed form)
       if (isP(toks[j], "(") || isP(toks[j], "[") || isP(toks[j], "{")) depth++;
       else if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) { depth--; if (depth === 0) break; }
       else if (depth === 1 && isP(toks[j], ",") && commaAt < 0) commaAt = j;
@@ -508,7 +560,7 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
       continue;
     }
     if (tk.t === "tpl") {
-      if (/<\s*\/?\s*dialog\b/i.test(tk.v) || (/<[^>]*\s(popover|inert)\b/i.test(tk.v))) out.push(v("js/dialog-element", "a template contains a <dialog> or a popover/inert attribute", file, tk.line));
+      if (/<\s*(?:\/\s*)?dialog\b/i.test(tk.v) || tagHasPopoverOrInert(tk.v)) out.push(v("js/dialog-element", "a template contains a <dialog> or a popover/inert attribute", file, tk.line));
       if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", "a template refers to a core confirmation control", file, tk.line));
       if (HTML_IN_STRING.test(tk.v) || SCHEME_IN_STRING.test(tk.v)) out.push(v("js/html-or-url-in-string", `a template contains markup, a script scheme or an external URL: ${JSON.stringify(tk.v.slice(0, 60))}`, file, tk.line));
       continue;
@@ -568,13 +620,13 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
     // "?.[" is a member access too (a?.[x + y] is as computed as a[x + y]); so is a number, a regex or a closed template before "[", and the "}" of an object literal or function expression
     const isMember = (p.t === "id" && !KEYWORDS_BEFORE_REGEX.has(p.v) && !["return", "const", "let", "var", "export", "default", "in", "of"].includes(p.v)) || isP(p, ")") || isP(p, "]") || isP(p, "?.") || (isP(p, "}") && p.exprEnd === true) || p.t === "str" || p.t === "num" || p.t === "regex" || (p.t === "tpl" && p.end);
     if (!isMember) continue; // array literal
-    let depth = 1, j = k + 1;
-    while (j < toks.length && depth) { if (isP(toks[j], "[")) depth++; else if (isP(toks[j], "]")) depth--; j++; }
-    const inner = toks.slice(k + 1, j - 1);
+    const j = matchOf[k] > k && isP(toks[matchOf[k]], "]") ? matchOf[k] + 1 : toks.length + 1;
+    const inner = j - 1 - (k + 1) <= 6 ? toks.slice(k + 1, j - 1) : toks.slice(k + 1, k + 8); // a longer index is never a simple one; do not copy it (nested indexes would be quadratic)
+    const longIndex = j - 1 - (k + 1) > 6;
     if (inner.length === 1 && inner[0].t === "str" && ["click", "submit", "show", "close", "$", "$$", "showDialog", "confirmDialog", "closest"].includes(inner[0].v)) out.push(v("js/synthetic-input", `computed access to ["${inner[0].v}"] is refused (it can click, submit, open or close)`, file, toks[k].line));
     if (inner.length === 1 && inner[0].t === "str" && DOM_ESCAPE_DOT.has(inner[0].v)) out.push(v("js/dom-escape", `computed access to ["${inner[0].v}"] reaches the window and is refused (as .${inner[0].v} is)`, file, toks[k].line));
     if (inner.length === 1 && inner[0].t === "str" && /^on[a-z]+$/.test(inner[0].v) && isP(toks[j], "=")) out.push(v("js/event-handler-assignment", `assigning ["${inner[0].v}"] is refused (use h({ ${inner[0].v}: fn }) or addEventListener)`, file, toks[k].line));
-    if (!inner.length || !SIMPLE_INDEX(inner)) out.push(v("js/computed-access", "computed member access with a non-trivial expression is refused (use a plain index, identifier or string literal)", file, toks[k].line));
+    if (longIndex || !inner.length || !SIMPLE_INDEX(inner)) out.push(v("js/computed-access", "computed member access with a non-trivial expression is refused (use a plain index, identifier or string literal)", file, toks[k].line));
   }
 
   // imports must stay inside design/
@@ -606,7 +658,22 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
       if (name === null) { if (isP(toks[j], "[") && toks[j + 1] && toks[j + 1].t === "str" && isP(toks[j + 2], "]")) { name = toks[j + 1].v; j += 3; } else return null; }
       return isP(toks[j], "(") ? { name, open: j } : null;
     };
-    const closeOf = (i) => { let dd = 0; for (let j = i; j < toks.length; j++) { if (isP(toks[j], "(")) dd++; else if (isP(toks[j], ")") && --dd === 0) return j; } return -1; };
+    const closeOf = (i) => (isP(toks[i], "(") ? parenMatch[i] : -1);
+    // is toks[k] a NAME bound or assigned by a destructuring pattern: const { ctx } = x, const { a: ctx } = x, const [ctx] = x, [ctx] = x, ({ ctx } = x), for (const [ctx] of x)?
+    // (a pattern is a { } or [ ] whose closer is followed by "=", or by of / in after const / let / var / "(" ; nested patterns are looked through)
+    const inPattern = (k) => {
+      const pv = toks[k - 1], nx = toks[k + 1];
+      if (!(pv && pv.t === "punct" && ["{", "[", ",", ":"].includes(pv.v) && nx && nx.t === "punct" && ["}", "]", ",", "="].includes(nx.v))) return false;
+      let o = enclosing[k];
+      for (let level = 0; level < 4 && o >= 0; level++) {
+        if (isP(toks[o], "{") || isP(toks[o], "[")) {
+          const c = matchOf[o], after = toks[c + 1], before = toks[o - 1];
+          if (c > o && after && (isP(after, "=") || (after.t === "id" && (after.v === "of" || after.v === "in") && before && ((before.t === "id" && ["const", "let", "var"].includes(before.v)) || isP(before, "("))))) return true;
+        } else break;
+        o = enclosing[o];
+      }
+      return false;
+    };
     for (let k = 0; k < toks.length; k++) {
       const tk = toks[k];
       if (tk.t === "id" && tk.v === "ctx" && !isP(toks[k - 1], ".") && !isP(toks[k - 1], "?.")) {
@@ -614,7 +681,11 @@ function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
         if (p && p.t === "id" && ["const", "let", "var", "function", "class"].includes(p.v)) out.push(v("js/ctx-shadow", "declaring another `ctx` hides the real one from the scan; use another name", file, tk.line));
         else if (toks[k + 1] && toks[k + 1].t === "punct" && ASSIGN_OPS.has(toks[k + 1].v)) out.push(v("js/ctx-shadow", "assigning to `ctx` is refused", file, tk.line));
         else if (isP(toks[k + 1], "=>")) out.push(v("js/ctx-shadow", "an arrow parameter named `ctx` hides the real one; use another name", file, tk.line));
-        else if (p && p.t === "id" && p.v === "catch") out.push(v("js/ctx-shadow", "a catch parameter named ctx is refused", file, tk.line));
+        else if (isP(p, "(") && toks[k - 2] && toks[k - 2].t === "id" && toks[k - 2].v === "catch") out.push(v("js/ctx-shadow", "a catch parameter named ctx is refused", file, tk.line));
+        else if (isP(p, "++") || isP(p, "--") || isP(toks[k + 1], "++") || isP(toks[k + 1], "--")) out.push(v("js/ctx-shadow", "assigning to `ctx` is refused", file, tk.line));
+        else if (p && p.t === "id" && (p.v === "import" || p.v === "as")) out.push(v("js/ctx-shadow", "importing something as `ctx` hides the real one; use another name", file, tk.line));
+        else if (isP(p, "(") && toks[k - 2] && toks[k - 2].t === "id" && toks[k - 2].v === "for" && toks[k + 1] && toks[k + 1].t === "id" && (toks[k + 1].v === "of" || toks[k + 1].v === "in")) out.push(v("js/ctx-shadow", "a for loop variable named `ctx` is refused", file, tk.line));
+        else if (inPattern(k)) out.push(v("js/ctx-shadow", "declaring or assigning `ctx` through a destructuring pattern is refused", file, tk.line));
       }
       if (isP(tk, "(") && braceDepth[k] > 0) {
         const c = closeOf(k), pv = toks[k - 1];

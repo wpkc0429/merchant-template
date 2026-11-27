@@ -76,8 +76,9 @@ const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) 
 //    and octal escapes inside string and template literals (a '\x73hopcommerce:' IS 'shopcommerce:'); an escape that would decode to a quote,
 //    a backslash, a backtick, a `$` or a line terminator stays as written.
 // The contract (identifier names and property names by escape-decoded value, string / template values by cooked value) is the one of
-// admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line and
-// nothing is blanked inside it, so a wrong guess can only keep a comment (over-report), never hide code.
+// admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line; nothing is
+// blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
+// wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
 function canonicalSource(src) {
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
@@ -92,6 +93,15 @@ function canonicalSource(src) {
     else if (d === 'x') { m = /^\\x([0-9a-fA-F]{2})/.exec(src.slice(j, j + 4)); if (m) return [String.fromCharCode(parseInt(m[1], 16)), j + 4]; }
     else if (d >= '0' && d <= '7') { m = /^\\([0-3][0-7]{0,2}|[4-7][0-7]?)/.exec(src.slice(j, j + 5)); return [String.fromCharCode(parseInt(m[1], 8)), j + 1 + m[1].length]; }
     return null;
+  };
+  const decodeRange = (a, b) => { // src[a..b) with unicode and hex escapes decoded (the same rule as in a string), used for text that may be a regex or code
+    let r = '';
+    for (let j = a; j < b;) {
+      if (src[j] === '\\' && (src[j + 1] === 'u' || src[j + 1] === 'x')) { const e = esc(j); if (e && e[1] <= b && !keepEsc(e[0])) { r += e[0]; j = e[1]; continue; } }
+      if (src[j] === '\\') { r += src.slice(j, j + 2); j += 2; continue; }
+      r += src[j]; j++;
+    }
+    return r;
   };
   const keepEsc = (s) => '"\'`\\$'.includes(s) || LT(s);
   const escape = () => { // inside a string or template, at a backslash
@@ -140,12 +150,12 @@ function canonicalSource(src) {
     }
     if (c === '/' && regexOk) {
       let j = i + 1, inClass = false, closed = false;
-      while (j < n && !LT(src[j])) {
+      while (j < n && j < i + 1000 && !LT(src[j])) { // (a regex literal longer than 1000 characters is read as an operator: keeps the scan linear)
         if (src[j] === '\\') { j += 2; continue; }
         if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false; else if (src[j] === '/' && !inClass) { closed = true; break; }
         j++;
       }
-      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(src.slice(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
+      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
     }
     if (c === '?' && src[i + 1] === '.' && !/[0-9]/.test(src[i + 2] || '')) { out.push('?.'); i += 2; regexOk = true; word = ''; afterDot = true; continue; }
     // punctuator
@@ -324,11 +334,26 @@ for (const f of designFiles) {
 // delegation depends on them), so DOM traversal is NOT scanned here (the admin scan, which has an own-element rule, does).
 // What no storefront screen needs: the dialog tag, the popover / inert attributes, the dialog / popover / fullscreen /
 // pointer-lock methods, and programmatic clicks, events or submits. Comments are stripped; strings are scanned on purpose.
+// A tag carrying one of the attributes below (a "<" ... ">" run). Linear: a "<" inside an unfinished tag starts nothing new, so a line of
+// 200k "<" costs one pass (the regex <[^>]*\s(...) it replaces rescanned to the end of the line from every "<").
+function tagHasDesignAttr(text) {
+  const re = /^<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)/i;
+  let pos = 0;
+  while (pos < text.length) {
+    const lt = text.indexOf('<', pos);
+    if (lt < 0) return false;
+    const gt = text.indexOf('>', lt);
+    if (re.test(gt < 0 ? text.slice(lt) : text.slice(lt, gt + 1))) return true;
+    if (gt < 0) return false;
+    pos = gt + 1;
+  }
+  return false;
+}
 const D12_RULES = [
   [/\b(showModal|showPopover|hidePopover|togglePopover|requestFullscreen|requestPointerLock|exitFullscreen|exitPointerLock)\b/, 'dialog/popover/fullscreen/pointer-lock API (D12)'],
   [/<\s*dialog\b|createElement\(\s*['"]dialog['"]/i, 'the dialog tag (D12)'],
   // attribute / property forms only (a tag attribute, .popover, { popover: ... }, setAttribute('popover')), not the word inside copy text
-  [/<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)|\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i, 'the popover / inert attribute (D12)'],
+  [{ test: (ln) => tagHasDesignAttr(ln) || /\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i.test(ln) }, 'the popover / inert attribute (D12)'],
   [/\.\s*(click|submit|requestSubmit|dispatchEvent)\s*\(/, 'programmatic click / submit / dispatchEvent (D12)', true],
   [/\bnew\s+(Mouse|Keyboard|Pointer|Input|Focus|Touch|Wheel|Custom|UI|Submit)?Event\b/, 'constructing a synthetic event (D12)', true],
   [/confirm-(yes|no|ok|cancel|warning|detail)\b/i, 'a core confirmation control id (D12)']
