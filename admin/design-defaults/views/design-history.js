@@ -23,7 +23,7 @@ export default async function designHistory(root, ctx) {
 
   const filter = select([{ value: "", label: t("dh.filter.all") }, ...STATUSES.map((s) => ({ value: s, label: t(`dh.status.${s}`) }))], status,
     { "aria-label": t("dh.filter.aria"), "data-testid": "dh-status", onchange: (e) => ctx.navigate(path({ status: e.currentTarget.value, page: 1 })) });
-  const area = h("div", { class: "list-area", "data-testid": "dh-area" });
+  const area = h("div", { class: "list-area dh-area", "data-testid": "dh-area" });
   const stateLine = h("div", { "data-testid": "dh-state" });
   root.append(
     pageHeader(t("dh.title"), { eyebrow: t("dh.eyebrow") }),
@@ -55,18 +55,24 @@ export default async function designHistory(root, ctx) {
     { label: "", render: (r) => h("a", { class: "dh-open", href: `#/design/${r.id}`, "data-testid": "dh-open", "aria-label": t("dh.open.aria", { who: personName(ctx, r.proposedByName) }) }, t("dh.open")) },
   ];
 
+  let busy = false, moved = false; // a page change is asked for once: clicks while loading or after one was sent are ignored
+  const goPage = (n) => { if (busy || moved) return; moved = true; ctx.navigate(path({ page: n })); };
+
   async function load() {
+    busy = true;
     clear(area).append(loading());
-    let list;
+    let list, state = null;
     try {
-      const [l, state] = await Promise.all([
+      const [l, st] = await Promise.all([
         data.listDesignRequests({ site, status: status || undefined, page, pageSize: PAGE_SIZE }),
         data.getDesignState().catch(() => null),
       ]);
-      list = l;
+      list = l; state = st;
       if (!ctx.alive()) return;
+      busy = false;
       drawState(state);
     } catch (e) {
+      busy = false;
       if (!ctx.alive()) return;
       clear(area).append(e && e.reason === "design_storage_not_configured"
         ? emptyState(t("dh.empty.storage.title"), t("dh.empty.storage.hint"))
@@ -74,6 +80,13 @@ export default async function designHistory(root, ctx) {
       return;
     }
     clear(area);
+    // A page past the end (for example a hand-typed ?page=99999): jump to the last page instead of "N rows" over an empty table.
+    if (list.total > 0 && !list.requests.length && page > 1) { moved = true; ctx.navigate(path({ page: Math.max(1, Math.ceil(list.total / (list.pageSize || PAGE_SIZE))) }), { replace: true }); return; }
+    if (!list.total && !status && state && state.designEnabled === false) {
+      // Not an error: AI edit is simply not switched on for this shop and there is nothing to show yet.
+      area.append(h("div", { "data-testid": "dh-disabled" }, emptyState(t("dh.empty.disabled.title"), t("dh.empty.disabled.hint"))));
+      return;
+    }
     if (!list.total && !list.requests.length) {
       area.append(status
         ? emptyState(t("dh.empty.filtered.title"), t("dh.empty.filtered.hint"))
@@ -87,7 +100,7 @@ export default async function designHistory(root, ctx) {
         onRowClick: (r) => ctx.navigate(`/design/${r.id}`),
         rowAttrs: (r) => ({ "data-testid": "dh-row", "data-id": r.id, "data-status": r.status, "data-current": r.isCurrent ? "1" : "0" }),
       })),
-      pager(list.page, list.total, list.pageSize, (n) => ctx.navigate(path({ page: n }))));
+      pager(list.page, list.total, list.pageSize, goPage));
   }
   await load();
 }

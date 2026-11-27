@@ -15,7 +15,7 @@ const VIEWS = ['views/design-history.js', 'views/design-request.js', 'parts/desi
 test('D15 is recorded in docs/DECISIONS.md (newest first) and names what is and is not in PR3', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[0], 'D15');
+  assert.equal(ids[1], 'D15'); assert.equal(ids[0], 'D16');
   const start = lines.findIndex((l) => l.startsWith('### D15. T1-T4 PR3'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
@@ -83,4 +83,35 @@ test('design history screens in a real Chromium (skips cleanly without Playwrigh
   const r = spawnSync(process.execPath, [path.join(TEMPLATE, 'admin', 'e2e', 'design-history.mjs')], { encoding: 'utf8', timeout: 280000 });
   process.stdout.write(r.stdout || '');
   assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
+});
+
+test('D16 is recorded (newest first) with the four owner approvals, and the design_enabled gating is in the code, the e2e and both registries', async () => {
+  const lines = f('docs/DECISIONS.md').split('\n');
+  const start = lines.findIndex((l) => l.startsWith('### D16.'));
+  assert.ok(start > 0);
+  let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
+  const body = lines.slice(start + 1, end).join('\n');
+  for (const n of ['ctx.route.state.readOnly', 'designEnabled', 'design_enabled', 'D10', 'lexer escape fix', 'frozen intrinsics', '_headers', '1-second delayed enable', 'separate preview origin', 'scan report', 'check-design', 'FUTURE PRs', 'every screen is AI-redesignable', 'option D', 'no new ctx function', 'out-of-range']) assert.ok(body.includes(n), n);
+  assert.match(body.trim(), /\.$/);
+  // the field is normalized in the read layer (literal true only) and documented
+  assert.match(f('admin/lib/design-history.js'), /designEnabled: d\.design_enabled === true/);
+  assert.match(f('admin/docs/DESIGN-LAYER.md'), /designEnabled/);
+  assert.match(f('docs/CORE-CHANGELOG.md'), /decision D16/);
+  // the shell gates the item on it and the history view shows the calm disabled state; both registries are identical
+  const shell = f('admin/design-defaults/views/shell.js');
+  assert.match(shell, /st\.designEnabled === true/);
+  assert.match(shell, /let designOn = false/);
+  const view = f('admin/design-defaults/views/design-history.js');
+  assert.match(view, /state\.designEnabled === false/);
+  assert.match(view, /dh\.empty\.disabled\.title/);
+  assert.match(view, /Math\.ceil\(list\.total/);
+  for (const v of ['views/shell.js', 'views/design-history.js', 'copy.js']) assert.equal(f(`admin/design/${v}`), f(`admin/design-defaults/${v}`).replace(/\n  "vp\.limits".*\n/, '\n'), v);
+  const e2e = f('admin/e2e/design-history.mjs');
+  for (const n of ['design_enabled: nav gating', 'page=99999999999', 'three rapid next-page clicks']) assert.ok(e2e.includes(n), n);
+  assert.match(f('admin/design-defaults/theme.css'), /^\.dh-area \.pager \.btn \{/m);
+  assert.ok(!/^\.pager \.btn/m.test(f('admin/design-defaults/theme.css')), 'no global pager rule');
+  // still no new ctx function, no release
+  const api = JSON.parse(f('admin/lib/public-api.json'));
+  assert.equal(api['ctx.data'].filter((n) => /Design/.test(n)).length, 3);
+  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
 });

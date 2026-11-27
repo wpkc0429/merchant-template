@@ -176,6 +176,15 @@ ok("state: no sha, no raw keys", !/junk|last_seen|current_sha|lastSeen/.test(JSO
 const one = await data.getDesignState({ site: "admin" });
 ok("state: site filter narrows to one site", one.sites.length === 1 && one.sites[0].site === "admin" && one.pendingApproval === 2);
 
+// designEnabled: only a literal true counts; absent or malformed is false
+ok("state: designEnabled is false when the platform field is absent", st.designEnabled === false && one.designEnabled === false);
+for (const [label, v] of [["true", true], ["false", false], ["string 'true'", "true"], ["1", 1], ["null", null], ["object", {}]]) {
+  reset(); on("/design/state", { body: { sites: [], design_enabled: v } });
+  ok(`state: design_enabled ${label} -> designEnabled ${v === true}`, (await data.getDesignState()).designEnabled === (v === true));
+}
+reset(); on("/design/state", { body: { sites: [], design_enabled: true } });
+ok("state: designEnabled survives the site filter", (await data.getDesignState({ site: "admin" })).designEnabled === true);
+
 // error mapping (never a raw ApiError at the design layer for the known statuses)
 const err = (status, code, headers) => ({ status, headers, body: { error: { code, message: "platform says why" } } });
 for (const [st2, kind, reason] of [[403, "permission", "permission"], [404, "state", "gone"], [422, "invalid", "invalid"], [429, "limit", "rate_limited"], [503, "state", "design_storage_not_configured"]]) {

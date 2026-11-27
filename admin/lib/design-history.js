@@ -212,5 +212,6 @@ export function normalizeState(d, site) {
     };
   }).filter((s) => !site || s.site === site);
   const total = Number.isFinite(d.pending_approval_count) ? count(d.pending_approval_count) : sites.reduce((n, s) => n + s.pendingApproval, 0);
-  return { sites, pendingApproval: site ? sites.reduce((n, s) => n + s.pendingApproval, 0) : total };
+  // designEnabled: the platform's top-level boolean design_enabled (AI edit on for this shop); true only for a literal true, false when absent or malformed.
+  return { sites, pendingApproval: site ? sites.reduce((n, s) => n + s.pendingApproval, 0) : total, designEnabled: d.design_enabled === true };
 }

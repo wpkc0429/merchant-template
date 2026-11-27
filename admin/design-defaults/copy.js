@@ -871,6 +871,8 @@ export default {
   "dh.restores": "還原到：{tag}",
   "dh.empty.none.title": "還沒有任何 AI 改版紀錄",
   "dh.empty.none.hint": "之後每一次設計改版都會記錄在這裡。",
+  "dh.empty.disabled.title": "這個商店尚未開啟 AI 改版",
+  "dh.empty.disabled.hint": "開啟 AI 改版後，每一次設計改版都會記錄在這裡。已有的連結與紀錄仍可開啟。",
   "dh.empty.filtered.title": "這個條件下沒有紀錄",
   "dh.empty.filtered.hint": "換一個站台或狀態看看。",
   "dh.empty.noShots.title": "還沒有截圖",

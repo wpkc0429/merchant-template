@@ -110,7 +110,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { sites: [
         { site: "storefront", untracked_changes: S.untracked, current_request_id: CUR, current_tag: "design-2026-11-25-1", core_version: "0.4.2", pending_approval_count: pend("storefront") },
         { site: "admin", untracked_changes: 0, current_request_id: ADM1, current_tag: "design-admin-1", core_version: "0.4.2", pending_approval_count: pend("admin") },
-      ], pending_approval_count: pend("storefront") + pend("admin") });
+      ], pending_approval_count: pend("storefront") + pend("admin"), ...(S.designEnabledRaw !== undefined ? { design_enabled: S.designEnabledRaw } : S.noDesignEnabledField ? {} : { design_enabled: S.designEnabled !== false }) });
     }
     let mm = /^\/admin\/shops\/1\/design\/requests\/([0-9a-f-]+)(\/[a-z-]+)?$/.exec(a);
     if (mm) {
@@ -446,6 +446,81 @@ try {
     o = await open(`/design/${uid(4242)}`, { expectHttp: true });
     await o.pg.waitForSelector(".state--error");
     check("an unknown request id shows a not-found message with retry", (await o.pg.locator(T("dh-detail")).innerText()).length > 0 && !(await o.pg.locator(T("dh-detail")).innerText()).includes("RAW"));
+    await o.ctx.close();
+  }
+
+  // ── 10b. design_enabled gates the nav item, never the direct routes (D16) ──
+  console.log("design_enabled: nav gating, direct routes, badge");
+  {
+    const navCount = async (pg) => (await pg.locator(T("nav-design")).count()) + (await pg.locator(T("nav-design-badge")).count());
+    let o = await open("/", { designEnabled: false });
+    await settle(o.pg, ".main"); await sleep(600);
+    check("design_enabled=false: no nav item and no badge on the home screen (sidebar identical to a shop without the feature)", (await navCount(o.pg)) === 0);
+    await o.ctx.close();
+    o = await open("/", { designEnabled: true });
+    await o.pg.waitForSelector(`.sidebar ${T("nav-design")}`);
+    check("design_enabled=true: the item appears (sidebar) with the pending badge", (await o.pg.locator(`.sidebar ${T("nav-design")}`).count()) === 1 && (await o.pg.locator(`.sidebar ${T("nav-design-badge")}`).innerText()) === "2");
+    await o.ctx.close();
+    for (const [label, st] of [["state call failing", { stateFail: true, expectHttp: true }], ["field absent", { noDesignEnabledField: true }], ["field malformed (string)", { designEnabledRaw: "true" }]]) {
+      o = await open("/", st);
+      await settle(o.pg, ".main"); await sleep(600);
+      check(`${label}: the nav item stays hidden, no badge`, (await navCount(o.pg)) === 0);
+      await o.ctx.close();
+    }
+    o = await open("/", { designEnabled: false, width: 390, height: 844 });
+    await sleep(600);
+    await o.pg.locator(T("tab-more")).click();
+    await o.pg.waitForSelector("dialog[open]");
+    check("design_enabled=false on a phone: not in the 'more' sheet either", (await o.pg.locator(`dialog ${T("nav-design")}`).count()) === 0);
+    await o.ctx.close();
+    o = await open("/", { role: "staff", designEnabled: true, expectHttp: true });
+    await sleep(600);
+    check("staff: no nav item even when design_enabled=true", (await navCount(o.pg)) === 0);
+    await o.ctx.close();
+    o = await open("/", { role: "editor", designEnabled: true, expectHttp: true });
+    await o.pg.waitForSelector(`.sidebar ${T("nav-design")}`);
+    check("editor (design.view) sees the item when enabled", true);
+    await o.ctx.close();
+    // direct routes stay reachable
+    o = await open("/design", { designEnabled: false, empty: true });
+    await settle(o.pg);
+    const dis = await o.pg.locator(T("dh-area")).innerText();
+    check("direct /design, disabled and no history: calm 'AI edit is not enabled' state, no error styling", dis.includes("尚未開啟 AI 改版") && (await o.pg.locator(T("dh-disabled")).count()) === 1 && (await o.pg.locator(".state--error").count()) === 0 && !dis.includes("還沒有任何 AI 改版紀錄"));
+    check("direct /design, disabled: the nav item stays hidden", (await navCount(o.pg)) === 0);
+    await shot(o.pg, "disabled-empty-1280");
+    await o.ctx.close();
+    o = await open("/design", { designEnabled: false });
+    await settle(o.pg);
+    check("direct /design, disabled but with history: the list is shown", (await o.pg.locator(T("dh-row")).count()) === 20 && (await o.pg.locator(T("dh-disabled")).count()) === 0);
+    await o.ctx.close();
+    o = await open(`/design/${RID}`, { designEnabled: false });
+    await o.pg.waitForSelector(T("dh-claims"));
+    check("direct /design/:id, disabled: a request that exists still opens", true);
+    await o.ctx.close();
+    o = await open("/design", { role: "staff", designEnabled: false });
+    await o.pg.waitForSelector(T("no-permission"));
+    check("staff on /design: noPermission whatever design_enabled says", S.listCalls === 0);
+    await o.ctx.close();
+    o = await open("/design", { designEnabled: true, empty: true });
+    await settle(o.pg);
+    check("enabled and no history: the usual 'no history yet' text", (await o.pg.locator(T("dh-area")).innerText()).includes("還沒有任何 AI 改版紀錄"));
+    await o.ctx.close();
+  }
+
+  // ── 10c. out-of-range page and rapid next-page clicks ──
+  console.log("paging: out of range, rapid clicks");
+  {
+    let o = await open("/design?page=99999999999");
+    await settle(o.pg); await sleep(300);
+    check("page far out of range: jumps to the last page (2) with its rows", /page=2/.test(await o.pg.evaluate(() => location.hash)) && (await o.pg.locator(T("dh-row")).count()) === 5 && (await o.pg.locator(T("dh-count")).innerText()).includes("25"));
+    await o.ctx.close();
+    o = await open("/design");
+    await settle(o.pg);
+    const before = S.listCalls;
+    await o.pg.evaluate(() => { const b = document.querySelector('[data-testid="page-next"]'); b.click(); b.click(); b.click(); });
+    await settle(o.pg); await sleep(400);
+    check("three rapid next-page clicks ask the list once", S.listCalls === before + 1, `${S.listCalls - before} requests`);
+    check("and land on page 2", /page=2/.test(await o.pg.evaluate(() => location.hash)));
     await o.ctx.close();
   }
 

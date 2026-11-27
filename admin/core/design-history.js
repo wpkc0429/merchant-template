@@ -70,7 +70,7 @@ export async function getDesignRequest(id) {
   } catch (e) { throw toActionError(e); }
 }
 
-/** ctx.data.getDesignState({site?}) -> {sites: [{site, current: {requestId, tag, coreVersion}, untracked, pendingApproval, ...}], pendingApproval}. Needs design.view. */
+/** ctx.data.getDesignState({site?}) -> {sites: [{site, current: {requestId, tag, coreVersion}, untracked, pendingApproval, ...}], pendingApproval, designEnabled}. Needs design.view. */
 export async function getDesignState(opts) {
   need("design.view");
   const o = opts && typeof opts === "object" ? opts : {};
