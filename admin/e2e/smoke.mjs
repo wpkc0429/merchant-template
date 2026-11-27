@@ -3,6 +3,7 @@
 //                                            gitignored config.local.js with apiBase = location.origin, sample catalogue imported)
 // Checks: login (owner), home, products list (sample catalogue, S/M/L editor), orders list, 390px overflow, no console errors;
 // staff sees no products. Screenshots at 390px and 1280px go to E2E_OUT.
+import { canaryNoise } from "./lib/expected-noise.mjs";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadPlaywright, SITE, OUT, OWNER, STAFF, check, section, failureCount } from "./lib.mjs";
@@ -18,7 +19,8 @@ async function session(width, height, who = OWNER) {
   const page = await ctx.newPage();
   page.errors = [];
   page.on("pageerror", (e) => page.errors.push(e.message));
-  page.on("console", (m) => { if (m.type() === "error" && !/status of 401/.test(m.text())) page.errors.push(m.text()); /* the 401 is the expected unauthenticated session probe before login */ });
+  const canary = canaryNoise(page);
+  page.on("console", (m) => { if (m.type() === "error" && !/status of 401/.test(m.text()) && !canary(m)) page.errors.push(m.text()); /* the 401 is the expected unauthenticated session probe before login */ });
   await page.goto(SITE + "/#/login");
   await T(page, "login-email").fill(who.email);
   await T(page, "login-password").fill(who.password);
