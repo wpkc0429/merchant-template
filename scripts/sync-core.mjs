@@ -196,6 +196,18 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
     throw new Refuse("merchant.headers.json is missing. Since core v0.5.0 public/_headers is rendered from the core template plus this file (the merchant's own API / image origins), and a sync never invents them.\n  Migration (a human, once): copy merchant.headers.json from the template checkout, set apiOrigin and imageOrigin (and extras, if any), then\n    node <template checkout>/scripts/render-headers.mjs --root . --core <template checkout>/scripts/headers.core.txt\n  commit the result, and run the sync again.");
   }
 
+  // an invalid config is refused up front too (also for --dry-run): the re-render would fail and roll the sync back
+  try {
+    const lib = await import(pathToFileURL(path.join(root, 'scripts/render-headers.mjs')).href + '?v=' + Date.now());
+    let cfg;
+    try { cfg = lib.parseConfigText(readFileSync(path.join(root, 'merchant.headers.json'), 'utf8')); }
+    catch (e) { throw new Refuse(`merchant.headers.json is not valid JSON: ${e.message}`); }
+    const v = lib.validateConfig(cfg);
+    if (v.errors.length) throw new Refuse(`merchant.headers.json is invalid, the sync would fail while re-rendering public/_headers (nothing was changed):\n  ${v.errors.join('\n  ')}`);
+  } catch (e) {
+    if (e instanceof Refuse) throw e;   // scripts/render-headers.mjs missing (a repo older than v0.5.0 that has the config only): the real sync copies it
+  }
+
   // ---- 1b. the sync SOURCE is a TAG only (decided 2026-11-25): HEAD exactly at the annotated tag v<version>, clean tree
   const src = sourceInfo(fromRoot, theirs.version);
   if (!src.tagged && !allowUntagged) {

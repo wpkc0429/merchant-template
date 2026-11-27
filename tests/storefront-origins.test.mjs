@@ -254,7 +254,7 @@ test('sync-core: a hand-edited public/_headers is reported loudly (dry run and a
   assert.equal(layers(d).status, 0);
 });
 
-test('sync-core: refused without merchant.headers.json (migration text); an invalid config rolls the whole sync back', () => {
+test('sync-core: refused without merchant.headers.json (migration text); an invalid config is refused (also by --dry-run) and changes nothing', () => {
   const m = merchant(); const d = m.dir;
   const tpl = makeTemplateCopy(V2, withCoreHeader);
   git(d, 'rm', '-q', 'merchant.headers.json'); git(d, 'commit', '-q', '-m', 'drop');
@@ -264,9 +264,11 @@ test('sync-core: refused without merchant.headers.json (migration text); an inva
   setCfg(d, { apiOrigin: 'https:' });
   git(d, 'add', '-A'); git(d, 'commit', '-q', '-m', 'bad cfg');
   const before = snap(d, ['public/_headers', 'scripts/headers.core.txt', 'template.json', '.template-version']);
+  r = sync(d, tpl, '--dry-run');
+  assert.equal(r.status, 2, r.out); assert.match(r.out, /merchant\.headers\.json is invalid/); assert.match(r.out, /apiOrigin/);
   r = sync(d, tpl, '--yes');
-  assert.equal(r.status, 1, r.out); assert.match(r.out, /could not render public\/_headers/);
-  assert.deepEqual(snap(d, Object.keys(before)), before, 'rolled back');
+  assert.equal(r.status, 2, r.out); assert.match(r.out, /merchant\.headers\.json is invalid/);
+  assert.deepEqual(snap(d, Object.keys(before)), before, 'nothing changed');
   assert.equal(git(d, 'status', '--porcelain', '--untracked-files=all').out.trim(), '');
 });
 
@@ -353,7 +355,6 @@ test('storefront scan (D20): network APIs are refused as identifiers, aliases, c
     ["var h = { fetch };", /fetch/],
     ["call(a, fetch);", /fetch/],
     ["window.WebSocket;", /window\.WebSocket/],
-    ["open('https://evil.example.test');", /bare open/],
     ["window?.open('https://evil.example.test');", /window\.open/],
     ["(window).open('https://evil.example.test');", /window\.open/],
     ["self.open('x');", /window\.open/],
@@ -368,6 +369,10 @@ test('storefront scan (D20): network APIs are refused as identifiers, aliases, c
     ["window.location.assign('https://evil.example.test');", /navigation/],
     ["location.replace(next);", /navigation/],
     ["location.href = '#/ok' + '/x' + other + 'https://evil.example.test';", /navigation/],
+    ["const t = top;", /aliasing a global object/],
+    ["const p = (parent);", /aliasing a global object/],
+    ["var a = {}; a.ping = 'http://x.example.test';", /ping/],
+    ["el.ping = url;", /ping/],
     ["var s = document.createElement('script');", /createElement/],
     ["var s = document.createElement(\"iframe\");", /createElement/],
     ["var s = document.createElement('link');", /createElement/],
@@ -386,6 +391,14 @@ test('storefront scan (D20): network APIs are refused as identifiers, aliases, c
     assert.match(r.out, re, code);
   }
   assert.equal(layers(d).status, 0, 'the untouched design layer passes');
+});
+
+test('storefront scan (D20): an undeclared bare open(...) is window.open (public/app.js declares a local "open", so it is checked in content.js); a local open is fine', () => {
+  const d = scanMerchant();
+  const orig = read(d, 'public/content.js');
+  const run = (code) => { write(d, 'public/content.js', orig + '\n' + code + '\n'); const r = layers(d); write(d, 'public/content.js', orig); return r; };
+  for (const code of ["open('x');", "if (go) { open(\"https://evil.example.test\"); }", "open('a', '_blank');"]) { const r = run(code); assert.equal(r.status, 1, code + r.out); assert.match(r.out, /bare open/); }
+  for (const code of ["function open(x) { return x; } open(1);", "var drawer = { open() { return 1; } };", "const f = (open) => open();", "class M { open() { return 1; } }"]) { const r = run(code); assert.equal(r.status, 0, code + r.out); }
 });
 
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {
@@ -418,6 +431,18 @@ test('storefront scan (D20): copy text, comments, data keys and look-alike ident
     "var s = document.createElement('div'); var i = document.createElement('img'); var b = document.createElement('button');",
     "var t = '<a href=\"#/x\" class=\"ping-pong\">x</a>'; var ping = 1; var pings = [ping];",
     "var sw = 'serviceWorker is not used'; var x = { serviceWorker: 1 };",
+    "function f(parent) { const p = parent; return p; }",
+    "const y = 1; function g(top) { const t = top; return t; } var z = (self) => { const s2 = self; return s2; };",
+    "var o = { self: 1 }; function h(self, top, parent) { var a = self, b = top, c = parent; return [a, b, c]; }",
+    "try { x(); } catch (parent) { const q = parent; }",
+    "const { top, parent } = layout; const t2 = top; const p2 = parent;",
+    "const parent = document.body; const p3 = parent;",
+    "var drawer = { open() { return 1; }, close() { return 0; } }; drawer.open();",
+    "class Menu { open() { this.shown = true; } static open() { return 1; } }",
+    "function open(x) { return x; } open(1);",
+    "const open = (x) => x; open(2);",
+    "function wrap(open) { return open(); }",
+    "var el = {}; el.dataset.ping = '1'; el.style.ping = 'x'; var props = {}; props.ping = 2; state.ping = 3; options.ping = 4;",
     "var w = window.innerWidth; var h = window.innerHeight; var s = window.scrollY; var z = self === window;"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }

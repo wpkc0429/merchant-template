@@ -496,6 +496,21 @@ function valueText(s, from, call) {
   const m = /[;\r\n]/.exec(s.slice(from, from + 400));
   return s.slice(from, m ? from + m.index : from + 400);
 }
+// Names the file itself declares (variables, destructured names, functions, classes, parameters, catch bindings, arrow parameters): a local
+// "parent", "top", "self" or "open" is not the browser global. Conservative: any declaration anywhere in the file exempts the name in the whole file.
+function declaredNames(masked) {
+  const names = new Set();
+  const add = (s) => { for (const m of String(s).matchAll(/[\w$]+/g)) names.add(m[0]); };
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const|function\*?|class)\s+([\w$]+)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s*[{\[]([^}\]]*)[}\]]/g)) add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s+[\w$]+\s*=[^;\n]*?,\s*([\w$]+)\s*=(?!=)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])function\*?\s*[\w$]*\s*\(([^)]*)\)/g)) add(m[1]);
+  for (const m of masked.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])([\w$]+)\s*=>/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])catch\s*\(\s*([\w$]+)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\(([^()]*)\)\s*\{/g)) add(m[1]);   // method parameters
+  return names;
+}
 function storefrontNetworkFindings(source) {
   const found = [];
   const masked = canonicalSource(source, 1);
@@ -503,6 +518,7 @@ function storefrontNetworkFindings(source) {
   const plain = canonicalSource(source);
   const idRe = new RegExp(String.raw`(?<![\w$])(` + NET_NAMES + String.raw`)(?![\w$])`, 'g');
   const why = 'network access; every request goes through ShopCommerce';
+  const declared = declaredNames(masked);
   for (const m of masked.matchAll(idRe)) {
     const idx = m.index, end = idx + m[0].length, name = m[1];
     const before = masked.slice(Math.max(0, idx - 80), idx);
@@ -539,17 +555,30 @@ function storefrontNetworkFindings(source) {
     [/(?<![\w$])(?:RTCPeerConnection|webkitRTCPeerConnection)\b/, 'RTCPeerConnection (WebRTC is not limited by connect-src)'],
     [/(?<![\w$])navigator\s*(?:\?\.|\.)\s*serviceWorker\b/, 'navigator.serviceWorker'],
     [new RegExp(String.raw`(?<![\w$])(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*(?:\?\.|\.)\s*open\b`), 'window.open'],
-    [/(?<![\w$.])(?<!\bfunction\s+)open\s*\(/, 'a bare open(...) call (window.open)'],
     [/(?<![\w$.])import\s*\(|(?<![\w$.])import\s*\.\s*meta\b/, 'dynamic import() / import.meta'],
-    [new RegExp(String.raw`(?<![\w$.])[\w$]+\s*=(?!=)\s*\(?\s*(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*(?:[;,)\r\n]|$)`), 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']
   ];
   for (const [re, label] of rules) { const m = re.exec(masked); if (m) found.push([m.index, label]); }
+  // aliasing a global object (const w = window): refused unless the name on the right is declared in this file (a local "parent", "top" or "self")
+  const aliasRe = new RegExp('(?<![\\w$.])[\\w$]+\\s*=(?!=)\\s*\\(?\\s*(' + GLOBAL_RE + ')\\s*\\)?\\s*(?:[;,)\\r\\n]|$)', 'gm');
+  for (const m of masked.matchAll(aliasRe)) if (!declared.has(m[1])) { found.push([m.index, 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']); break; }
+  // a bare open(...) call is window.open, unless open is declared in this file or this is a method definition ({ open() { ... } })
+  if (!declared.has('open')) {
+    for (const m of masked.matchAll(/(?<![\w$.])open\s*\(/g)) {
+      const close = groupEnd(masked, m.index + m[0].length);
+      if (close >= 0 && /^\s*\{/.test(masked.slice(close + 1, close + 40))) continue;   // method definition
+      found.push([m.index, 'a bare open(...) call (window.open)']); break;
+    }
+  }
   const textRules = [
     [/\bcreateElement\s*\(\s*(["'`])(?:script|link|iframe|meta|object|embed|base)\1/i, 'createElement of script / link / iframe / meta / object / embed / base'],
-    [/<(?:a|area)\b[^>]*\sping\s*=|\.\s*ping\s*=(?!=)|setAttribute\(\s*["']ping["']/i, 'the ping attribute (a request to any origin when the link is followed)'],
+    [/<(?:a|area)\b[^>]*\sping\s*=|setAttribute\(\s*["']ping["']/i, 'the ping attribute (a request to any origin when the link is followed)'],
     [/\[\s*(["'`])serviceWorker\1\s*\]/, "navigator['serviceWorker']"]
   ];
   for (const [re, label] of textRules) { const m = re.exec(withStrings); if (m) found.push([m.index, label]); }
+  // an element's .ping = ... (the anchor attribute); custom data on a dataset / style / props / state / data / options object is not
+  for (const m of withStrings.matchAll(/(?<![\w$])([\w$]+)\s*\.\s*ping\s*=(?!=)/g)) {
+    if (!/^(dataset|style|props|state|data|options|opts|config|settings)$/.test(m[1])) { found.push([m.index, 'the ping attribute (a request to any origin when the link is followed)']); break; }
+  }
   // navigation: a location write or assign / replace whose target is not an in-page hash route
   const navRe = new RegExp(String.raw`(?<![\w$.])(?:(?:window|self|top|parent|document|globalThis)\s*\.\s*)?location\s*(?:=(?!=)|\.\s*(?:href|assign|replace)\s*(?:=(?!=)|\())`, 'g');
   for (const m of plain.matchAll(navRe)) {
