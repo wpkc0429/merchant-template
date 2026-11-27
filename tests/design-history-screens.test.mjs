@@ -94,7 +94,7 @@ test('D16 is recorded (newest first) with the four owner approvals, and the desi
   for (const n of ['ctx.route.state.readOnly', 'designEnabled', 'design_enabled', 'D10', 'lexer escape fix', 'frozen intrinsics', '_headers', '1-second delayed enable', 'separate preview origin', 'scan report', 'check-design', 'FUTURE PRs', 'every screen is AI-redesignable', 'option D', 'no new ctx function', 'out-of-range']) assert.ok(body.includes(n), n);
   assert.match(body.trim(), /\.$/);
   // the field is normalized in the read layer (literal true only) and documented
-  assert.match(f('admin/lib/design-history.js'), /designEnabled: d\.design_enabled === true/);
+  assert.match(f('admin/lib/design-history.js'), /designEnabled: own\("design_enabled"\) === true/);
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /designEnabled/);
   assert.match(f('docs/CORE-CHANGELOG.md'), /decision D16/);
   // the shell gates the item on it and the history view shows the calm disabled state; both registries are identical
@@ -110,6 +110,9 @@ test('D16 is recorded (newest first) with the four owner approvals, and the desi
   for (const n of ['design_enabled: nav gating', 'page=99999999999', 'three rapid next-page clicks']) assert.ok(e2e.includes(n), n);
   assert.match(f('admin/design-defaults/theme.css'), /^\.dh-area \.pager \.btn \{/m);
   assert.ok(!/^\.pager \.btn/m.test(f('admin/design-defaults/theme.css')), 'no global pager rule');
+  assert.match(f('admin/lib/design-history.js'), /Object\.hasOwn\(d, k\)/);
+  assert.match(shell, /const ordered = /);
+  assert.match(view, /last < page/);
   // still no new ctx function, no release
   const api = JSON.parse(f('admin/lib/public-api.json'));
   assert.equal(api['ctx.data'].filter((n) => /Design/.test(n)).length, 3);

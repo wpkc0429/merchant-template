@@ -101,6 +101,7 @@ const server = createServer(async (req, res) => {
       if (S.listError) return json(res, 500, { error: { code: "boom", message: "RAW" } });
       const site = u.searchParams.get("site"), status = u.searchParams.get("status");
       const page = Number(u.searchParams.get("page") || 1), size = Number(u.searchParams.get("page_size") || 20);
+      if (S.inconsistent) return json(res, 200, { requests: [], page, page_size: size, total: 50 });
       const all = S.empty ? [] : [...S.reqs.values()].filter((r) => (!site || r.site === site) && (!status || r.status === status)).sort(order);
       return json(res, 200, { requests: all.slice((page - 1) * size, page * size), page, page_size: size, total: all.length });
     }
@@ -457,8 +458,13 @@ try {
     await settle(o.pg, ".main"); await sleep(600);
     check("design_enabled=false: no nav item and no badge on the home screen (sidebar identical to a shop without the feature)", (await navCount(o.pg)) === 0);
     await o.ctx.close();
+    o = await open("/", { designEnabled: false });
+    await sleep(600);
+    const teamY = await o.pg.locator(`.sidebar [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top);
+    await o.ctx.close();
     o = await open("/", { designEnabled: true });
     await o.pg.waitForSelector(`.sidebar ${T("nav-design")}`);
+    check("enabling the item moves no existing item (Team link at the same place; the item is last)", (await o.pg.locator(`.sidebar [data-nav]:not([data-nav="design"])`).last().evaluate((e) => e.getBoundingClientRect().top)) === teamY && (await o.pg.locator(`.sidebar [data-nav]`).last().getAttribute("data-nav")) === "design");
     check("design_enabled=true: the item appears (sidebar) with the pending badge", (await o.pg.locator(`.sidebar ${T("nav-design")}`).count()) === 1 && (await o.pg.locator(`.sidebar ${T("nav-design-badge")}`).innerText()) === "2");
     await o.ctx.close();
     for (const [label, st] of [["state call failing", { stateFail: true, expectHttp: true }], ["field absent", { noDesignEnabledField: true }], ["field malformed (string)", { designEnabledRaw: "true" }]]) {
@@ -514,6 +520,12 @@ try {
     await settle(o.pg); await sleep(300);
     check("page far out of range: jumps to the last page (2) with its rows", /page=2/.test(await o.pg.evaluate(() => location.hash)) && (await o.pg.locator(T("dh-row")).count()) === 5 && (await o.pg.locator(T("dh-count")).innerText()).includes("25"));
     await o.ctx.close();
+    for (const pageNo of [3, 5]) {
+      o = await open(`/design?page=${pageNo}`, { inconsistent: true });
+      await settle(o.pg); await sleep(1500);
+      check(`inconsistent API (total 50, no rows) at page ${pageNo}: bounded requests (${S.listCalls}) and a normal empty state`, S.listCalls <= 3 && (await o.pg.locator(T("dh-area")).innerText()).length > 0 && (await o.pg.locator(T("dh-row")).count()) === 0);
+      await o.ctx.close();
+    }
     o = await open("/design");
     await settle(o.pg);
     const before = S.listCalls;

@@ -182,6 +182,12 @@ for (const [label, v] of [["true", true], ["false", false], ["string 'true'", "t
   reset(); on("/design/state", { body: { sites: [], design_enabled: v } });
   ok(`state: design_enabled ${label} -> designEnabled ${v === true}`, (await data.getDesignState()).designEnabled === (v === true));
 }
+Object.prototype.design_enabled = true; Object.prototype.pending_approval_count = 9; Object.prototype.sites = [{ site: "admin" }];
+try {
+  reset(); on("/design/state", { body: {} });
+  const polluted = await data.getDesignState();
+  ok("state: a polluted Object.prototype switches nothing on (own properties only)", polluted.designEnabled === false && polluted.pendingApproval === 0 && polluted.sites.length === 0, JSON.stringify(polluted));
+} finally { delete Object.prototype.design_enabled; delete Object.prototype.pending_approval_count; delete Object.prototype.sites; }
 reset(); on("/design/state", { body: { sites: [], design_enabled: true } });
 ok("state: designEnabled survives the site filter", (await data.getDesignState({ site: "admin" })).designEnabled === true);
 

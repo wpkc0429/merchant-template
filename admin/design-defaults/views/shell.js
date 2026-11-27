@@ -13,7 +13,9 @@ export default function shell(root, ctx) {
   // person has design.view (the core only lists the item for them). Until then, or after any failure, the shell is exactly the one without it.
   let designOn = false;
   const shown = (n) => n.key !== "design" || designOn;
-  const restItems = () => items.filter((n) => !tabs.includes(n) && shown(n));
+  // The design item goes LAST: showing it after the state call resolves never moves an item that was already there.
+  const ordered = [...items.filter((n) => n.key !== "design"), ...items.filter((n) => n.key === "design")];
+  const restItems = () => ordered.filter((n) => !tabs.includes(n) && shown(n));
   const shopName = ctx.session.shopName || t("app.name");
 
   let pending = 0, counting = false;
@@ -39,7 +41,7 @@ export default function shell(root, ctx) {
   function drawSide() {
     if (sideDesign) { const i = designLinks.indexOf(sideDesign); if (i >= 0) designLinks.splice(i, 1); badges.delete(sideDesign); sideDesign = null; }
     clear(sideList);
-    for (const n of items.filter(shown)) {
+    for (const n of ordered.filter(shown)) {
       const a = navLink(n, "navlink" + (n.key === current ? " is-on" : ""));
       if (n.key === "design") sideDesign = a;
       sideList.append(a);

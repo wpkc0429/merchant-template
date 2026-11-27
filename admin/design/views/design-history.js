@@ -81,13 +81,15 @@ export default async function designHistory(root, ctx) {
     }
     clear(area);
     // A page past the end (for example a hand-typed ?page=99999): jump to the last page instead of "N rows" over an empty table.
-    if (list.total > 0 && !list.requests.length && page > 1) { moved = true; ctx.navigate(path({ page: Math.max(1, Math.ceil(list.total / (list.pageSize || PAGE_SIZE))) }), { replace: true }); return; }
+    const last = Math.max(1, Math.ceil(list.total / (list.pageSize || PAGE_SIZE)));
+    // Only ever jump DOWN to a page that is lower than this one, so an inconsistent answer (rows missing although total > 0) cannot loop.
+    if (list.total > 0 && !list.requests.length && last < page) { moved = true; ctx.navigate(path({ page: last }), { replace: true }); return; }
     if (!list.total && !status && state && state.designEnabled === false) {
       // Not an error: AI edit is simply not switched on for this shop and there is nothing to show yet.
       area.append(h("div", { "data-testid": "dh-disabled" }, emptyState(t("dh.empty.disabled.title"), t("dh.empty.disabled.hint"))));
       return;
     }
-    if (!list.total && !list.requests.length) {
+    if (!list.requests.length) {
       area.append(status
         ? emptyState(t("dh.empty.filtered.title"), t("dh.empty.filtered.hint"))
         : emptyState(t("dh.empty.none.title"), t("dh.empty.none.hint")));
