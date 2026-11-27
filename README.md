@@ -93,7 +93,7 @@ public/            storefront (the only directory Cloudflare publishes)
                    (locked core template) + merchant.headers.json (repo root, HUMAN-owned: the shop's own API / image origins); check-layers
                    fails when it is not byte-identical to that rendering
   app.js content.js content.schema.json styles.css index.html assets/    DESIGN LAYER (storefront)
-merchant.headers.json   the shop's own API / image origins for the storefront CSP (human-owned; sync-core preserves it; D20)
+merchant.headers.json   the shop's own API / image origins for the storefront CSP (human-owned: origins + optional Cache-Control extraRules; sync-core preserves it; D20)
 scripts/           check-layers (storefront guard), check-scope, check-locked, import-catalog, sync-core, render-headers, headers.core.txt,
                    lib/, new-merchant + gen-placeholders (template only), commerce.manifest.json
 admin/             merchant back office (build-less ES modules)

