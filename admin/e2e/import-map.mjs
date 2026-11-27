@@ -9,7 +9,7 @@
 //   (3) the fail-closed canary: with the hash -> the design loads; without the hash, with a tampered map text, without import-map support, with the map removed -> the design
 //   is NOT loaded, the built-in screens run, a console warning and the calm note are shown; (4) CONTROL runs prove the test can fail: with the map removed and the canary
 //   bypassed the same hostile module DOES import the core and DOES send authenticated requests; with an nginx-style decoder and no `%` rule a `..%2f` path reaches lib/.
-// Not run here: Firefox and Safari (only Chromium is available); a real nginx (the `/deny/` 404 and the `%` refusal of the template are emulated by this server).
+// Not run here: Firefox and Safari (only Chromium is available); a real nginx in the suite (the `/deny/` 404 and the `%` refusal of the template are emulated by this server; they were checked by hand against nginx:1.27-alpine, see D19).
 // Needs Playwright via $PLAYWRIGHT_DIR and SKIPS cleanly (exit 0) when it is not found.   Run: node admin/e2e/import-map.mjs
 import { createServer } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
