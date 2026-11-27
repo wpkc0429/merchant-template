@@ -57,8 +57,8 @@ const logs = [];
 for (const k of ["log", "warn", "error", "info", "debug"]) { const o = console[k]; console[k] = (...a) => { logs.push(a.map(String).join(" ")); if (k === "error") o(...a); }; }
 
 const net = (await imp("lib/api.js")).takeApi();
-const { session } = await imp("lib/session.js");
-const { setPermissions } = await imp("lib/perm.js");
+const { state: session } = (await imp("lib/session.js")).takeSession(); // boot phase: the mutable state (D19)
+const { setPermissions } = (await imp("lib/perm.js")).takePermissions(); // boot phase (D19)
 const { loadDesign } = await imp("lib/design.js");
 const { data } = await imp("core/data.js");
 const { actions } = await imp("core/actions.js");

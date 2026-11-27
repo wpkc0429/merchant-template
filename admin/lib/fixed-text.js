@@ -37,6 +37,7 @@ export const CORE_TEXT = Object.freeze({
   "rv.delay": "為了避免誤按，這個按鈕 {s} 秒後才能使用。",
   "rv.delay.over": "等待時間已過，現在可以按下按鈕。",
   // Preview host (D18): the platform enforces read-only sessions there; these are the calm messages.
+  "iso.disabled": "自訂設計已停用：這個瀏覽器或伺服器設定無法確保隔離，目前顯示的是內建畫面。功能不受影響；請聯絡管理員。",
   "pv.readOnly": "這是預覽畫面，不能在這裡修改。想編輯請回到正常的後台。",
   "pv.expired": "預覽已到期（預覽登入最長 30 分鐘），請重新登入。",
   "pv.scopeMissing": "這個網址沒有設定成預覽主機（平台沒有把它登記為預覽網域），所以不能在這裡登入。請聯絡管理員。",

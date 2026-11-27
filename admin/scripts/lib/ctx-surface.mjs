@@ -13,7 +13,7 @@ export async function realSurface(root) {
   g.history = g.history || { replaceState() {} };
   const url = (p) => pathToFileURL(resolve(root, p)).href;
   const { makeContext } = await import(url("core/context.js"));
-  const { makeAuth } = await import(url("core/auth.js"));
+  const makeAuth = (await import(url("core/auth.js"))).takeMakeAuth(); // boot phase (lib/boot.js, D19): nothing sealed it
   const ctx = makeContext({ routeId: "home", nav: [], auth: makeAuth({ linkToken: null, hooks: {} }) });
   const out = {};
   const walk = (obj, path) => {

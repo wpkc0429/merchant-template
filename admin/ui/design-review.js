@@ -9,7 +9,9 @@
 // acknowledgement checkbox must be ticked by a real click before the approve button is enabled. The button disables the instant it is pressed.
 // D18: the approve button (and the reject confirmation) also stays disabled for DELAY_MS after the dialog is shown, with a visible countdown; and the
 // service-claims region carries the SCAN REPORT (guard verdict, rule ids, checked sha, the full list of changed paths), labelled as not verified by the platform.
-import { h, showCoreDialog, button, textarea, toast } from "./kit.js";
+import { h, takeCoreUi, button, textarea, toast } from "./kit.js";
+
+const { showCoreDialog } = takeCoreUi(); // boot phase only (lib/boot.js, D19)
 import { coreText as ct } from "../lib/fixed-text.js";
 import { safeOrigin } from "../lib/versionpreview.js";
 import { formatDateTime } from "./format.js";

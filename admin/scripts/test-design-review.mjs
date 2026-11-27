@@ -60,11 +60,12 @@ for (const k of ["log", "warn", "error", "info", "debug"]) { const o = console[k
 
 const { takeApi, ApiError } = await imp("lib/api.js");
 const net = takeApi();
-const { session, clearSession } = await imp("lib/session.js");
-const { setPermissions } = await imp("lib/perm.js");
+const { state: session, clearSession } = (await imp("lib/session.js")).takeSession(); // boot phase (D19)
+const { setPermissions } = (await imp("lib/perm.js")).takePermissions(); // boot phase (D19)
 const { loadDesign } = await imp("lib/design.js");
 const { actions } = await imp("core/actions.js");
-const { createDesignActions, reviewError } = await imp("core/design-actions.js");
+const { takeDesignActions, reviewError } = await imp("core/design-actions.js");
+const createDesignActions = takeDesignActions(); // boot phase (D19)
 const { ActionError } = await imp("core/errors.js");
 const { fixedWarning, FIXED_WARNINGS } = await imp("core/warnings.js");
 const { validateCopy, WARNED_CONFIRM_IDS } = await imp("lib/design-schema.js");

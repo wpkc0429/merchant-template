@@ -126,14 +126,58 @@ function stripNginxComments(text) {
   }).join("\n");
 }
 
-/** Strength problems of a CSP string (shared by the server-level and every location CSP). Empty array = strong enough. */
-function cspProblems(val) {
+// ───────────── the import map (docs/DECISIONS.md D19, owner-approved rule change 2026-11-28) ─────────────
+// index.html carries exactly ONE inline script, `<script type="importmap">`. The CSP may allow it through ONE extra script-src token: the sha256 of its exact
+// text. Nothing else (no 'unsafe-inline', no other hash, no nonce, no host, no 'strict-dynamic').
+/**
+ * The attributes of a start tag as a Map (lower-case name -> value). Tokenised like HTML: names are runs without space, quote, slash, = or angle bracket,
+ * values are "..." or '...' or unquoted. So data-src=1 is the attribute "data-src", never "src".
+ */
+function tagAttrs(raw) {
+  const m = new Map();
+  for (const x of raw.matchAll(/([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+    const name = x[1].toLowerCase();
+    if (!m.has(name)) m.set(name, x[2] ?? x[3] ?? x[4] ?? "");
+  }
+  return m;
+}
+/** The inline <script> elements of an HTML text (HTML comments removed first, including the empty comments <!--> and <!--->): [{ attrs: Map, text }]. External scripts (src attribute) are not inline. */
+export function inlineScripts(html) {
+  const live = html.replace(/<!--(?:-?>|[\s\S]*?-->)/g, "");
+  const out = [];
+  for (const m of live.matchAll(/<script(?=[\s\/>])((?:"[^"]*"|'[^']*'|[^>"'])*)>([\s\S]*?)<\/script[\s\/]*>/gi)) {
+    const attrs = tagAttrs(m[1]);
+    if (!attrs.has("src")) out.push({ attrs, text: m[2] });
+  }
+  return out;
+}
+const isImportMap = (s) => (s.attrs.get("type") ?? "").trim().toLowerCase() === "importmap";
+/** The sha256 (base64) of the exact text of the import map in index.html, or null when there is not exactly one import map. */
+export function importMapHash(html) {
+  const maps = inlineScripts(html).filter(isImportMap);
+  return maps.length === 1 ? createHash("sha256").update(maps[0].text, "utf8").digest("base64") : null;
+}
+/** Rule problems of index.html: exactly one inline script and it is the import map. */
+export function indexHtmlProblems(html) {
+  const inl = inlineScripts(html);
+  const bad = [];
+  const maps = inl.filter(isImportMap);
+  if (maps.length !== 1) bad.push(`index.html must contain exactly ONE inline <script type="importmap"> (found ${maps.length})`);
+  if (inl.length !== maps.length) bad.push(`index.html must contain no inline script other than the import map (found ${inl.length - maps.length})`);
+  return bad;
+}
+const sameTokens = (a, b) => a.length === b.length && a.every((x) => b.includes(x)) && new Set(a).size === a.length;
+
+/** Strength problems of a CSP string (shared by the server-level and every location CSP). Empty array = strong enough. `mapHash`: sha256 (base64) of the import map text, or null. */
+function cspProblems(val, mapHash = null) {
   const bad = [];
   const d = new Map();
   for (const part of val.split(";")) { const [n, ...rest] = part.trim().split(/\s+/); if (n) d.set(n.toLowerCase(), rest); }
   const script = d.get("script-src");
   const defNone = (d.get("default-src") || []).join(" ") === "'none'";
-  if (script !== undefined ? !(script.length === 1 && (script[0] === "'self'" || script[0] === "'none'")) : !defNone) bad.push(`CSP script-src must be 'self' or 'none' (or absent under default-src 'none') (found: ${script ? script.join(" ") : "not set"})`);
+  const want = mapHash ? ["'self'", `'sha256-${mapHash}'`] : ["'self'"];
+  if (script !== undefined ? !((script.length === 1 && script[0] === "'none'") || sameTokens(script, want)) : !defNone) bad.push(`CSP script-src must be exactly ${want.join(" ")} (or 'none', or absent under default-src 'none') (found: ${script ? script.join(" ") : "not set"})`);
+  for (const [n, vals] of d) for (const x of vals) if (/^'(sha(256|384|512)-|nonce-|strict-dynamic'|unsafe-hashes'|wasm-unsafe-eval')/i.test(x) && !(n === "script-src" && want.includes(x))) bad.push(`CSP ${n} must not contain ${x}`);
   if (!d.has("default-src")) bad.push("CSP has no default-src");
   for (const [n, vals] of d) if (vals.some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) bad.push(`CSP ${n} must not contain unsafe-inline, unsafe-eval or a wildcard`);
   for (const [n, vals] of d) {
@@ -146,13 +190,25 @@ function cspProblems(val) {
   return bad;
 }
 
+/** --update: recompute the import map hash from index.html and rewrite the `script-src 'self' 'sha256-...'` tokens of deploy/nginx.conf.template. */
+export function syncImportMapHash(root) {
+  const idx = path.join(root, "index.html"), ng = path.join(root, "deploy/nginx.conf.template");
+  if (!existsSync(idx) || !existsSync(ng)) return { changed: false, msg: "import map hash: index.html or deploy/nginx.conf.template missing, nothing rewritten" };
+  const hash = importMapHash(readFileSync(idx, "utf8"));
+  if (!hash) return { changed: false, msg: "import map hash: index.html has no single import map, nothing rewritten" };
+  const src = readFileSync(ng, "utf8");
+  const next = src.replace(/(script-src 'self')( 'sha256-[A-Za-z0-9+/=]+')?;/g, `$1 'sha256-${hash}';`);
+  if (next !== src) writeFileSync(ng, next);
+  return { changed: next !== src, hash, msg: `import map hash: sha256-${hash} ${next !== src ? "written to" : "already in"} deploy/nginx.conf.template` };
+}
+
 /** Non-failing notes collected by the checks (printed by main). */
 const NOTES = [];
 
 /**
  * A strict CSP is a DEPLOYMENT REQUIREMENT for production and for AI-edit preview environments (docs/DECISIONS.md).
  * The hosting files in deploy/ must therefore carry it by default: the nginx template sends a Content-Security-Policy
- * with script-src 'self' only (no unsafe-inline / unsafe-eval / wildcard), object-src 'none', base-uri and
+ * with script-src 'self' plus ONE hash token, the sha256 of the import map text of index.html (D19; no unsafe-inline / unsafe-eval / wildcard), object-src 'none', base-uri and
  * frame-ancestors locked, and the Dockerfile installs that template. Exported for scripts/test-guard.mjs.
  */
 export function deployChecks(root) {
@@ -161,6 +217,13 @@ export function deployChecks(root) {
   const read = (rel) => (existsSync(path.join(root, rel)) ? readFileSync(path.join(root, rel), "utf8") : null);
   const nginx = read("deploy/nginx.conf.template");
   const docker = read("deploy/Dockerfile");
+  const indexHtml = read("index.html");
+  let mapHash = null;
+  if (indexHtml === null) v("deploy/importmap", "index.html is missing", "index.html");
+  else {
+    for (const msg of indexHtmlProblems(indexHtml)) v("deploy/importmap", msg, "index.html");
+    mapHash = importMapHash(indexHtml);
+  }
   if (nginx === null) v("deploy/csp-missing", "deploy/nginx.conf.template is missing: the admin hosting config must carry the strict CSP", "deploy/nginx.conf.template");
   else {
     const live = stripNginxComments(nginx);
@@ -173,7 +236,7 @@ export function deployChecks(root) {
       const bad = (msg) => v("deploy/csp-weak", msg, "deploy/nginx.conf.template");
       const script = dirs.get("script-src");
       if (!script) bad("CSP has no script-src");
-      else if (script.length !== 1 || script[0] !== "'self'") bad(`CSP script-src must be exactly 'self' (found: ${script.join(" ")})`);
+      else if (!sameTokens(script, mapHash ? ["'self'", `'sha256-${mapHash}'`] : ["'self'"])) bad(`CSP script-src must be exactly 'self'${mapHash ? ` 'sha256-${mapHash}' (the hash of the import map text in index.html)` : ""} (found: ${script.join(" ")})`);
       if (!dirs.has("default-src")) bad("CSP has no default-src");
       for (const [n, vals] of dirs) if (vals.some((x) => /^'unsafe-(inline|eval)'$/.test(x) || x === "*")) bad(`CSP ${n} must not contain ${vals.find((x) => /unsafe|\*/.test(x))}`);
       for (const n of ["object-src", "base-uri"]) if (!dirs.has(n) || dirs.get(n).join(" ") !== "'none'") bad(`CSP ${n} must be 'none'`);
@@ -200,7 +263,7 @@ export function deployChecks(root) {
     if (!serverCsp) v("deploy/csp-missing", "deploy/nginx.conf.template has no server-level `add_header Content-Security-Policy` (outside the location blocks)", "deploy/nginx.conf.template");
     else {
       if (!serverCsp.always) v("deploy/csp-always", "the server-level CSP add_header must end with `always`", "deploy/nginx.conf.template");
-      for (const msg of cspProblems(serverCsp.val)) v("deploy/csp-weak", `server level: ${msg}`, "deploy/nginx.conf.template");
+      for (const msg of cspProblems(serverCsp.val, mapHash)) v("deploy/csp-weak", `server level: ${msg}`, "deploy/nginx.conf.template");
     }
     const REQUIRED = ["Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security", "Permissions-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy", "Cache-Control"];
     for (const loc of locs) {
@@ -215,7 +278,7 @@ export function deployChecks(root) {
       if (!c.always) v("deploy/csp-always", `${name}: the CSP add_header must end with \`always\``, "deploy/nginx.conf.template");
       if (serverCsp && c.val.trim() === serverCsp.val.trim()) continue;
       // not identical: it must still be at least as strict (default-src 'none' is the strictest base)
-      for (const msg of cspProblems(c.val)) weak(msg);
+      for (const msg of cspProblems(c.val, mapHash)) weak(msg);
     }
   }
   if (docker === null) v("deploy/csp-missing", "deploy/Dockerfile is missing", "deploy/Dockerfile");
@@ -343,8 +406,10 @@ async function main() {
   const step = (name, list, note = "") => { steps.push({ name, count: list.length, note }); violations.push(...list); };
 
   if (flag("--update")) {
+    const h = syncImportMapHash(root); // first: the manifest does not cover deploy/, but index.html (hashed below) is what the hash is computed from
     const r = manifestChecks(root, { update: true });
     console.log(`wrote scripts/core.manifest.json (${r.wrote} locked files)`);
+    console.log(h.msg);
     return 0;
   }
 

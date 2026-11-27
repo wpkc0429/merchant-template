@@ -15,9 +15,11 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
+import { canaryNoise } from "./lib/expected-noise.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const csp = (connect) => "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 const SHOTS = process.env.HISTORY_SHOTS || resolve(ADMIN, "e2e/out/design-history");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -52,7 +54,7 @@ const RID = uid(1), CUR = uid(2), PUB = uid(3), DRAFT = uid(4), REJ = uid(5), FA
 const SHA1 = "a1".repeat(20);
 const PERMS = { owner: ["design.view", "design.request", "design.approve", "design.revert"], editor: ["design.view"], staff: ["order.view"] };
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 let PORT = 0;
 const LONG_PROMPT = "make the banner pink and <b>bold</b> ‮drow " + "very long request text ".repeat(60);
 let S;
@@ -158,7 +160,9 @@ async function open(hash, { width = 1280, height = 900, ...state } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height } });
   const pg = await ctx.newPage();
   const tag = `${state.role || "owner"}@${width} ${hash}`;
+  const canary = canaryNoise(pg);
   pg.on("console", (m) => {
+    if (canary(m)) return; // the canary's ONE expected /deny/lib/canary/target.js 404 (e2e/lib/expected-noise.mjs, D19); any other /deny/ hit is a problem
     const x = m.text();
     if (state.expectHttp && /status of (404|500|503)/.test(x)) void 0;
     else if (m.type() === "error" || /Content Security Policy|Refused to/i.test(x)) problems.push(`${tag}: ${x}`);

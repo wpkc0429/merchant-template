@@ -7,19 +7,24 @@ import { lockdownIntrinsics } from "./lib/lockdown.js";
 import { sealUpload } from "./lib/upload.js";
 import { coreText } from "./lib/fixed-text.js";
 import { route, start, navigate, scrub } from "./lib/router.js";
-import { session, loadSession, logout, clearSession, fetchHostBranding } from "./lib/session.js";
+import { session, takeSession, fetchHostBranding } from "./lib/session.js";
 import { can } from "./lib/perm.js";
 import { loadMediaConfig, mediaConfig } from "./lib/upload.js";
 import { loadDesign, t } from "./lib/design.js";
-import { h, clear, applyBranding, allowImageOrigin, errorMessage, loading, emptyState } from "./ui/kit.js";
+import { h, clear, applyBranding, takeCoreUi, errorMessage, loading, emptyState } from "./ui/kit.js";
 import { ROUTES, NAV } from "./core/routes.js";
 import { makeContext } from "./core/context.js";
-import { makeAuth } from "./core/auth.js";
+import { takeMakeAuth } from "./core/auth.js";
 import { mountView } from "./core/host.js";
 import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
 import { isReadOnly } from "./lib/preview.js";
+import { checkIsolation } from "./lib/canary/probe.js";
+import { showIsolationNotice } from "./ui/isolation-notice.js";
 
 const { onUnauthorized, restoreSession } = takeApi(); // boot phase only; sealApi() below closes it before the design layer is imported
+const { loadSession, logout, clearSession } = takeSession(); // boot phase only (lib/boot.js, D19)
+const { allowImageOrigin } = takeCoreUi();
+const makeAuth = takeMakeAuth();
 
 const visibleNav = () => NAV.filter((n) => n.perm.every((p) => can(p)));
 
@@ -59,7 +64,14 @@ async function boot() {
   sealUpload();
   lockdownIntrinsics();
   installPreviewBanner(); // preview hosts only (lib/preview.js): the core-owned banner the design layer cannot remove
-  await loadDesign();
+  // 3. Fail-closed canary (D19): the import map in index.html must be in effect before ANY design module is imported. If it is not (the CSP hash is
+  // missing, the browser has no import maps, the map text was changed), the design layer stays off and the built-in screens are used.
+  const iso = await checkIsolation();
+  if (!iso.ok) {
+    console.warn(`[design] custom design is DISABLED: the import-map isolation is not in effect (${iso.reason}); using the built-in screens. See docs/DECISIONS.md D19.`);
+    showIsolationNotice();
+  }
+  await loadDesign({ enabled: iso.ok });
   onUnauthorized((why) => { showLogin({ notice: why === "preview" ? coreText("pv.expired") : why === "preview_scope" ? coreText("pv.scopeMissing") : why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
   fetchHostBranding().then((b) => { hostBranding = b; if (!session.user) applyBranding(b?.branding, b?.name); });
   start(onRoute);

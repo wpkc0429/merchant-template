@@ -2,53 +2,62 @@
 import { takeApi } from "./api.js";
 
 const { api, publicApi, login: apiLogin, logout: apiLogout } = takeApi(); // boot phase only (lib/api.js)
-import { setPermissions, clearPermissions } from "./perm.js";
+import { takePermissions } from "./perm.js";
 import { clearReviewBasis } from "./design-history.js";
+import { capability } from "./boot.js";
 
-export const session = { user: null, shopID: null, shopIDs: [], shopName: "", branding: null };
+const { setPermissions, clearPermissions } = takePermissions(); // boot phase only (lib/boot.js)
+
+// The state object is private. `session` (exported) is a frozen READ-ONLY view of it, and every mutator is handed out only in the boot phase
+// through takeSession() (D19), so a module imported later can neither change who is signed in nor sign anyone in or out.
+const state = { user: null, shopID: null, shopIDs: [], shopName: "", branding: null };
+export const session = Object.freeze({
+  get user() { return state.user; }, get shopID() { return state.shopID; }, get shopIDs() { return state.shopIDs; },
+  get shopName() { return state.shopName; }, get branding() { return state.branding; },
+});
 
 /** After tokens exist: load /admin/me then the shop's permissions and branding. */
-export async function loadSession(preferredShopID) {
+async function loadSession(preferredShopID) {
   clearReviewBasis(); // a new sign-in or a restored session never inherits what an earlier user's review had read (design review, D14)
   const me = await api("GET", "/admin/me");
   const ids = me.sids || [];
-  session.user = { id: me.id, email: me.email, platformPermissions: me.platform_permissions || [] };
-  session.shopIDs = ids;
+  state.user = Object.freeze({ id: me.id, email: me.email, platformPermissions: Object.freeze([...(me.platform_permissions || [])]) });
+  state.shopIDs = ids;
   if (ids.length === 0) {
-    session.shopID = null;
+    state.shopID = null;
     clearPermissions();
     return session;
   }
-  session.shopID = ids.includes(preferredShopID) ? preferredShopID : ids[0];
-  const perms = await api("GET", `/admin/shops/${session.shopID}/me`);
+  state.shopID = ids.includes(preferredShopID) ? preferredShopID : ids[0];
+  const perms = await api("GET", `/admin/shops/${state.shopID}/me`);
   setPermissions(perms.permissions);
   try {
-    const b = await api("GET", `/admin/shops/${session.shopID}/branding`);
-    session.shopName = b.name || "";
-    session.branding = b.branding || null;
+    const b = await api("GET", `/admin/shops/${state.shopID}/branding`);
+    state.shopName = b.name || "";
+    state.branding = b.branding || null;
   } catch {
-    session.shopName = "";
-    session.branding = null;
+    state.shopName = "";
+    state.branding = null;
   }
   return session;
 }
 
-export async function login(email, password) {
+async function login(email, password) {
   await apiLogin(email, password);
 }
 
-export async function logout() {
+async function logout() {
   await apiLogout();
   clearSession();
 }
 
-export function clearSession() {
+function clearSession() {
   clearReviewBasis(); // sign-out, session loss, user change: no review basis survives
-  session.user = null;
-  session.shopID = null;
-  session.shopIDs = [];
-  session.shopName = "";
-  session.branding = null;
+  state.user = null;
+  state.shopID = null;
+  state.shopIDs = [];
+  state.shopName = "";
+  state.branding = null;
   clearPermissions();
 }
 
@@ -59,12 +68,15 @@ export async function fetchHostBranding() {
 }
 
 // ── Password setup / invitations (unauthenticated) ─────────────────────
-export const passwordSetup = {
+const passwordSetup = {
   inspect: (token) => publicApi("POST", "/admin/auth/password-setup/inspect", { token }),
   submit: (token, password) => publicApi("POST", "/admin/auth/password-setup", { token, password }),
 };
-export const invitations = {
+const invitations = {
   inspect: (token) => publicApi("POST", "/admin/auth/invitations/inspect", { token }),
   acceptNew: (token, password) => publicApi("POST", "/admin/auth/invitations/accept", { token, password }),
   acceptLoggedIn: (token) => api("POST", "/admin/invitations/accept", { token }),
 };
+
+/** Every session mutator and the unauthenticated link calls, for the boot phase only (lib/boot.js, D19). `state` is the mutable object (offline tests set it up through it). */
+export const takeSession = capability("session", Object.freeze({ state, loadSession, login, logout, clearSession, passwordSetup: Object.freeze(passwordSetup), invitations: Object.freeze(invitations) }));

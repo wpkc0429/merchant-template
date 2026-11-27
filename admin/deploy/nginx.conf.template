@@ -30,6 +30,11 @@
 # environment must serve it. Do not delete, comment out, loosen (unsafe-inline / unsafe-eval / wildcards) or make it
 # conditional; scripts/check-design.mjs (step "deploy") fails when it is missing or weakened. To allow another origin
 # (image host, upload host) change the environment variables, not the policy.
+# THE ONE EXTRA script-src TOKEN (decision D19): 'sha256-...' is the hash of the exact text of the inline <script type="importmap"> in index.html. That map is
+# what keeps a design module from importing the core (lib/, core/, ui/); without the hash the browser silently IGNORES the map. It is NOT 'unsafe-inline' and allows
+# no other inline text. If index.html's import map changes, run `node scripts/check-design.mjs --update` (locked-file flow, a human step): it recomputes the hash
+# and rewrites it here; scripts/check-design.mjs (step "deploy") fails when the two disagree. The app also checks at start-up (lib/canary/probe.js) that the
+# map is in effect and turns the design layer off if it is not.
 # The CSP below is the strict one from admin/README.md and admin/docs/AI-EDIT-SERVICE-NOTES.md, adapted to
 # the template (no third-party fonts: style-src and font-src are 'self' only). The core has no inline
 # scripts or styles, so no 'unsafe-inline'. `worker-src blob:` is for the vendored HEIC converter's worker.
@@ -41,7 +46,7 @@ server {
 
     # Security headers. nginx does NOT inherit add_header into a location that has its own add_header, so every location
     # below that sets one repeats this whole block (tests/nginx-config.test.mjs checks that each location has all of them).
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-z65vwKMBYm6WcK3zjEEqFK7g9B7jzBDRfQCdE40kFXA='; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
     add_header Referrer-Policy "no-referrer" always;
     add_header X-Robots-Tag "noindex, nofollow" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -53,13 +58,23 @@ server {
     # No filename hashes, so no long caching: browsers revalidate and a publish takes effect at once.
     add_header Cache-Control "no-cache" always;
 
+    # The import map sends every module a design file tries to import outside /design/ to /deny/ (index.html, D19): it must answer 404 and nothing else. (It inherits
+    # the server-level headers: no add_header here.)
+    location ^~ /deny/ { return 404; }
+
+    # No published file has an encoded slash, an encoded dot, an encoded backslash or a double slash in its path (file names are letters, digits, . _ - only), and
+    # nginx would DECODE and MERGE them: `/design/..%2flib/orders.js`, `/design%2fcopy.js` and `//design/copy.js` all reach a file while the browser (and the import
+    # map of index.html, decision D19) sees a different URL than the file nginx serves. So any such path is refused for the WHOLE admin (the query string is not
+    # looked at). This is one of the things a reverse proxy or CDN in front of this server must also preserve (admin/README.md "自訂 nginx、反向代理與 CDN").
+    if ($request_uri ~* "^[^?]*(%2f|%5c|%2e|//)") { return 404; }
+
     # Never serve local overrides or anything that is not a published file, even if one slips into the image.
     location ~ /(config\.local\.js|\.|scripts/|e2e/|docs/|deploy/) { return 404; }
 
     # Content store: the admin page reads these two same-origin paths (the storefront origin comes from ADMIN_SITE_ORIGIN).
     location = /site-config.js {
         default_type application/javascript;
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-z65vwKMBYm6WcK3zjEEqFK7g9B7jzBDRfQCdE40kFXA='; style-src 'self'; font-src 'self'; img-src 'self' data: blob: ${ADMIN_IMG_ORIGIN}; connect-src 'self' ${ADMIN_UPLOAD_ORIGIN}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'" always;
         add_header Referrer-Policy "no-referrer" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
         add_header X-Content-Type-Options "nosniff" always;

@@ -17,6 +17,7 @@
 // takeApi() throws, so a module imported later (a design module) cannot obtain the client, a token, refresh or sign-in
 // functions. There is no `tokens`, no `.access` getter and no exported api()/apiRaw()/refreshTokens().
 import { isReadOnly } from "./preview.js";
+import { sealBoot } from "./boot.js";
 
 const cfg = window.ADMIN_CONFIG || {};
 const isLocalHost = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
@@ -249,4 +250,4 @@ export function takeApi() {
   return client;
 }
 /** Called once by app.js after every core module was evaluated and before the design layer is imported. Irreversible. */
-export function sealApi() { open = false; }
+export function sealApi() { open = false; sealBoot(); } // also closes every other boot-phase capability (lib/boot.js)

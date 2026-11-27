@@ -5,6 +5,7 @@ import { resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { loadPlaywright, SITE, OWNER, STAFF, apiLogin, req, check, section, failureCount } from "./lib.mjs";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
 import { catalog, placeOrder } from "./data.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
@@ -473,7 +474,7 @@ try {
 
   // ───────────────────────────────────────────────────────────────────
   section("D8. The admin works under the strict CSP that is REQUIRED for serving");
-  const csp = "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob: http://127.0.0.1:9000; connect-src 'self' http://127.0.0.1:9000; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+  const csp = "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob: http://127.0.0.1:9000; connect-src 'self' http://127.0.0.1:9000; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
   const cspProduct = (await req("POST", "/admin/shops/1/products", { token: ownerToken, body: { title: `CSP ${runId}`, slug: `csp-${runId}`, status: 0, skus: [{ sku_code: `csp-${runId}-M`, options: { size: "M" }, price_amount: 100, currency: "TWD", stock_qty: 1, is_active: true }] } })).json;
   // Playwright-fulfilled documents are treated as non-local by Chromium, so allow the loopback MinIO in this browser only.
   const cspBrowser = hookBrowser(await chromium.launch({ args: ["--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessSendPreflights,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests,LocalNetworkAccessPermissionPolicy"] }));

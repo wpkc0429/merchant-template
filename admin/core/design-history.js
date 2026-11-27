@@ -7,7 +7,9 @@
 import { session } from "../lib/session.js";
 import { ApiError } from "../lib/api.js";
 import * as dh from "../lib/design-history.js";
-import { allowPreviewLinkOrigin } from "../ui/kit.js";
+import { takeCoreUi } from "../ui/kit.js";
+
+const { allowPreviewLinkOrigin } = takeCoreUi(); // boot phase only (lib/boot.js, D19)
 import { t } from "../lib/design.js";
 import { need } from "./guard.js";
 import { ActionError, denied, invalid, previewDenied } from "./errors.js";

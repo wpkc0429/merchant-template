@@ -16,11 +16,12 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Under the REAL strict CSP of admin/deploy/nginx.conf.template (style-src 'self': no inline style, constructable stylesheets are what the core dialog uses).
 // The shared test hook (e2e/lib/shadow-hook.mjs) opens the shadow roots in the test browser so Playwright and __dq() can look inside; the unpatched scenarios use a second, RAW browser to prove the root is closed.
-const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const csp = (connect) => "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 const SHOTS = process.env.REVIEW_SHOTS || resolve(ADMIN, "e2e/out/review-ui");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -63,7 +64,7 @@ const RID = "11111111-2222-4333-8444-555555555555", TARGET = "aaaaaaaa-bbbb-4ccc
 const SHA1 = "a1".repeat(20), SHA2 = "b2".repeat(20);
 const PERMS = { owner: ["design.view", "design.request", "design.approve", "design.revert"], editor: ["design.view"], staff: ["order.view"] };
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 let PORT = 0;
 const GARBAGE = (() => { const b = Buffer.from(png(390, 800, () => [1, 2, 3])); const out = Buffer.concat([b.subarray(0, 33), Buffer.from("this is not image data at all, just text".repeat(5))]); return out; })();
 let S; // per-scenario state

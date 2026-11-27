@@ -9,6 +9,7 @@ import { buildCoreCss } from "./core-dialog-css.js";
 import { resolveTheme } from "./core-theme.js";
 import { coreText } from "../lib/fixed-text.js";
 import { gcs, raf as rafNative, hasRaf, viewport } from "../lib/natives.js";
+import { capability } from "../lib/boot.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -22,13 +23,13 @@ const URL_ATTRS = new Set(["src", "href", "poster", "srcset", "data", "cite"]);
 const allowedOrigins = new Set();
 
 /** The core calls this with the media public base and branding logo hosts so <img> may point at them. */
-export function allowImageOrigin(url) {
+function allowImageOrigin(url) {
   try { allowedOrigins.add(new URL(url).origin); } catch { /* not a URL */ }
 }
 // ONE extra link target, for href only (never img src): the origin of the version preview the person asked for (core/version-preview.js).
 // A single slot, replaced by the next preview, so the global image/link allowlist above is not widened.
 let previewLinkOrigin = "";
-export function allowPreviewLinkOrigin(url) {
+function allowPreviewLinkOrigin(url) {
   try { previewLinkOrigin = url ? new URL(url).origin : ""; } catch { previewLinkOrigin = ""; }
 }
 const refuse = (what) => console.warn(`[design] ui: refused ${what}`);
@@ -207,7 +208,7 @@ function readTokens(host, colorProbe) {
   return { color, raw };
 }
 
-export function showCoreDialog(opts) {
+function showCoreDialog(opts) {
   if (!supportsShadow()) return showDialog(opts); // an old browser: the light dialog (styled by styles.css), without the isolation
   const host = document.createElement("div");
   host.setAttribute("data-core", "dialog");
@@ -300,7 +301,7 @@ function buildDialog({ title, content, actions = [], onClose, wide = false, chec
 }
 
 /** Promise<boolean>. This is the core's confirmation primitive: action functions call it themselves. */
-export function confirmDialog({ title, message, warning = "", detail = "", confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
+function confirmDialog({ title, message, warning = "", detail = "", confirmText = t("common.confirm"), cancelText = t("common.cancel"), danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
     showCoreDialog({
@@ -492,3 +493,10 @@ export async function copyText(text) {
     const ok = document.execCommand("copy"); ta.remove(); return ok;
   } catch { return false; }
 }
+
+/**
+ * The privileged UI primitives, for the BOOT PHASE only (lib/boot.js, D19): the core's dialog (showCoreDialog: the closed-shadow-root dialog the design review and
+ * the fixed warnings are drawn with), confirmDialog, and the two allow-lists that widen where an image / a link may point. The core takes them once while it is
+ * evaluated; after sealApi() nothing imported later can obtain them by importing this module. (ctx.ui.confirmDialog is the same function, handed out by the core.)
+ */
+export const takeCoreUi = capability("core ui", Object.freeze({ showCoreDialog, confirmDialog, allowImageOrigin, allowPreviewLinkOrigin }));

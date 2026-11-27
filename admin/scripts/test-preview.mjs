@@ -74,8 +74,8 @@ const reset = () => { calls.length = 0; routes = []; };
 
 const { takeApi, ApiError } = await imp("lib/api.js");
 const net = takeApi();
-const { session } = await imp("lib/session.js");
-const { setPermissions } = await imp("lib/perm.js");
+const { state: session } = (await imp("lib/session.js")).takeSession(); // boot phase: the mutable state (D19)
+const { setPermissions } = (await imp("lib/perm.js")).takePermissions(); // boot phase (D19)
 const { loadDesign, t } = await imp("lib/design.js");
 const { actions } = await imp("core/actions.js");
 const { data } = await imp("core/data.js");
@@ -151,17 +151,17 @@ if (!PREVIEW) {
   }
   {
   // the preview link may be opened without widening the global image allowlist
-  const kit = await imp("ui/kit.js");
+  const kit = await imp("ui/kit.js"); const { allowPreviewLinkOrigin } = kit.takeCoreUi(); // boot phase (D19)
   const mkEl = () => g.document.createElement("a");
   g.document.createElement = (t) => { const e = new FakeEl(t); e.addEventListener = () => {}; e.append = (...c) => { e.children.push(...c); }; return e; };
   g.location.href = "http://localhost:3001/";
-  kit.allowPreviewLinkOrigin("https://p-9.preview.example");
+  allowPreviewLinkOrigin("https://p-9.preview.example");
   const link = (u) => kit.h("a", { href: u }); const img = (u) => kit.h("img", { src: u });
   const w0 = console.warn; console.warn = () => {};
   ok("preview origin works as a link href", link("https://p-9.preview.example/x").attrs.has("href"));
   ok("preview origin is NOT an image source", !img("https://p-9.preview.example/x.png").attrs.has("src"));
   ok("another https origin is still refused as a link", !link("https://other.example/").attrs.has("href"));
-  kit.allowPreviewLinkOrigin("https://p-10.preview.example");
+  allowPreviewLinkOrigin("https://p-10.preview.example");
   ok("a newer preview replaces the old one (single slot)", !link("https://p-9.preview.example/").attrs.has("href") && link("https://p-10.preview.example/").attrs.has("href"));
   console.warn = w0; void mkEl;
   }

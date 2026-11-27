@@ -16,6 +16,7 @@ import * as content from "../lib/content.js";
 import { validate, hasRemovals, reportLines, hydrate, mapServerDetails } from "../lib/content-schema.js";
 import { mediaConfig, mediaEnabled, uploadContentImage as libUploadContentImage } from "../lib/upload.js";
 import { t } from "../lib/design.js";
+import { capability } from "../lib/boot.js";
 import { need } from "./guard.js";
 import { ActionError, invalid, blocked, denied, previewDenied } from "./errors.js";
 
@@ -88,7 +89,7 @@ export const reads = {
 
 // ── actions ────────────────────────────────────────────────────────────
 /** deps: { ask(key, params, opts) -> Promise<boolean> }. */
-export function createContentActions({ ask }) {
+function createContentActions({ ask }) {
   /**
    * values = the whole content object the form read (contentForm().read()). opts = {rev, create, typeKey, meta}.
    * Update needs the draft_rev the form was loaded with (sent as If-Match). Returns {ok, document}: the document AS THE
@@ -219,3 +220,6 @@ export function createContentActions({ ask }) {
 
   return { saveContentDocument, publishContentDocument, unpublishContentDocument, deleteContentDocument, restoreContentRevision, uploadContentImage, previewContentDocument, registerContentSchema };
 }
+
+/** The factory, for the boot phase only (lib/boot.js, D19): core/actions.js takes it once; nothing imported later can build content actions. */
+export const takeContentActions = capability("content actions", createContentActions);
