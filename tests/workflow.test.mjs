@@ -16,7 +16,17 @@ test('workflow file: pure node, no installs, runs every guard, has the branch-pr
   for (const needle of ['node scripts/check-content-schema.mjs --lint', 'node scripts/check-layers.mjs --check', 'admin/scripts/check-design.mjs', 'admin/scripts/test-guard.mjs', 'scripts/check-scope.mjs', 'scripts/check-locked.mjs', 'design/storefront-*', 'design/admin-*', 'branch protection', 'block direct pushes', 'pull_request', 'push:']) {
     assert.ok(y.includes(needle), needle);
   }
-  assert.doesNotMatch(y, /npm (ci|install)|yarn|pnpm|pip install/);
+  // The guard jobs install nothing. The ONE exception is the `browser-tests` job (D22): it installs the exact pinned Playwright in a folder outside the repository.
+  const at = y.indexOf('\n  browser-tests:');
+  assert.ok(at > 0, 'the browser-tests job exists');
+  assert.doesNotMatch(y.slice(0, at), /npm (ci|install)|yarn|pnpm|pip install/);
+  assert.doesNotMatch(y, /yarn|pnpm|pip install|npm ci/);
+  assert.match(y, /PLAYWRIGHT_VERSION: \d+\.\d+\.\d+\n/, 'Playwright is pinned to an exact version');
+  assert.equal((y.slice(at).match(/npm install/g) || []).length, 1, 'one install in the browser job');
+  assert.match(y.slice(at), /npm install --save-exact [^\n]*"playwright@\$PLAYWRIGHT_VERSION"/);
+  assert.match(y, /REQUIRE_BROWSER_TESTS: '1'/);
+  assert.doesNotMatch(y, /^\s*pull_request_target\s*:|\$\{\{\s*secrets\./m, 'no secrets, no pull_request_target');
+  assert.doesNotMatch(y, /uses: [^\n]*@(v\d+|main|master)\b/, 'third-party actions are pinned by full commit SHA');
 });
 
 test('storefront design branch: design edits pass; locked, config, other-site and root edits fail', () => {
