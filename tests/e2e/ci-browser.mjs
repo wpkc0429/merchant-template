@@ -39,13 +39,7 @@ for (const rel of SUITES) {
   if (problem) { bad.push(rel); console.log(out.split('\n').slice(-60).join('\n')); }
 }
 console.log(`\nexecuted browser checks: ${total}`);
-if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Real-browser suites (executed checks: ${total})
-
-| suite | checks executed | result |
-|---|---|---|
-${rows.join('
-')}
-`);
+if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, ['### Real-browser suites (executed checks: ' + total + ')', '', '| suite | checks executed | result |', '|---|---|---|', ...rows, ''].join('\n'));
 if (total <= 0) bad.push('total executed checks is 0');
 if (bad.length) { console.error(`ci-browser: FAILED (${bad.join(', ')})`); process.exit(1); }
 console.log('ci-browser: all suites ran and passed');
