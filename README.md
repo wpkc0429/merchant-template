@@ -8,7 +8,7 @@ inside a fenced "design layer".
 
 * `CLAUDE.md`: rules for design sessions (AI) and, separately, for the human maintainers of the locked core.
 * `docs/TEMPLATE-NOTES.md`: guide for adapting an existing storefront, every locked-code change, known limitations, open decisions.
-* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline, `v0.2.0` = the 2026-11-25 decisions, `v0.5.0` = design history, hardening, profile page; read its MIGRATION section before the first sync: a merchant repo needs `merchant.headers.json` first); `template.json` holds the version (currently 0.5.0).
+* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline, `v0.2.0` = the 2026-11-25 decisions, `v0.5.0` = design history, hardening, profile page; read its MIGRATION section before the first sync: a merchant repo needs `merchant.headers.json` first); `template.json` holds the version.
 * `docs/DECISIONS.md`: the standing decisions (strict CSP is a deployment requirement, `admin/styles.css` stays locked, fixed
   warnings in irreversible confirmations, locked-core changes are human-reviewed, merchant repos come from `new-merchant.mjs` and
   syncs from a tag only, the content schema is registered by a human only).

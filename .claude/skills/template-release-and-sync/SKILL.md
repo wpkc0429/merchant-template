@@ -24,7 +24,7 @@ Decided 2026-11-25 (`docs/DECISIONS.md` D5): merchant repos are created with `sc
    git tag -a vX.Y.Z -m "merchant-template X.Y.Z"
    git tag -n1 vX.Y.Z && git cat-file -t vX.Y.Z      # prints: tag  (a lightweight tag prints: commit and is refused by sync-core)
    ```
-5. Pushing the tag (`git push origin vX.Y.Z`) is a separate human step, only once a remote exists.
+5. Pushing the tag (`git push origin vX.Y.Z`) is a separate human step. For a release made through a PR: merge the PR first, create the annotated tag on the MERGE COMMIT of `main`, push it, and only then create merchants with `new-merchant` or run `sync-core` (a checkout not exactly at the tag is recorded as "NOT at tag" in `.template-version` and `sync-core` refuses it).
 
 ## 2. Create a merchant
 
