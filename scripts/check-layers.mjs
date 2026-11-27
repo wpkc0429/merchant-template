@@ -49,7 +49,7 @@ import { validateConfig, renderForRoot, parseConfigText, CONFIG_FILE, OUT_FILE }
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 // HTML comments the way the browser ends them (D23): <!--> and <!---> are empty comments, and a comment ends at --> OR --!> (the tokenizer's "comment end bang" state)
 const HTML_COMMENT = /<!--(?:-?>|[\s\S]*?(?:-->|--!>))/g;
-const PUB =path.join(ROOT, 'public');
+const PUB = path.join(ROOT, 'public');
 const MANIFEST = path.join(ROOT, 'scripts', 'commerce.manifest.json');
 const TEMPLATE_JSON = path.join(ROOT, 'template.json');
 const rel = (f) => path.relative(ROOT, f).split(path.sep).join('/');
