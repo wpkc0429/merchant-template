@@ -337,6 +337,12 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
   ok("scripts/test-design-review.mjs passes (design review actions)", r.status === 0, r.stdout + r.stderr);
 }
 
+// ── 7d. personal profile (D21): validation mirror, sealed API, controller with a mock API, nothing new for the design layer (offline; 2 modes) ──
+{
+  const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-profile.mjs")], { encoding: "utf8" });
+  ok("scripts/test-profile.mjs passes (personal profile)", r.status === 0, r.stdout + r.stderr);
+}
+
 // ── 7. version preview core + preview-mode read-only + the core banner (offline; runs itself as a normal page and as a preview host) ──
 {
   const r = spawnSync(process.execPath, [path.join(ROOT, "scripts/test-preview.mjs")], { encoding: "utf8" });

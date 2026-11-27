@@ -12,6 +12,7 @@ inside a fenced "design layer".
 * `docs/DECISIONS.md`: the standing decisions (strict CSP is a deployment requirement, `admin/styles.css` stays locked, fixed
   warnings in irreversible confirmations, locked-core changes are human-reviewed, merchant repos come from `new-merchant.mjs` and
   syncs from a tag only, the content schema is registered by a human only).
+* Admin personal profile (D21): every signed-in person sets their own display name on a core-owned page (`#/profile`), shown to teammates in the design history; no new `ctx` function (`admin/docs/DESIGN-LAYER.md`).
 * `.claude/skills/`: `storefront-design`, `admin-design` (operating manuals for design sessions), `merchant-onboarding` (the
   platform operator's playbook this template instantiates), `core-change` (the human-reviewed process for changing the locked
   core or the `ctx` surface) and `template-release-and-sync` (releasing a version, syncing it into a merchant).

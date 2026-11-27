@@ -14,6 +14,7 @@ import { loadDesign, t } from "./lib/design.js";
 import { h, clear, applyBranding, takeCoreUi, errorMessage, loading, emptyState } from "./ui/kit.js";
 import { ROUTES, NAV } from "./core/routes.js";
 import { makeContext } from "./core/context.js";
+import { mountProfile, designHint } from "./core/profile.js";
 import { takeMakeAuth } from "./core/auth.js";
 import { mountView } from "./core/host.js";
 import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
@@ -153,9 +154,13 @@ async function renderIn(token, def, m) {
   const id = allowed ? def.id : "noPermission";
   const ctxFor = () => makeContext({ routeId: id, params: m.params, query: m.query, state: { readOnly: isReadOnly() }, alive: () => token === viewToken, nav: visibleNav(), auth: authFor(null) });
   try {
+    // The personal profile is drawn by the core itself (D21): no design view, no mountView, nothing the design layer can replace.
+    if (allowed && def.core === true && def.id === "profile") { shell.main.replaceChildren(mountProfile(() => token === viewToken)); return; }
     const { root: view } = await mountView(id, holder, ctxFor);
     if (token !== viewToken) return;
-    shell.main.replaceChildren(view);
+    // The one-time "set your name" hint above the design history screens is core-drawn too, so it shows with any design view (D21).
+    const hint = allowed && def.nav === "design" ? designHint(() => { const hd = shell.main.querySelector("h1"); if (hd) { hd.setAttribute("tabindex", "-1"); hd.focus(); } }) : null;
+    if (hint) shell.main.replaceChildren(hint, view); else shell.main.replaceChildren(view);
   } catch (e) {
     if (token !== viewToken) return;
     shell.main.replaceChildren(h("div", { class: "view" }, emptyState(t("state.error"), errorMessage(e))));

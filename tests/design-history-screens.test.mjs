@@ -15,7 +15,7 @@ const VIEWS = ['views/design-history.js', 'views/design-request.js', 'parts/desi
 test('D15 is recorded in docs/DECISIONS.md (newest first) and names what is and is not in PR3', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[5], 'D15'); assert.equal(ids[4], 'D16'); assert.equal(ids[3], 'D17'); assert.equal(ids[2], 'D18'); assert.equal(ids[1], 'D19'); assert.equal(ids[0], 'D20');
+  assert.equal(ids[6], 'D15'); assert.equal(ids[5], 'D16'); assert.equal(ids[4], 'D17'); assert.equal(ids[3], 'D18'); assert.equal(ids[2], 'D19'); assert.equal(ids[1], 'D20'); assert.equal(ids[0], 'D21');
   const start = lines.findIndex((l) => l.startsWith('### D15. T1-T4 PR3'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
@@ -105,7 +105,7 @@ test('D16 is recorded (newest first) with the four owner approvals, and the desi
   assert.match(view, /state\.designEnabled === false/);
   assert.match(view, /dh\.empty\.disabled\.title/);
   assert.match(view, /Math\.ceil\(list\.total/);
-  for (const v of ['views/shell.js', 'views/design-history.js', 'copy.js']) assert.equal(f(`admin/design/${v}`), f(`admin/design-defaults/${v}`).replace(/\n  "vp\.limits".*\n/, '\n'), v);
+  for (const v of ['views/shell.js', 'views/design-history.js', 'copy.js']) assert.equal(f(`admin/design/${v}`), f(`admin/design-defaults/${v}`).replace(/\n  "vp\.limits".*\n/, '\n').replace(/\n  "nav\.profile".*\n/, '\n'), v);
   const e2e = f('admin/e2e/design-history.mjs');
   for (const n of ['design_enabled: nav gating', 'page=99999999999', 'three rapid next-page clicks']) assert.ok(e2e.includes(n), n);
   assert.match(f('admin/design-defaults/theme.css'), /^\.dh-area \.pager \.btn \{/m);

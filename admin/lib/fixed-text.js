@@ -5,6 +5,8 @@
 // It imports nothing.
 export const FIXED_COPY = Object.freeze({
   // Shown next to every "preview this version" button (decided with the platform change design-history, D25 point 11).
+  // The label of the personal profile entry in the navigation (D21). Fixed so a shell without the key in its own copy still shows it.
+  "nav.profile": "個人資料",
   "vp.limits": "版本預覽是用「目前的核心與目前的資料」即時畫出來、用來幫你決定的畫面，不是那一版當時被核准內容的紀錄：它可能和那一版當時的樣子不同，會在到期後消失，也不會被保存。歷史紀錄以並排截圖為準。預覽是唯讀的，不能儲存任何變更。",
 });
 
@@ -36,6 +38,28 @@ export const CORE_TEXT = Object.freeze({
   "rv.scan.count": "共 {n} 個檔案被變更", "rv.scan.listed": "（只列出前 {m} 個）", "rv.scan.fileList": "完整的變更檔案清單（{m} 個，點一下展開）",
   "rv.delay": "為了避免誤按，這個按鈕 {s} 秒後才能使用。",
   "rv.delay.over": "等待時間已過，現在可以按下按鈕。",
+  // The personal profile page and its one-time hint (D21). CORE-OWNED, NO copy key: the privacy wording cannot be reworded by the design layer.
+  "pf.title": "個人資料", "pf.label": "顯示名稱",
+  "pf.help": "隊友會在設計歷史中看到這個名稱；請不要填 email 或電話。",
+  "pf.fallback": "沒有設定時，設計歷史會顯示「Team member」。",
+  "pf.counter": "{n} / {max}", "pf.counter.aria": "已輸入 {n} 字，上限 {max} 字",
+  "pf.save": "儲存", "pf.clear": "清除名稱", "pf.saving": "儲存中…",
+  "pf.saved": "已儲存。隊友會在設計歷史中看到「{name}」。",
+  "pf.cleared": "已清除名稱。設計歷史會改顯示「Team member」。",
+  "pf.loadFailed": "個人資料載入失敗", "pf.retry": "重試",
+  "pf.err.too_long": "名稱最多 {max} 字，現在有 {n} 字，請縮短一點。",
+  "pf.err.multiline": "名稱只能是一行，請不要換行或使用 Tab。",
+  "pf.err.email": "名稱裡看起來有 email，請拿掉；隊友會看到這個名稱。",
+  "pf.err.phone": "名稱裡看起來有電話號碼，請拿掉；隊友會看到這個名稱。",
+  "pf.err.card_like": "名稱裡看起來有卡號，請拿掉。",
+  "pf.err.type": "名稱的格式不對，請重新輸入。",
+  "pf.err.rejected": "平台沒有接受這個名稱：請不要包含 email、電話或卡號，並保持在 80 字內的單行文字。",
+  "pf.err.network": "連線失敗，名稱還沒有儲存。請檢查網路後再試一次。",
+  "pf.err.server": "平台暫時無法儲存，名稱還沒有儲存。請稍後再試。",
+  "pf.err.generic": "沒有儲存成功，名稱還沒有改變。請稍後再試。",
+  "pf.err.load": "目前讀不到你的個人資料。請稍後再試。",
+  "pf.hint.aria": "個人資料提示", "pf.hint.text": "設定你的名稱，隊友才看得到是誰提出或核准了改版。",
+  "pf.hint.go": "前往個人資料", "pf.hint.dismiss": "關閉提示",
   // Preview host (D18): the platform enforces read-only sessions there; these are the calm messages.
   "iso.disabled": "自訂設計已停用：這個瀏覽器或伺服器設定無法確保隔離，目前顯示的是內建畫面。功能不受影響；請聯絡管理員。",
   "pv.readOnly": "這是預覽畫面，不能在這裡修改。想編輯請回到正常的後台。",

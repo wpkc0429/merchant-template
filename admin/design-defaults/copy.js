@@ -833,6 +833,7 @@ export default {
   "vp.err.hourlyCap": "你這個小時的預覽次數已用完，請約 {minutes} 分鐘後再試。",
   "vp.err.dailyCap": "本店今天的預覽次數已用完，請約 {minutes} 分鐘後再試。",
   "err.readOnly": "預覽畫面是唯讀的，不能儲存任何變更。",
+  "nav.profile": "個人資料",
   "vp.limits": "版本預覽是用「目前的核心與目前的資料」即時畫出來、用來幫你決定的畫面，不是那一版當時被核准內容的紀錄：它可能和那一版當時的樣子不同，會在到期後消失，也不會被保存。歷史紀錄以並排截圖為準。預覽是唯讀的，不能儲存任何變更。",
   // ── Design history (T1-T4 PR3; the approval and revert wording lives in the CORE and is not editable here) ──
   "nav.design": "設計歷史",

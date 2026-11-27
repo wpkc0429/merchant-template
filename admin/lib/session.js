@@ -4,6 +4,7 @@ import { takeApi } from "./api.js";
 const { api, publicApi, login: apiLogin, logout: apiLogout } = takeApi(); // boot phase only (lib/api.js)
 import { takePermissions } from "./perm.js";
 import { clearReviewBasis } from "./design-history.js";
+import { noteDisplayName, clearProfile } from "./profile.js";
 import { capability } from "./boot.js";
 
 const { setPermissions, clearPermissions } = takePermissions(); // boot phase only (lib/boot.js)
@@ -20,6 +21,7 @@ export const session = Object.freeze({
 async function loadSession(preferredShopID) {
   clearReviewBasis(); // a new sign-in or a restored session never inherits what an earlier user's review had read (design review, D14)
   const me = await api("GET", "/admin/me");
+  noteDisplayName(me.display_name); // a string or null once the platform knows the field; anything else = unknown (the profile hint stays away)
   const ids = me.sids || [];
   state.user = Object.freeze({ id: me.id, email: me.email, platformPermissions: Object.freeze([...(me.platform_permissions || [])]) });
   state.shopIDs = ids;
@@ -52,6 +54,7 @@ async function logout() {
 }
 
 function clearSession() {
+  clearProfile();
   clearReviewBasis(); // sign-out, session loss, user change: no review basis survives
   state.user = null;
   state.shopID = null;

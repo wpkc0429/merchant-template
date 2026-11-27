@@ -21,3 +21,11 @@ export function canaryNoise(page) {
     return true;
   };
 }
+
+// A suite that PROVOKES an HTTP failure on purpose (a fake API answering 422 or 500 to one path) says so here: the browser logs "Failed to load resource: ... status of NNN"
+// for it. Exactly that status, error type and URL path is expected; the same path with another status, or any other path, still counts as the console error it is.
+/** Pure: is this console message the logged failure of `status` for `path`? */
+export function isHttpFailure(type, text, url, path, status) {
+  if (type !== "error" || !new RegExp(`status of ${status}(?![0-9])`).test(text || "")) return false;
+  try { return new URL(url).pathname === path; } catch { return false; }
+}

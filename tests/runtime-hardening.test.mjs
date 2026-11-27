@@ -13,7 +13,7 @@ const js = (dir) => readdirSync(path.join(TEMPLATE, 'admin', dir)).filter((x) =>
 test('D18 is recorded (newest first) with the owner approval, the five items, the residual risks and what is postponed', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[0], 'D20'); assert.equal(ids[1], 'D19'); assert.equal(ids[2], 'D18'); assert.equal(ids[3], 'D17');
+  assert.equal(ids[0], 'D21'); assert.equal(ids[1], 'D20'); assert.equal(ids[2], 'D19'); assert.equal(ids[3], 'D18'); assert.equal(ids[4], 'D17');
   const start = lines.findIndex((l) => l.startsWith('### D18.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
@@ -38,7 +38,7 @@ test('lib/api.js exports only ApiError, takeApi and sealApi; nothing imports or 
   assert.ok(!/get access\(/.test(api), 'no .access getter');
   const all = ['app.js', ...js('lib'), ...js('core'), ...js('ui')];
   const users = all.filter((p) => /takeApi\(\)/.test(f(`admin/${p}`)) && p !== 'lib/api.js').sort();
-  assert.deepEqual(users, ['app.js', 'core/auth.js', 'lib/catalog.js', 'lib/content.js', 'lib/design-history.js', 'lib/design-review.js', 'lib/members.js', 'lib/orders.js', 'lib/reports.js', 'lib/session.js', 'lib/team.js', 'lib/upload.js', 'lib/versionpreview.js']);
+  assert.deepEqual(users, ['app.js', 'core/auth.js', 'lib/catalog.js', 'lib/content.js', 'lib/design-history.js', 'lib/design-review.js', 'lib/members.js', 'lib/orders.js', 'lib/profile.js', 'lib/reports.js', 'lib/session.js', 'lib/team.js', 'lib/upload.js', 'lib/versionpreview.js']);
   // every call happens at module level, never inside a function (that would run after the seal)
   for (const p of users) for (const l of f(`admin/${p}`).split('\n')) if (/takeApi\(\)/.test(l) && !/^\s*\/\//.test(l)) assert.match(l, /^(const|import) /, `${p}: takeApi() must be called at module level: ${l}`);
   for (const p of all) {

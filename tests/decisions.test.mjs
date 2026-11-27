@@ -300,7 +300,7 @@ test('fixed warnings: every irreversible confirm in core/actions.js goes through
   assert.match(fixedWarning('shipDelivered', { id: 12 }), /出貨 #12/);
   assert.throws(() => fixedWarning('nope'));
   // the default design's copy equals the built-in copy except for the FIXED core texts (lib/fixed-text.js), which design/copy.js must not carry
-  const noFixed = (t) => t.replace(/\r\n/g, '\n').split('\n').filter((l) => !/^\s*"vp\.limits":/.test(l)).join('\n');
+  const noFixed = (t) => t.replace(/\r\n/g, '\n').split('\n').filter((l) => !/^\s*"(vp\.limits|nav\.profile)":/.test(l)).join('\n');
   assert.equal(noFixed(readFileSync(path.join(TEMPLATE, 'admin/design/copy.js'), 'utf8')), noFixed(readFileSync(path.join(TEMPLATE, 'admin/design-defaults/copy.js'), 'utf8')));
   assert.ok(!readFileSync(path.join(TEMPLATE, 'admin/design/copy.js'), 'utf8').includes('"vp.limits"'), 'design/copy.js must not define the fixed vp.limits');
   assert.match(tplFile('admin/ui/kit.js'), /data-testid": "confirm-warning"/);
