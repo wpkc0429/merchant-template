@@ -29,13 +29,22 @@
      5. Strict CSP: public/_headers must exist and carry a strict Content-Security-Policy (script-src 'self' only, object-src/base-uri/frame-ancestors locked down); an inline <script>/on*= in index.html is an error in the template, a warning in a merchant repo.
      5d. (D12, v0.4.2) No dialog tag, popover/inert attribute, dialog/popover/fullscreen/pointer-lock
         method, programmatic click/submit/dispatchEvent or synthetic Event in the design layer.
-     6. Prints a sha256 manifest of public/commerce/, public/config.js and public/_headers.
+     5e. (D20, v0.5.0) public/_headers is DERIVED: it must be byte-identical to scripts/render-headers.mjs applied to the core template
+        (scripts/headers.core.txt) and the merchant's own origins (merchant.headers.json, strict: https origins only, no wildcard, no
+        `https:` / `*` / `data:` scheme source in connect-src). connect-src / img-src may not carry a bare scheme or wildcard.
+        Leftover replace-with-* placeholders in merchant.headers.json: a warning in the template, an ERROR in a merchant repo
+        (--allow-placeholders turns that into a warning; new-merchant.mjs uses it for its own scripted verification only).
+     5f. (D20) Storefront network scan: fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest, new Image / Audio, dynamic
+        import(), RTCPeerConnection and window.open are refused in the design layer as identifiers and as exact string values
+        (window['fetch'], 'fe' + 'tch'), including aliases such as (0, fetch)(x) and var f = fetch.
+     6. Prints a sha256 manifest of public/commerce/ and public/config.js (public/_headers is verified by 5e, not hashed).
    ============================================================ */
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
+import { validateConfig, renderForRoot, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUB = path.join(ROOT, 'public');
@@ -79,7 +88,10 @@ const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) 
 // admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line (any length); nothing is
 // blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
 // wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
-function canonicalSource(src) {
+function canonicalSource(src, mask = false) {
+  // mask: the text of string and template literals (outside ${...}) becomes spaces (line breaks kept), so a rule on identifiers does
+  // not fire on copy text such as 'we fetch your order'. Used by the storefront network scan (5f).
+  const lit = mask ? (s) => s.replace(/[^\r\n\u2028\u2029]/g, ' ') : (s) => s;
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
   const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
@@ -122,9 +134,9 @@ function canonicalSource(src) {
   const keepEsc = (s) => '"\'`\\$'.includes(s) || LT(s);
   const escape = () => { // inside a string or template, at a backslash
     const e = esc(i);
-    if (e && !keepEsc(e[0])) { out.push(e[0]); i = e[1]; return; }
+    if (e && !keepEsc(e[0])) { out.push(lit(e[0])); i = e[1]; return; }
     const adv = src[i + 1] === '\r' && src[i + 2] === '\n' ? 3 : 2;
-    out.push(src.slice(i, i + adv)); i += adv;
+    out.push(lit(src.slice(i, i + adv))); i += adv;
   };
   const template = () => { // after a backtick or the "}" that closes a ${...}
     while (i < n) {
@@ -132,7 +144,7 @@ function canonicalSource(src) {
       if (c === '\\') { escape(); continue; }
       if (c === '`') { out.push(c); i++; regexOk = false; return; }
       if (c === '$' && src[i + 1] === '{') { out.push('${'); i += 2; braces.push('tpl'); regexOk = true; return; }
-      out.push(c); i++;
+      out.push(lit(c)); i++;
     }
   };
   while (i < n) {
@@ -145,7 +157,7 @@ function canonicalSource(src) {
     }
     if (c === '"' || c === "'") {
       out.push(c); i++;
-      while (i < n && src[i] !== c && src[i] !== '\n' && src[i] !== '\r') { if (src[i] === '\\') escape(); else { out.push(src[i]); i++; } }
+      while (i < n && src[i] !== c && src[i] !== '\n' && src[i] !== '\r') { if (src[i] === '\\') escape(); else { out.push(lit(src[i])); i++; } }
       if (src[i] === c) { out.push(c); i++; }
       regexOk = false; word = ''; afterDot = false; continue;
     }
@@ -296,6 +308,11 @@ function checkCsp(headersText, indexHtml, tpl = true) {
       need('object-src', (v) => v.join(' ') === "'none'", "must be 'none'");
       need('base-uri', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
       need('frame-ancestors', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
+      for (const n of ['connect-src', 'img-src', 'font-src', 'style-src', 'frame-src']) {
+        const bad = (dirs.get(n) || []).filter((v) => /^(https?|wss?|ftp|blob|filesystem):?$/i.test(v) || v.includes('*') || (n !== 'img-src' && /^data:$/i.test(v)) || /^'unsafe-/.test(v));
+        if (bad.length) errors.push(`CSP ${n} must list explicit origins only (found: ${bad.join(' ')}); declare the merchant's origins in merchant.headers.json`);
+      }
+      if (!dirs.has('connect-src')) errors.push('CSP lacks connect-src (it must pin the platform API origin)');
       if (!dirs.has('default-src')) errors.push('CSP lacks default-src');
       if (!dirs.has('form-action')) errors.push('CSP lacks form-action');
       else if ((dirs.get('form-action') || []).some((v) => /^\*$|^https?:$|^data:$/i.test(v))) errors.push('CSP form-action must list explicit hosts (no wildcard or bare scheme)');
@@ -310,6 +327,43 @@ function checkCsp(headersText, indexHtml, tpl = true) {
   const hp = path.join(PUB, '_headers'), ip = path.join(PUB, 'index.html');
   const r = checkCsp(existsSync(hp) ? readFileSync(hp, 'utf8') : null, existsSync(ip) ? readFileSync(ip, 'utf8') : '', isTemplate);
   r.errors.forEach(fail); warnings.push(...r.warnings);
+}
+
+/* ---------- 5e: public/_headers is DERIVED from the core template + the merchant's own origins (D20) ---------- */
+
+{
+  const allowPlaceholders = process.argv.includes('--allow-placeholders');
+  const cfgPath = path.join(ROOT, CONFIG_FILE);
+  let cfg = null;
+  if (!existsSync(cfgPath)) fail(`${CONFIG_FILE} is missing: it holds the merchant's own API / image origins for the storefront CSP (copy it from the template and fill it in; see docs/DECISIONS.md D20)`);
+  else {
+    try { cfg = JSON.parse(readFileSync(cfgPath, 'utf8')); } catch (e) { fail(`${CONFIG_FILE} is not valid JSON: ${e.message}`); }
+  }
+  if (cfg) {
+    const v = validateConfig(cfg);
+    v.errors.forEach(fail);
+    if (v.placeholders.length) {
+      const msg = `${CONFIG_FILE} still holds template placeholders (${v.placeholders.join(', ')}): set the real origins (a human edit), then run \`node scripts/render-headers.mjs\``;
+      if (isTemplate || allowPlaceholders) warnings.push(msg); else fail(msg);
+    }
+    if (!v.errors.length) {
+      try {
+        const { text } = renderForRoot(ROOT);
+        const hp = path.join(PUB, '_headers');
+        const cur = existsSync(hp) ? readFileSync(hp, 'utf8').replace(/\r\n/g, '\n') : null;
+        if (cur !== text) fail(`${OUT_FILE} is not the rendering of scripts/headers.core.txt + ${CONFIG_FILE} (hand edit or stale file): run \`node scripts/render-headers.mjs\` and commit the result`);
+      } catch (e) { fail('cannot render ' + OUT_FILE + ': ' + e.message); }
+      // the config must agree with config.js: the API origin the storefront really calls has to be allowed by connect-src
+      const cj = canonicalSource(readFileSync(path.join(PUB, 'config.js'), 'utf8'));   // comments blanked: the header shows an example apiBase
+      const m = /\bapiBase\s*:\s*(['"])(.*?)\1/.exec(cj);
+      if (m && !/REPLACE_WITH_/.test(m[2])) {
+        let o = null; try { o = new URL(m[2]).origin; } catch { /* not a URL */ }
+        const allowed = [cfg.apiOrigin, ...(cfg.extraConnect || [])];
+        if (!o) fail(`public/config.js apiBase is not a URL: ${m[2]}`);
+        else if (!allowed.includes(o)) (isTemplate ? warnings : errors).push(`public/config.js apiBase origin ${o} is not allowed by ${CONFIG_FILE} (apiOrigin / extraConnect): the browser would block every API call`);
+      }
+    }
+  }
 }
 
 /* ---------- 5b: script load order in index.html (content-allowlist.js and content.js before the design layer) ---------- */
@@ -382,9 +436,61 @@ for (const f of designFiles) {
   }
 }
 
+/* ---------- 5f: storefront network egress scan (D20, v0.5.0) ---------- */
+
+// The strict CSP (connect-src pinned to the merchant's API origin, 5e) is the real fence; this scan is the cheap early warning that a design
+// change tried to talk to the network itself. The design layer never needs any of these: every request goes through ShopCommerce.
+//  * identifiers (strings and templates masked, comments blanked): fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest, in any position
+//    ((0, fetch)(x), var f = fetch, navigator.sendBeacon, window.fetch), except as an object-literal key ({ fetch: 1 }) which is data;
+//  * exact string values, after joining 'fe' + 'tch': window['fetch'], self["sendBeacon"], Reflect.get(window, 'fetch') (escapes are decoded by canonicalSource);
+//  * new Image / Audio / Worker / SharedWorker (an image or media element created in script is a GET to anywhere that img-src allows, a ping),
+//    RTCPeerConnection (WebRTC is outside connect-src), window.open and dynamic import() / import.meta.
+// Core files (public/commerce/**, config.js) are not design files and are exempt, exactly as for the rules above.
+const NET_NAMES = 'fetch|sendBeacon|WebSocket|EventSource|XMLHttpRequest';
+function joinStringConcats(text) { // 'a' + 'b' -> 'ab' (repeated; each pass shortens the text, so it ends)
+  const re = /(["'`])((?:[^"'`\\r\n]|\.)*)\1\s*\+\s*(["'`])((?:[^"'`\\r\n]|\.)*)\3/g;
+  for (let k = 0; k < 64; k++) {
+    const next = text.replace(re, (m, q, a, q2, b) => q + a + b + q);
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+function storefrontNetworkFindings(source) {
+  const found = [];
+  const masked = canonicalSource(source, true);
+  const idRe = new RegExp(String.raw`(?<![\w$])(` + NET_NAMES + String.raw`)(?![\w$])`, 'g');
+  for (const m of masked.matchAll(idRe)) {
+    const before = masked.slice(Math.max(0, m.index - 40), m.index).replace(/\s+$/, '');
+    const after = masked.slice(m.index + m[0].length, m.index + m[0].length + 40);
+    if (/^\s*:\s*(?:['"`]|\d|true\b|false\b|null\b)/.test(after) && /[{,]$/.test(before)) continue;   // a data key ({ fetch: 1 }); a destructuring target ({ fetch: f } = window) is not data
+    found.push([m.index, `${m[1]} (network access; every request goes through ShopCommerce)`]);
+  }
+  const strRe = new RegExp(String.raw`(["'\x60])(` + NET_NAMES + String.raw`)\1`, 'g');
+  const joined = joinStringConcats(canonicalSource(source));
+  for (const m of joined.matchAll(strRe)) found.push([m.index, `the string "${m[2]}" (a computed property name for a network API)`]);
+  const rules = [
+    [/(?<![\w$.])new\s+(Image|Audio|Worker|SharedWorker)\b/, 'new Image / Audio / Worker (a script-created element or worker is a request to any allowed origin)'],
+    [/(?<![\w$])RTCPeerConnection\b|(?<![\w$])webkitRTCPeerConnection\b/, 'RTCPeerConnection (WebRTC is not limited by connect-src)'],
+    [/(?<![\w$])(?:window|self|top|parent|globalThis)\s*\.\s*open\s*\(/, 'window.open'],
+    [/(?<![\w$.])import\s*\(|(?<![\w$.])import\s*\.\s*meta\b/, 'dynamic import() / import.meta']
+  ];
+  for (const [re, label] of rules) { const m = re.exec(masked); if (m) found.push([m.index, label]); }
+  return found.sort((a, b) => a[0] - b[0]);
+}
+for (const f of designFiles) {
+  const raw = readFileSync(f, 'utf8');
+  const seen = new Set();
+  for (const [idx, label] of storefrontNetworkFindings(raw)) {
+    if (seen.has(label)) continue; seen.add(label);
+    // line numbers are those of the canonical text (comments blanked with their newlines kept; escapes decoded keep the line count)
+    fail(`${rel(f)}: forbidden in design layer (storefront network scan, D20): ${label}`);
+  }
+}
+
 /* ---------- 6: hash manifest ---------- */
 
-const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js'), ...(existsSync(path.join(PUB, '_headers')) ? [path.join(PUB, '_headers')] : [])].sort();
+const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js')].sort();   // public/_headers is DERIVED (5e), not hashed
 const manifest = {};
 for (const f of locked) {
   // normalise line endings so CRLF checkouts hash the same as LF
@@ -403,6 +509,7 @@ if (process.argv.includes('--check')) {
   else {
     const saved = JSON.parse(readFileSync(MANIFEST, 'utf8'));
     for (const f of new Set([...Object.keys(saved), ...Object.keys(manifest)])) {
+      if (f === 'public/_headers') continue;   // manifests written before v0.5.0 carry a hash of it; 5e verifies the file now
       if (saved[f] !== manifest[f]) fail(`locked file changed: ${f} (${saved[f] ? (manifest[f] ? 'modified' : 'removed') : 'added'})`);
     }
   }

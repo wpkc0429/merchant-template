@@ -137,9 +137,10 @@ Items 1 to 3 were decided on 2026-11-25 (docs/DECISIONS.md D5): merchants are cr
 8. **Admin logo / branding**: the platform's `admin_branding` hook can override accent and primary colour at runtime;
    the template's default logo is a placeholder in `admin/design/assets/logo.svg`.
 
-9. **Pin `connect-src` / `img-src` of the storefront CSP per merchant** (needs the API and image origins in a merchant-owned
-   copy of `public/_headers`, written by `new-merchant.mjs`; sync would then have to leave the file alone, so CSP upgrades would
-   need a manual merge). Today the policy allows any `https:` origin for those two directives.
+9. **Pin `connect-src` / `img-src` of the storefront CSP per merchant: DONE in v0.5.0 (D20).** `merchant.headers.json` (repo root, human-owned) holds
+   the shop's API and image origins (and optional extras); `scripts/render-headers.mjs` renders `public/_headers` from it and the locked core template
+   `scripts/headers.core.txt`; `check-layers` requires the committed file to be byte-identical to that rendering; `sync-core` preserves the config and
+   re-renders; `new-merchant --api-base --image-origin` fills it. Merchants created before v0.5.0 migrate once (see docs/CORE-CHANGELOG.md v0.5.0).
 10. **Content store: BUILT in v0.3.0 (the roadmap below is kept for history; remaining: publish hook, build-time `fetch-content` snapshot, `content_schema_registered` onboarding check).** Original roadmap text: The platform has per-shop content schema registration
     (built, human only). Still to come on the platform: content documents by key, revisions, the public `GET /shop/content*` read and
     preview endpoints, the publish hook. Then, in the template: a locked `ShopCommerce.content` loader (read with the publishable

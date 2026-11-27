@@ -1,5 +1,8 @@
-# LOCKED (template.json lockedPaths, hash-protected, synced by sync-core). Cloudflare Workers static assets / Pages read this
-# file from the assets directory (public/) and send these headers with every response. The file itself is not served.
+# DERIVED FILE: do not edit by hand. public/_headers is rendered by scripts/render-headers.mjs from the core template
+# scripts/headers.core.txt (locked, synced by sync-core) plus the merchant's own origins in merchant.headers.json (human-owned,
+# never overwritten by a sync). scripts/check-layers.mjs fails when this file is not byte-identical to that rendering.
+# Cloudflare Workers static assets / Pages read this file from the assets directory (public/) and send these headers with
+# every response. The file itself is not served.
 #
 # A STRICT CONTENT-SECURITY-POLICY IS A DEPLOYMENT REQUIREMENT for production and for every AI-edit preview of the
 # storefront (decided by the user, 2026-11-25; docs/DECISIONS.md). scripts/check-layers.mjs fails when this file is
@@ -11,17 +14,16 @@
 #   script-src 'self'           only same-origin files run: no inline scripts, no eval, no third-party scripts.
 #                               (index.html has no inline <script>; the optional localhost override is loaded from
 #                               commerce/local-config.js.)
-#   style-src 'self'            stylesheets from public/ only.
+#   style-src 'self'            stylesheets from public/ only (see the extras line below).
 #   style-src-attr 'unsafe-inline'  the design layer sets product photos as inline style="background-image:..." attributes
 #                               (imgCss in app.js). Style ATTRIBUTES cannot run code; style elements stay blocked.
-#   img-src 'self' data: https: product photos come from the platform's public image host (origin differs per platform
-#                               deployment) and the favicon is a data: URI.
-#   connect-src 'self' https:   the platform API (apiBase). Known limitation, deliberately kept (v0.2.1): this file is a
-#                               LOCKED, hash-protected file that sync-core overwrites with the template's copy, so
-#                               new-merchant cannot write per-merchant origins into it without every sync reverting
-#                               them (and without a per-merchant hash in commerce.manifest.json). Pinning needs a design
-#                               decision first (e.g. a merchant-owned, unlocked headers fragment merged at deploy time,
-#                               or per-merchant manifest handling in sync-core); until then the same applies to img-src.
+#   img-src 'self' data: + the merchant's image origin (imageOrigin, plus extraImg if declared). data: is the favicon.
+#                               Product photos come from the platform's public image host, which is per merchant, so it is
+#                               declared in merchant.headers.json (decision D20); there is no blanket https: any more.
+#   connect-src 'self' + the merchant's platform API origin (apiOrigin, plus extraConnect if declared). This is the storefront's
+#                               ONLY network egress for scripts: a hostile or buggy design layer cannot send customer data to
+#                               another origin with fetch, XHR, WebSocket, EventSource or sendBeacon.
+#   style-src / font-src 'self' (+ extraStyle / extraFont if the merchant declares them), frame-src 'none' (+ extraFrame).
 #   form-action 'self' + ECPay  checkout builds a <form method=POST> and submits it to the ECPay payment host returned by
 #                               the platform (public/commerce/checkout.js submitPaymentForm). Only the two ECPay payment
 #                               hosts are added (production and stage); everything else stays blocked. Chromium also
@@ -37,8 +39,10 @@
 #
 # An AI-edit PREVIEW environment must serve the same policy (it may add its own preview/API origins to connect-src and
 # img-src, never 'unsafe-inline' or 'unsafe-eval' for scripts).
+#
+# The CSP line below carries one token per configurable directive (style, img, font, connect, frame); the renderer fills them.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https://replace-with-image-origin.example.test; font-src 'self'; connect-src 'self' https://replace-with-api-origin.example.test; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw; object-src 'none'
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY

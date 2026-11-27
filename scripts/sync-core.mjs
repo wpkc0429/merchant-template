@@ -22,6 +22,10 @@
         overwritten). Files removed from the template's locked paths are removed here. `designPaths`, .gitignore and
         everything else are never touched. A template whose lockedPaths overlap this repo's design paths (or that list
         unsafe paths) is refused.
+     3b. (D20) public/_headers is DERIVED and merchant-owned: it is never copied from the template. After the core files are updated it is
+        RE-RENDERED by scripts/render-headers.mjs from the (new) core template scripts/headers.core.txt and THIS repo's
+        merchant.headers.json, which a sync never touches (so the merchant's own origins survive every sync). A merchant repo without
+        merchant.headers.json is refused up front (exit 2) with the migration steps (see docs/CORE-CHANGELOG.md v0.5.0).
      4. Merges the template's hash manifests (merchant-owned entries keep this repo's value), writes
         .template-version and the new version / path lists into template.json.
      5. Re-verifies with this repo's real guards (check-layers --check, admin check-design). If anything fails, every
@@ -108,11 +112,15 @@ export function designActions({ fromVersion, toVersion, changelogText, apiPairs 
   return actions;
 }
 
+// Files that are DERIVED (verified by the guard, not hashed in the manifest): never carried into a merged manifest.
+const DERIVED = new Set(['public/_headers']);
+
 function mergeManifest(site, mineM, theirsM, owned, rootPrefix) {
   const out = {};
   const isOwned = (k) => inPaths(rootPrefix ? `${rootPrefix}/${k}` : k, owned);
   for (const [k, v] of Object.entries(theirsM)) out[k] = isOwned(k) ? (mineM[k] ?? v) : v;
   for (const [k, v] of Object.entries(mineM)) if (isOwned(k) && !(k in out)) out[k] = v;
+  if (!rootPrefix) for (const k of DERIVED) delete out[k];
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 
@@ -167,6 +175,11 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
   }
   if ((theirs.manifests && Object.values(theirs.manifests).some((p) => !isSafeListedPath(p)))) throw new Refuse('the template lists an unsafe manifest path');
 
+  // ---- 1a. (D20) the merchant's own CSP origins must exist: the sync re-renders public/_headers from them and never writes them
+  if (!existsSync(path.join(root, 'merchant.headers.json'))) {
+    throw new Refuse("merchant.headers.json is missing. Since core v0.5.0 public/_headers is rendered from the core template plus this file (the merchant's own API / image origins), and a sync never invents them.\n  Migration (a human, once): copy merchant.headers.json from the template checkout, set apiOrigin and imageOrigin (and extras, if any), then\n    node <template checkout>/scripts/render-headers.mjs --root . --core <template checkout>/scripts/headers.core.txt\n  commit the result, and run the sync again.");
+  }
+
   // ---- 1b. the sync SOURCE is a TAG only (decided 2026-11-25): HEAD exactly at the annotated tag v<version>, clean tree
   const src = sourceInfo(fromRoot, theirs.version);
   if (!src.tagged && !allowUntagged) {
@@ -210,6 +223,7 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
   console.log(`source: ${sourceNote}`);
   const show = (t, l) => { if (l.length) { console.log(`\n${t} (${l.length}):`); l.forEach((f) => console.log(`  ${t === 'removed' ? '-' : t === 'added' ? '+' : '~'} ${f}`)); } };
   show('added', p.add); show('changed', p.change); show('removed', p.remove);
+  console.log("\npublic/_headers: will be re-rendered from the new core template + this repo's merchant.headers.json (never overwritten by the template's copy)");
   console.log(`\nunchanged locked files: ${p.same.length}. merchant-owned (never overwritten): ${p.owned.join(', ') || '(none)'}. design paths (never touched): ${myDesign.join(', ')}`);
   if (actions.length) {
     console.log('\n!! DESIGN-LAYER ACTION NEEDED !!  The incoming core changes things your design layer may need to adopt:');
@@ -241,6 +255,12 @@ export async function main(argv = process.argv.slice(2), root = ROOT) {
       writeFileSync(dst, readFileSync(path.join(fromRoot, rel)));
     }
     for (const rel of p.remove) { remember(rel); rmSync(path.join(root, rel), { force: true }); }
+
+    // (D20) public/_headers: re-render from the new core template and the merchant's own origins (merchant.headers.json is never touched)
+    remember('public/_headers');
+    const rh = runGuard(root, ['scripts/render-headers.mjs'], 'render public/_headers');
+    if (!rh.ok) throw new Error(`could not render public/_headers from merchant.headers.json:\n${rh.out}`);
+    console.log("re-rendered: public/_headers (core template + this repo's merchant.headers.json, preserved)");
 
     // manifests: merge, merchant-owned entries keep this repo's value
     for (const [site, mrel] of Object.entries(theirs.manifests || {})) {

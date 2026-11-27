@@ -89,9 +89,12 @@ For a throwaway API and the end-to-end suites see `admin/README.md` ("測試"); 
 public/            storefront (the only directory Cloudflare publishes)
   commerce/        LOCKED: API client, cart, checkout, public-api.json
   config.js        LOCKED + hash-protected, merchant-owned: apiBase, publishableKey, showPrices, featuredCategory
-  _headers         LOCKED + hash-protected: the strict Content-Security-Policy (a deployment requirement)
+  _headers         DERIVED (do not edit): the strict Content-Security-Policy, rendered by scripts/render-headers.mjs from scripts/headers.core.txt
+                   (locked core template) + merchant.headers.json (repo root, HUMAN-owned: the shop's own API / image origins); check-layers
+                   fails when it is not byte-identical to that rendering
   app.js content.js content.schema.json styles.css index.html assets/    DESIGN LAYER (storefront)
-scripts/           check-layers (storefront guard), check-scope, check-locked, import-catalog, sync-core,
+merchant.headers.json   the shop's own API / image origins for the storefront CSP (human-owned; sync-core preserves it; D20)
+scripts/           check-layers (storefront guard), check-scope, check-locked, import-catalog, sync-core, render-headers, headers.core.txt,
                    lib/, new-merchant + gen-placeholders (template only), commerce.manifest.json
 admin/             merchant back office (build-less ES modules)
   lib/ core/ ui/ vendor/ design-defaults/ scripts/ ...    LOCKED core (hash manifest: scripts/core.manifest.json)

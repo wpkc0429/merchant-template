@@ -9,7 +9,7 @@ import { cpSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { lex, lexAll, scanCode } from '../admin/scripts/lib/design-scan.mjs';
 import { BS, LS, PS, NBSP, BOM, idEsc, strEsc } from '../admin/scripts/__fixtures__/escapes.mjs';
-import { TEMPLATE, tmp, cleanup, node, read, write } from './helpers.mjs';
+import { TEMPLATE, tmp, cleanup, node, read, write, copyHeaderFiles } from './helpers.mjs';
 
 after(cleanup);
 const vals = (src) => lex(src).map((t) => `${t.t}:${t.v}`);
@@ -114,6 +114,7 @@ const fresh = () => {
   cpSync(path.join(TEMPLATE, 'public'), path.join(dir, 'public'), { recursive: true });
   mkdirSync(path.join(dir, 'scripts'));
   cpSync(path.join(TEMPLATE, 'scripts/check-layers.mjs'), path.join(dir, 'scripts/check-layers.mjs'));
+  copyHeaderFiles(dir);
   const tj = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')); tj.isTemplate = false;
   writeFileSync(path.join(dir, 'template.json'), JSON.stringify(tj));
   writeFileSync(path.join(dir, 'public/config.js'), readFileSync(path.join(dir, 'public/config.js'), 'utf8').replace('REPLACE_WITH_PLATFORM_API_BASE', 'https://api.example.com').replace('REPLACE_WITH_PUBLISHABLE_KEY', 'pk_test123456'));
@@ -190,7 +191,7 @@ test('D17 is recorded (newest first) with the owner approval, the contract, the 
   const f = (p) => readFileSync(path.join(TEMPLATE, p), 'utf8').replace(/\r\n/g, '\n');
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[2], 'D17'); assert.equal(ids[1], 'D18'); assert.equal(ids[0], 'D19');
+  assert.equal(ids[3], 'D17'); assert.equal(ids[2], 'D18'); assert.equal(ids[1], 'D19'); assert.equal(ids[0], 'D20');
   const start = lines.findIndex((l) => l.startsWith('### D17.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');

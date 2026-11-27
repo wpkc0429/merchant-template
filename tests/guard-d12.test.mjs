@@ -5,7 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { TEMPLATE, tmp, cleanup, node, read, write } from './helpers.mjs';
+import { TEMPLATE, tmp, cleanup, node, read, write, copyHeaderFiles } from './helpers.mjs';
 
 after(cleanup);
 const layers = (d) => node(['scripts/check-layers.mjs', '--check'], d);
@@ -14,6 +14,7 @@ const fresh = () => {
   cpSync(path.join(TEMPLATE, 'public'), path.join(dir, 'public'), { recursive: true });
   mkdirSync(path.join(dir, 'scripts'));
   cpSync(path.join(TEMPLATE, 'scripts/check-layers.mjs'), path.join(dir, 'scripts/check-layers.mjs'));
+  copyHeaderFiles(dir);
   const tj = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')); tj.isTemplate = false;
   writeFileSync(path.join(dir, 'template.json'), JSON.stringify(tj));
   writeFileSync(path.join(dir, 'public/config.js'), readFileSync(path.join(dir, 'public/config.js'), 'utf8').replace('REPLACE_WITH_PLATFORM_API_BASE', 'https://api.example.com').replace('REPLACE_WITH_PUBLISHABLE_KEY', 'pk_test123456'));
@@ -69,7 +70,7 @@ test('docs/DECISIONS.md is structurally intact: one title, unique headings, no r
   assert.equal(heads.filter((l) => l === '# Decisions').length, 1, 'exactly one title');
   assert.equal(new Set(heads).size, heads.length, 'every heading is unique: ' + heads.filter((h, i) => heads.indexOf(h) !== i).join(' | '));
   const ids = heads.map((h) => /^### (D\d+)\./.exec(h)).filter(Boolean).map((m) => m[1]);
-  assert.deepEqual(ids.slice(0, 7), ['D19', 'D18', 'D17', 'D16', 'D15', 'D14', 'D13'], 'newest first');
+  assert.deepEqual(ids.slice(0, 7), ['D20', 'D19', 'D18', 'D17', 'D16', 'D15', 'D14'], 'newest first');
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(ids.includes('D12') && ids.includes('D11') && ids.includes('D10'));
   const paras = dec.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 80);

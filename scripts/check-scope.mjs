@@ -10,6 +10,7 @@
                and then runs `scripts/check-layers.mjs --check`.
    admin       may change only admin/design/** (template.json sites.admin.designPaths)
                and then runs `admin/scripts/check-design.mjs --base <ref>` (run from admin/).
+   (D20) merchant.headers.json and public/_headers (the storefront CSP origins and their rendering) are never in scope for either site.
    Neither site may touch the other's directory, the locked commerce/core layers, or any
    repo-root file. "Changed" = `git diff --name-only <ref>` plus untracked, non-ignored files.
    Exit: 0 ok, 1 violation, 2 usage/environment error. */
@@ -47,7 +48,10 @@ try { tpl = JSON.parse(git('show', `${base}:template.json`)); }
 catch { try { tpl = JSON.parse(readFileSync(path.join(ROOT, 'template.json'), 'utf8')); } catch (e) { console.error('cannot read template.json: ' + e.message); process.exit(2); } }
 const designPaths = tpl.sites?.[site]?.designPaths;
 if (!Array.isArray(designPaths) || !designPaths.length) { console.error(`template.json has no sites.${site}.designPaths`); process.exit(2); }
-const allowed = (f) => designPaths.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p));
+// D20: the storefront CSP origins are HUMAN-owned. Whatever template.json lists as design paths, an AI edit session may never change the
+// merchant's origin config, its rendering, the core template or the renderer (a hostile design layer could otherwise widen its own egress).
+const NEVER = ['merchant.headers.json', 'public/_headers', 'scripts/headers.core.txt', 'scripts/render-headers.mjs'];
+const allowed = (f) => !NEVER.includes(f) && designPaths.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p));
 const bad = changed.filter((f) => f.includes('..') || !allowed(f));
 if (bad.length) {
   console.error(`SCOPE CHECK FAILED (${site}): only the ${site} design paths (${designPaths.join(', ')}) may change:`);

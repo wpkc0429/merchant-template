@@ -1,8 +1,7 @@
 {
-  "public/_headers": "f4b1f53c26d9ec04972ecb1d20ea1f78a0f6ee7814c462f17abaaafb9844b48f",
   "public/commerce/api.js": "1c39ea48f327394269058e5e196611c4ba2312bd8fd30f398923a637359531b5",
   "public/commerce/cart.js": "aa5ab43a491146bdd0d5c1479f47df61989745182bd3795bd1da6748823835b2",
-  "public/commerce/checkout.js": "8aef89443f4a3bea2b73e0cb071a70fb4e6fdc82d1723b50d362247ca5337abe",
+  "public/commerce/checkout.js": "de22b9697c43c0953b00fb797572ece21bee6341c2ea86bb3bb33ff057e239a3",
   "public/commerce/content-allowlist.js": "c23ab8736a8ecc30301035827890a73bc654b805fb6457498c2cbca8e449fc4d",
   "public/commerce/content-allowlist.json": "61b53075c279364f7d1382f877c6a8d0d3d23e50b837e5c3c80d337e1c528541",
   "public/commerce/content.js": "62b0746ed10998aa9b468fe1c8b4a8a835cb8def8526f0ead09c5478e28e612c",

@@ -189,16 +189,16 @@ test('new-merchant prints the human content-schema registration steps and the CS
 const layers = (d) => node(['scripts/check-layers.mjs', '--check'], d);
 const relock = (d) => node(['scripts/check-layers.mjs', '--update'], d);
 
-test('storefront CSP: the template ships public/_headers (locked, hash-protected) and passes; index.html has no inline script', () => {
+test('storefront CSP: the template ships public/_headers (derived from the locked core template + merchant.headers.json, D20) and passes; index.html has no inline script', () => {
   assert.equal(layers(TEMPLATE).status, 0);
   const h = tplFile('public/_headers');
   assert.match(h, /^\/\*\s*$/m);
   assert.match(h, /Content-Security-Policy: default-src 'self'; script-src 'self';/);
   assert.doesNotMatch(h.split('\n').filter((l) => /Content-Security-Policy:/.test(l)).join(''), /unsafe-eval|script-src[^;]*unsafe-inline/);
   const tj = JSON.parse(tplFile('template.json'));
-  assert.ok(tj.lockedPaths.includes('public/_headers'));
-  assert.ok(!tj.merchantOwnedPaths.includes('public/_headers'), 'synced like the rest of the core so CSP upgrades reach every merchant');
-  assert.ok('public/_headers' in JSON.parse(tplFile('scripts/commerce.manifest.json')));
+  assert.ok(tj.lockedPaths.includes('scripts/headers.core.txt') && tj.lockedPaths.includes('scripts/render-headers.mjs'), 'the core template and the renderer are locked and synced, so CSP upgrades reach every merchant');
+  assert.ok(tj.merchantOwnedPaths.includes('public/_headers') && tj.merchantOwnedPaths.includes('merchant.headers.json'));
+  assert.ok(!('public/_headers' in JSON.parse(tplFile('scripts/commerce.manifest.json'))), 'derived: verified by rendering, not hashed');
   const idx = tplFile('public/index.html').replace(/<!--[\s\S]*?-->/g, '');
   assert.doesNotMatch(idx, /<script(?![^>]*\bsrc=)/);
 });
