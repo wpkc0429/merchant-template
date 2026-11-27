@@ -91,7 +91,7 @@ test('docs/DECISIONS.md is structurally intact: one title, unique headings, no r
   for (const l of body) assert.ok(l === '' || /^[A-Z0-9*\-|`#>(\[]/.test(l) || /^\s/.test(l), 'a line starts mid-sentence: ' + l.slice(0, 50));
 });
 
-test('D12 is recorded in docs/DECISIONS.md and the v0.4.2 changelog and template.json agree', () => {
+test('D12 is recorded in docs/DECISIONS.md and the v0.4.2 changelog section exists and template.json carries the current version', () => {
   const dec = readFileSync(path.join(TEMPLATE, 'docs/DECISIONS.md'), 'utf8');
   assert.match(dec, /^### D12\. /m);
   assert.match(dec, /2026-11-27/);
@@ -100,7 +100,7 @@ test('D12 is recorded in docs/DECISIONS.md and the v0.4.2 changelog and template
   const log = readFileSync(path.join(TEMPLATE, 'docs/CORE-CHANGELOG.md'), 'utf8');
   assert.match(log, /^## v0\.4\.2$/m);
   assert.match(log, /^Design-layer action: the stricter scan newly flags/m);
-  assert.equal(JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')).version, '0.4.2');
+  assert.equal(JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')).version, '0.5.0');
 });
 
 test('D12 runtime restrictions exist in the core: untrusted events ignored, h() throws, ctx.ui.$ scoped, showDialog hands back only close', () => {
