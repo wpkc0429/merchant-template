@@ -206,7 +206,7 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
       ok("D19: /site-config.js CSP with another hash -> csp-weak naming the location", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(ngHash, "'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='")))));
       write(dir, "deploy/nginx.conf.template", ng);
       // the import map text changes -> the hash in nginx no longer matches (a tampered or edited map)
-      setIdx(idx.replace('"/lib/canary-ok.js":"/lib/canary-ok.js"', '"/lib/canary-ok.js":"/lib/canary-ok.js","/lib/":"/lib/"'));
+      setIdx(idx.replace('"/lib/canary/allowed/":"/lib/canary/allowed/"', '"/lib/canary/allowed/":"/lib/canary/allowed/","/lib/":"/lib/"'));
       ok("D19: a changed import map text (hash mismatch) -> csp-weak", /csp-weak.*must be exactly 'self' 'sha256-/.test(rules()));
       // --update recomputes the hash and rewrites the nginx template (the documented human flow)
       const manifest0 = readFileSync(path.join(dir, "scripts/core.manifest.json"), "utf8");
@@ -222,6 +222,19 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
       ok("D19: an inline module script -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
       setIdx(idx.replace("</head>", `${inl("1")}</head>`).replace("<script>1</script>", "<SCRIPT >1</SCRIPT >"));
       ok("D19: <SCRIPT > spelling variants are still inline scripts", /deploy\/importmap/.test(rules()));
+      setIdx(idx.replace(/<script type="importmap">[^<]*<\/script>/, ""));
+      setIdx(idx.replace("</head>", '<script data-src=1>1</script></head>'));
+      ok("D19: <script data-src=1> is an INLINE script (data-src is not src) -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", '<!--><script>1</script></head>'));
+      ok("D19: <!--> is an empty comment, the script after it is inline -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", "<script type='module' >1</script></head>"));
+      ok("D19: single-quoted attributes are read -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", '<script title="a > b">1</script></head>'));
+      ok("D19: a > inside a quoted attribute does not end the tag -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", '<script src="x.js" data-x=1></script></head>'));
+      ok("D19: a real src attribute is still an external script (no false positive)", !/deploy\/importmap/.test(rules()));
+      setIdx(idx.replace('type="importmap"', "type=IMPORTMAP"));
+      ok("D19: the map with an unquoted upper-case type is still the one import map", !/deploy\/importmap/.test(rules()), rules());
       setIdx(idx.replace(/<script type="importmap">[^<]*<\/script>/, ""));
       ok("D19: no import map at all -> deploy/importmap (exactly ONE required)", /deploy\/importmap.*exactly ONE.*found 0/.test(rules()));
       const mapTag = idx.match(/<script type="importmap">[^<]*<\/script>/)[0];

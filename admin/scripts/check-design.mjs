@@ -129,14 +129,29 @@ function stripNginxComments(text) {
 // ───────────── the import map (docs/DECISIONS.md D19, owner-approved rule change 2026-11-28) ─────────────
 // index.html carries exactly ONE inline script, `<script type="importmap">`. The CSP may allow it through ONE extra script-src token: the sha256 of its exact
 // text. Nothing else (no 'unsafe-inline', no other hash, no nonce, no host, no 'strict-dynamic').
-/** The inline <script> elements of an HTML text (HTML comments removed first): [{ attrs, text }]. External scripts (src=) are not inline. */
+/**
+ * The attributes of a start tag as a Map (lower-case name -> value). Tokenised like HTML: names are runs without space, quote, slash, = or angle bracket,
+ * values are "..." or '...' or unquoted. So data-src=1 is the attribute "data-src", never "src".
+ */
+function tagAttrs(raw) {
+  const m = new Map();
+  for (const x of raw.matchAll(/([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+    const name = x[1].toLowerCase();
+    if (!m.has(name)) m.set(name, x[2] ?? x[3] ?? x[4] ?? "");
+  }
+  return m;
+}
+/** The inline <script> elements of an HTML text (HTML comments removed first, including the empty comments <!--> and <!--->): [{ attrs: Map, text }]. External scripts (src attribute) are not inline. */
 export function inlineScripts(html) {
-  const live = html.replace(/<!--[\s\S]*?-->/g, "");
+  const live = html.replace(/<!--(?:-?>|[\s\S]*?-->)/g, "");
   const out = [];
-  for (const m of live.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) if (!/\bsrc\s*=/i.test(m[1])) out.push({ attrs: m[1], text: m[2] });
+  for (const m of live.matchAll(/<script(?=[\s\/>])((?:"[^"]*"|'[^']*'|[^>"'])*)>([\s\S]*?)<\/script[\s\/]*>/gi)) {
+    const attrs = tagAttrs(m[1]);
+    if (!attrs.has("src")) out.push({ attrs, text: m[2] });
+  }
   return out;
 }
-const isImportMap = (s) => /\btype\s*=\s*["']?importmap["']?(\s|$|\/)/i.test(s.attrs);
+const isImportMap = (s) => (s.attrs.get("type") ?? "").trim().toLowerCase() === "importmap";
 /** The sha256 (base64) of the exact text of the import map in index.html, or null when there is not exactly one import map. */
 export function importMapHash(html) {
   const maps = inlineScripts(html).filter(isImportMap);

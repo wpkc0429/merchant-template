@@ -18,7 +18,7 @@ import { takeMakeAuth } from "./core/auth.js";
 import { mountView } from "./core/host.js";
 import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
 import { isReadOnly } from "./lib/preview.js";
-import { checkIsolation } from "./lib/canary-probe.js";
+import { checkIsolation } from "./lib/canary/probe.js";
 import { showIsolationNotice } from "./ui/isolation-notice.js";
 
 const { onUnauthorized, restoreSession } = takeApi(); // boot phase only; sealApi() below closes it before the design layer is imported

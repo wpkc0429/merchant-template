@@ -53,7 +53,7 @@ const RID = uid(1), CUR = uid(2), PUB = uid(3), DRAFT = uid(4), REJ = uid(5), FA
 const SHA1 = "a1".repeat(20);
 const PERMS = { owner: ["design.view", "design.request", "design.approve", "design.revert"], editor: ["design.view"], staff: ["order.view"] };
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 let PORT = 0;
 const LONG_PROMPT = "make the banner pink and <b>bold</b> ‮drow " + "very long request text ".repeat(60);
 let S;
@@ -160,7 +160,7 @@ async function open(hash, { width = 1280, height = 900, ...state } = {}) {
   const pg = await ctx.newPage();
   const tag = `${state.role || "owner"}@${width} ${hash}`;
   pg.on("console", (m) => {
-    if (m.location().url.includes("/deny/")) return; // the canary's deliberate probe of /deny/ (lib/canary-probe.js, D19) is a 404 the browser logs as an error
+    if (m.location().url.includes("/deny/")) return; // the canary's deliberate probe of /deny/ (lib/canary/probe.js, D19) is a 404 the browser logs as an error
     const x = m.text();
     if (state.expectHttp && /status of (404|500|503)/.test(x)) void 0;
     else if (m.type() === "error" || /Content Security Policy|Refused to/i.test(x)) problems.push(`${tag}: ${x}`);

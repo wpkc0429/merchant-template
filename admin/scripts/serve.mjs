@@ -17,7 +17,7 @@ const proxyIdx = process.argv.indexOf("--proxy");
 const proxy = proxyIdx > 0 ? new URL(process.argv[proxyIdx + 1]) : null;
 
 // Only the files the site needs are served; repo files (docs, e2e, git) are not.
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|config\.local\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png|jpe?g|webp|gif|ico|avif|woff2|txt|md))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|config\.local\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png|jpe?g|webp|gif|ico|avif|woff2|txt|md))$/;
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon", ".avif": "image/avif", ".woff2": "font/woff2" };
 
 createServer(async (req, res) => {

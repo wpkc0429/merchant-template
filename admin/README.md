@@ -172,10 +172,22 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
 `index.html` 有**唯一一段**行內 `<script type="importmap">`（單行，放在所有 module script 之前）：對 `/design/` 底下的模組，除了 `/design/` 自己以外的任何 import 都導向 `/deny/`（nginx 回 404），所以即使靜態掃描被繞過，設計模組也 import 不到 `lib/`、`core/`、`ui/`。瀏覽器只有在 CSP 的 `script-src` 帶這段文字的 `'sha256-...'` 時才會執行行內 map，否則**靜默忽略**，所以：
 
 - `deploy/nginx.conf.template` 的 `script-src 'self' 'sha256-…'` 是**靜態值**；`node scripts/check-design.mjs` 每次都重算 `index.html` 的 map 雜湊並要求兩者一致（且只允許這一個額外 token）。改了 map 之後由人類跑 `node scripts/check-design.mjs --update`（會同時改寫 nginx 範本的雜湊與核心雜湊清單）。
-- 部署要求：所有提供後台檔案的主機（正式、預覽主機、AI 服務的預覽環境）都要用同一個映像：CSP 雜湊、`location ^~ /deny/`（404）、`/design/` 路徑不得含 `%`。
-- **失效即關閉**：`lib/canary-probe.js` 在載入任何設計模組之前檢查 map 是否生效；沒生效（CSP 沒帶雜湊、map 被改、瀏覽器不支援 import map）就**不載入設計層**，使用內建畫面、console 警告，並在畫面頂端顯示一行說明。每次載入 console 會有一筆 `/deny/lib/canary-target.js` 的 404，是這項檢查的預期結果。
+- 部署要求：所有提供後台檔案的主機（正式、預覽主機、AI 服務的預覽環境）都要用同一個映像：CSP 雜湊、`location ^~ /deny/`（404）、任何路徑含 `%2f`／`%5c`／`%2e` 或 `//` 一律 404。
+- **失效即關閉**：`lib/canary/probe.js` 在載入任何設計模組之前檢查 map 是否生效；沒生效（CSP 沒帶雜湊、map 被改、瀏覽器不支援 import map）就**不載入設計層**，使用內建畫面、console 警告，並在畫面頂端顯示一行說明。每次載入 console 會有一筆 `/deny/lib/canary/target.js` 的 404，是這項檢查的預期結果。
 - **瀏覽器**：只在 Chromium 驗證過。Firefox 與 Safari **未驗證**：這兩個瀏覽器若不強制執行 map，上述檢查會讓自訂設計關閉（而不是失去保護），但在驗證完成前不要宣稱它們支援自訂設計。
 - 這不是真正的隔離（同源模組仍可讀 DOM、呼叫 `ctx`、呼叫 cookie 換發端點）；沙箱 iframe／worker／DSL 仍延後。
+
+### 自訂 nginx、反向代理與 CDN 的營運者必須保留什麼（決策 D19）
+
+官方映像（`deploy/Dockerfile` + `deploy/nginx.conf.template`）已經全部做好。如果你在它前面放反向代理、CDN，或用自己的 nginx／其他伺服器提供 `admin/` 的檔案，下面每一項都必須原樣保留，否則自訂設計層會被關閉（安全的失敗方式）或失去保護：
+
+1. **完整的 CSP 與 hash**：回應標頭 `Content-Security-Policy` 的 `script-src` 必須剛好是 `'self' 'sha256-<index.html 內 import map 文字的 hash>'`，其他指令照 `deploy/nginx.conf.template`。代理或 CDN 不可改寫、刪除或附加 CSP（也不可注入行內 script、不可壓縮或重排 `index.html` 的 import map 那一行：任何字元不同，hash 就對不上）。
+2. **`/deny/` 回 404**：`location ^~ /deny/ { return 404; }`。這是 import map 的拒絕目標；不可轉去 `index.html`、不可 rewrite、不可 redirect。
+3. **拒絕編碼斜線與雙斜線**：路徑（不含 query）含 `%2f`、`%5c`、`%2e`（不分大小寫）或 `//` 的請求一律 404（範本的 `if ($request_uri ~* "^[^?]*(%2f|%5c|%2e|//)")`）。代理不可在轉發前把它們解碼或合併成正常路徑，也不可替你合併雙斜線。
+4. **`/design/` 與 `/lib/` 內不得有 rewrite 或 redirect**（包含 CDN 的「自動加斜線」「自動轉小寫」「優化」規則）：import map 只看見第一個 URL，被轉址到核心檔案的 URL 會落在 scope 之外。
+5. **路徑配置與根目錄**：檔案要放在網域根目錄，路徑和 `admin/` 內相同（`/design/`、`/lib/canary/...`）；scope 是絕對路徑，放在子路徑底下（`/admin/`）會讓 map 失效。
+6. **重算 hash**：改了 `index.html` 的 import map 之後，由人類在 `admin/` 跑 `node scripts/check-design.mjs --update`（會改寫 nginx 範本裡的 hash 與核心雜湊清單），再把新的 CSP 發佈到你的伺服器／CDN 設定。`node scripts/check-design.mjs` 會檢查範本裡的 hash 與 `index.html` 一致。你自己的伺服器設定不在守門員範圍內，請人工比對。
+7. **如果代理拿掉了 hash（或任何一項）**：瀏覽器會靜默忽略 import map，啟動時的檢查（`lib/canary/probe.js`）偵測到後**不載入設計層**，使用內建畫面，console 警告，畫面頂端顯示一行「自訂設計已停用…」；功能不受影響。看到這行就是在提醒你上面某一項被改掉了。
 
 ### 預覽主機（v0.5.0，決策 D18）
 

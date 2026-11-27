@@ -18,7 +18,7 @@ test('D19 is recorded (newest first) with the owner approval, the guard rule cha
   const start = lines.findIndex((l) => l.startsWith('### D19.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
-  for (const n of ['2026-11-28', 'GUARD RULE', 'D10', 'script-src', 'sha256', 'No new ctx function', '/deny/', 'canary', 'lib/canary-probe.js', 'takeApi()', 'lib/boot.js',
+  for (const n of ['2026-11-28', 'GUARD RULE', 'D10', 'script-src', 'sha256', 'No new ctx function', '/deny/', 'canary', 'lib/canary/probe.js', 'takeApi()', 'lib/boot.js',
     'takePermissions', 'takeSession', 'takeMakeAuth', 'takeDesignActions', 'takeContentActions', 'takeCoreUi', 'not isolation', 'Firefox and Safari are NOT verified', 'POSTPONED',
     'deploy/importmap', 'check-design.mjs --update', 'Preview hosts', 'import-map.mjs', '%2f']) assert.ok(body.includes(n), n);
   assert.match(body.trim(), /\.$/);
@@ -42,7 +42,7 @@ test('index.html: ONE inline script, the import map, before the module script; t
   assert.ok(!/[\r\n]/.test(text), 'the map is one line so CRLF checkouts hash the same');
   assert.deepEqual(JSON.parse(text), { scopes: {
     '/design/': { '/': '/deny/', '/design/': '/design/', 'https://': '/deny/', 'http://': '/deny/' },
-    '/lib/canary-probe.js': { '/': '/deny/', '/lib/canary-ok.js': '/lib/canary-ok.js', 'https://': '/deny/', 'http://': '/deny/' } } });
+    '/lib/canary/': { '/': '/deny/', '/lib/canary/allowed/': '/lib/canary/allowed/', 'https://': '/deny/', 'http://': '/deny/' } } });
 });
 
 test('the CSP hash in nginx.conf.template is the hash of the map text, in the server CSP and in /site-config.js; /deny/ and the percent rule exist', () => {
@@ -53,7 +53,7 @@ test('the CSP hash in nginx.conf.template is the hash of the map text, in the se
   assert.equal(csps.length, 2);
   for (const c of csps) assert.ok(c.includes(`script-src 'self' 'sha256-${h}';`), c);
   assert.match(ng, /location \^~ \/deny\/ \{ return 404; \}/);
-  assert.match(ng, /if \(\$request_uri ~\* "\^\/design\/\[\^\?\]\*%"\) \{ return 404; \}/);
+  assert.ok(ng.includes('if ($request_uri ~* "^[^?]*(%2f|%5c|%2e|//)") { return 404; }'));
   assert.doesNotMatch(ng, /unsafe-inline|unsafe-eval/);
 });
 
@@ -62,10 +62,13 @@ test('app.js runs the canary after the seal and the freeze and before the design
   const i = (s) => app.indexOf(s);
   assert.ok(i('sealApi()') > 0 && i('lockdownIntrinsics()') > i('sealApi()') && i('await checkIsolation()') > i('lockdownIntrinsics()') && i('await loadDesign({ enabled: iso.ok })') > i('await checkIsolation()'));
   assert.match(app, /showIsolationNotice\(\)/);
-  const probe = f('admin/lib/canary-probe.js');
+  const probe = f('admin/lib/canary/probe.js');
   assert.match(probe, /HTMLScriptElement\.supports\("importmap"\)/);
-  assert.match(probe, /import\("\.\/canary-ok\.js"\)/);
-  assert.match(probe, /import\("\.\/canary-target\.js"\)/);
+  assert.match(probe, /import\("\.\/allowed\/ok\.js"\)/);
+  assert.match(probe, /import\("\.\/target\.js"\)/);
+  assert.match(probe, /fetch\(/, 'the target is fetched first: a denied import of an unreachable file proves nothing');
+  assert.match(probe, /reason: "unverifiable"/);
+  assert.ok(probe.indexOf('fetch(') < probe.indexOf('import("./target.js")'));
   assert.match(f('admin/lib/design.js'), /switchedOff/);
 });
 

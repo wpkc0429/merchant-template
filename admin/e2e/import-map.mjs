@@ -11,7 +11,7 @@
 //   bypassed the same hostile module DOES import the core and DOES send authenticated requests; with an nginx-style decoder and no `%` rule a `..%2f` path reaches lib/.
 // Not run here: Firefox and Safari (only Chromium is available); a real nginx in the suite (the `/deny/` 404 and the `%` refusal of the template are emulated by this server; they were checked by hand against nginx:1.27-alpine, see D19).
 // Needs Playwright via $PLAYWRIGHT_DIR and SKIPS cleanly (exit 0) when it is not found.   Run: node admin/e2e/import-map.mjs
-import { createServer } from "node:http";
+import { createServer, get as httpGet } from "node:http";
 import { readFile, readdir } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -48,10 +48,10 @@ const NO_HASH_CSP = REAL_CSP.replace(/ 'sha256-[^']+'/, "");
 
 // ── the fake platform ──
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 const json = (res, status, body) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(body)); };
 let S;
-const reset = (o = {}) => { S = { api: [], files: [], reports: [], marks: [], valid: "", n: 0, csp: REAL_CSP, indexMap: (t) => t, appJs: (t) => t, percentRule: true, decode: false, routes: null, ...o }; };
+const reset = (o = {}) => { S = { api: [], files: [], reports: [], marks: [], valid: "", n: 0, csp: REAL_CSP, indexMap: (t) => t, appJs: (t) => t, percentRule: true, decode: false, routes: null, hide: [], ...o }; };
 reset();
 const MODULES = {}; // in-memory test-only modules (path -> source)
 const server = createServer(async (req, res) => {
@@ -77,7 +77,7 @@ const server = createServer(async (req, res) => {
   if (p === "/preview-config.js") { res.writeHead(200, { "Content-Type": TYPES[".js"] }); res.end("window.ADMIN_CONFIG.preview = null; window.ADMIN_CONFIG.previewConfig = true;"); return; }
   // what deploy/nginx.conf.template does (emulated): /deny/ is a 404; a percent sign in a /design/ path is a 404
   if (p.startsWith("/deny/")) { res.writeHead(404); res.end("no"); note(404); return; }
-  if (S.percentRule && /^\/design\/[^?]*%/.test(req.url)) { res.writeHead(404); res.end("no"); note(404); return; }
+  if (S.percentRule && /^[^?]*(%2f|%5c|%2e|\/\/)/i.test(req.url)) { res.writeHead(404); res.end("no"); note(404); return; }
   let path = p === "/" ? "/index.html" : p;
   if (S.decode) { try { path = posix.normalize(decodeURIComponent(path).replace(/\\/g, "/")); } catch { /* keep */ } } // what nginx does with $uri: decode, then resolve dot segments
   if (S.hide.includes(path)) { res.writeHead(404); res.end("no"); note(404); return; }
@@ -193,9 +193,10 @@ section("0. The import map in the shipped index.html");
   const map = JSON.parse(MAP_TEXT);
   check("exactly one inline <script type=importmap> and no other inline script in index.html", [...INDEX.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)].filter((m) => !/\bsrc=/.test(m[1])).length === 1 && (INDEX.match(/type="importmap"/g) || []).length === 1);
   check("it sits before every module script", INDEX.indexOf('type="importmap"') < INDEX.indexOf('type="module"'));
-  check("scopes: the design directory and the probe only; no top-level imports", Object.keys(map.scopes).sort().join() === "/design/,/lib/canary-probe.js" && !map.imports);
+  check("scopes: the design directory and the probe only; no top-level imports", Object.keys(map.scopes).sort().join() === "/design/,/lib/canary/" && !map.imports);
   check("design scope: everything denied except /design/ itself", map.scopes["/design/"]["/"] === "/deny/" && map.scopes["/design/"]["/design/"] === "/design/");
-  check("probe scope: everything denied except the control file", map.scopes["/lib/canary-probe.js"]["/"] === "/deny/" && map.scopes["/lib/canary-probe.js"]["/lib/canary-ok.js"] === "/lib/canary-ok.js");
+  check("probe scope is a DIRECTORY scope with the same keys as the design scope (\"/\" denied, one allowed prefix, https:// and http:// denied)", JSON.stringify(Object.keys(map.scopes["/lib/canary/"]).sort()) === JSON.stringify(Object.keys(map.scopes["/design/"]).map((k) => (k === "/design/" ? "/lib/canary/allowed/" : k)).sort()) && map.scopes["/lib/canary/"]["https://"] === "/deny/" && map.scopes["/lib/canary/"]["http://"] === "/deny/");
+  check("probe scope: everything denied except the control prefix", map.scopes["/lib/canary/"]["/"] === "/deny/" && map.scopes["/lib/canary/"]["/lib/canary/allowed/"] === "/lib/canary/allowed/");
   check("the denial target is a core-owned URL whose fetch fails (nginx: location ^~ /deny/ { return 404; })", /location \^~ \/deny\/ \{ return 404; \}/.test(tpl));
   check("the CSP of the template carries exactly this map's hash", REAL_CSP.includes(`'sha256-${hashOf(MAP_TEXT)}'`) && /script-src 'self' 'sha256-[A-Za-z0-9+/=]+';/.test(REAL_CSP));
 }
@@ -263,12 +264,13 @@ const failClosed = async (name, opts, reason) => {
 {
   const l = await failClosed("(a) CSP WITHOUT the hash", { csp: NO_HASH_CSP }, "not-enforced");
   check("(a) the browser refused the inline map under that CSP (CSP console error)", l.csp.some((x) => /inline script/i.test(x)), JSON.stringify(l.csp));
-  await failClosed("(c) tampered map text (hash mismatch: a key added)", { indexMap: (h) => h.replace('"/lib/canary-ok.js":"/lib/canary-ok.js"', '"/lib/canary-ok.js":"/lib/canary-ok.js","/lib/":"/lib/"') }, "not-enforced");
+  await failClosed("(c) tampered map text (hash mismatch: a key added)", { indexMap: (h) => h.replace('"/lib/canary/allowed/":"/lib/canary/allowed/"', '"/lib/canary/allowed/":"/lib/canary/allowed/","/lib/":"/lib/"') }, "not-enforced");
   await failClosed("(c2) tampered map text AND a CSP carrying the OLD hash only is what a stale template looks like", { indexMap: (h) => h.replace(MAP_TEXT, MAP_TEXT.replace('"/deny/"', '"/design/"')) }, "not-enforced");
   await failClosed("(d) browser without import-map support (HTMLScriptElement.supports('importmap') false)", { init: "(() => { const o = HTMLScriptElement.supports; HTMLScriptElement.supports = (t) => (t === 'importmap' ? false : o.call(HTMLScriptElement, t)); })();" }, "unsupported");
   await failClosed("(d2) the map element removed (a server that serves index.html without it)", { indexMap: (h) => h.replace(MAP_RE, "") }, "not-enforced");
   await failClosed("(d3) HTMLScriptElement.supports missing altogether (an old browser)", { init: "(() => { HTMLScriptElement.supports = undefined; })();" }, "unsupported");
-  const l2 = await failClosed("(e) the control file cannot be loaded (map text valid, /lib/canary-ok.js missing)", { hide: ["/lib/canary-ok.js"] }, "control").catch(() => null);
+  await failClosed("(f) the target is unreachable (404): a denied import proves nothing", { hide: ["/lib/canary/target.js"] }, "unverifiable");
+  const l2 = await failClosed("(e) the control file cannot be loaded (map text valid, /lib/canary/allowed/ok.js missing)", { hide: ["/lib/canary/allowed/ok.js"] }, "control").catch(() => null);
   void l2;
 }
 {
@@ -276,6 +278,17 @@ const failClosed = async (name, opts, reason) => {
   const { ctx, pg, logs } = await load({ routes: null, hash: "#/", wait: 400 });
   check("(b) with the hash the design loads and neither the note nor the warning appear", (await designState(pg)).enabled === true && (await noteText(pg)) === "" && !logs.warnings.some((w) => /DISABLED/.test(w)));
   await ctx.close();
+}
+
+// ───────────────────────────────────────────────────────────────────
+section("3b. The server rule (emulated nginx): encoded slashes, dots, backslashes and double slashes are refused everywhere");
+{
+  reset({ routes: null });
+  const get = (p) => new Promise((ok, no) => { httpGet({ host: "127.0.0.1", port: PORT, path: p }, (r) => { r.resume(); ok(r.statusCode); }).on("error", no); }); // raw request: fetch() would resolve %2e%2e itself
+  for (const p of ["/design%2fcopy.js", "//design/copy.js", "/design/..%2flib/orders.js", "/design/%2e%2e/lib/orders.js", "/design/..%5clib/orders.js", "/lib//orders.js", "/%2e%2e/lib/orders.js", "/design%2Fcopy.js"]) check(`${p} -> 404`, (await get(p)) === 404);
+  check("a normal file still works: /design/copy.js 200", (await get("/design/copy.js")) === 200);
+  check("/site-config.js and / still work", (await get("/site-config.js")) === 200 && (await get("/")) === 200);
+  check("a double slash or %2f in the QUERY string is not looked at", (await get("/index.html?next=https://x.test//a%2fb")) === 200);
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -300,6 +313,7 @@ section("4. CONTROL runs (the test can fail)");
   const { ctx } = await load({ expectReport: true, then: "#/zzz-nothing-here", percentRule: false, decode: true });
   const rep = S.reports[0];
   const viaPct = rep.attempts.filter((a) => a.kind === "hostile" && /^pctSlash /.test(a.label) && a.ok);
+  { reset({ routes: null, percentRule: false, decode: true }); const st = (await fetch(`http://127.0.0.1:${PORT}/design%2fcopy.js`)).status; check("CONTROL decoder, no rule: /design%2fcopy.js is SERVED (200): the URL the browser sees differs from the file served", st === 200, String(st)); }
   check(`CONTROL decoder, no % rule: ${viaPct.length} of ${CORE_MODULES.length} /design/..%2f imports RESOLVE (a new copy of the module, not the booted one)`, viaPct.length > 20, String(viaPct.length));
   await ctx.close();
 }

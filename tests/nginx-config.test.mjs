@@ -176,3 +176,18 @@ describe('start-up checks (deploy/require-origins.sh)', () => {
     assert.match(d, /COPY deploy\/resolver\.envsh \/docker-entrypoint\.d\/06-resolver\.envsh/);
   });
 });
+
+describe('path hygiene and the import-map support locations (decision D19)', () => {
+  const conf = strip(render());
+  const rule = /if \(\$request_uri ~\* "([^"]+)"\) \{ return 404; \}/.exec(conf);
+  test('a server-level rule refuses encoded slashes / dots / backslashes and double slashes in the PATH (not the query), before any location', () => {
+    assert.ok(rule, 'the rule exists at server level');
+    assert.ok(conf.indexOf(rule[0]) < conf.indexOf('location ~'), 'it sits before the locations');
+    const re = new RegExp(rule[1], 'i');
+    for (const p of ['/design%2fcopy.js', '/design%2Fcopy.js', '//design/copy.js', '/design/..%2flib/orders.js', '/design/%2e%2e/lib/x.js', '/design/..%5clib/x.js', '/lib//orders.js', '/a/%2E./b']) assert.ok(re.test(p), `${p} is refused`);
+    for (const p of ['/', '/index.html', '/design/copy.js', '/design/views/home.js', '/lib/canary/allowed/ok.js', '/site-config.js', '/content.schema.json', '/index.html?next=https://x.test//a%2fb', '/deny/lib/x.js']) assert.ok(!re.test(p), `${p} is allowed through the rule`);
+  });
+  test('/deny/ answers 404 and defines no add_header (it inherits the server-level security headers)', () => {
+    assert.match(conf, /location \^~ \/deny\/ \{ return 404; \}/);
+  });
+});

@@ -29,7 +29,7 @@ try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-r
 }
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 const server = createServer(async (req, res) => {
   const p = new URL(req.url, "http://x").pathname;
   if (p.startsWith("/api/")) { res.writeHead(401, { "Content-Type": "application/json" }); res.end('{"error":{"code":"unauthorized","message":"no"}}'); return; }

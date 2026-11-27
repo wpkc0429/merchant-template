@@ -64,7 +64,7 @@ const RID = "11111111-2222-4333-8444-555555555555", TARGET = "aaaaaaaa-bbbb-4ccc
 const SHA1 = "a1".repeat(20), SHA2 = "b2".repeat(20);
 const PERMS = { owner: ["design.view", "design.request", "design.approve", "design.revert"], editor: ["design.view"], staff: ["order.view"] };
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/[^/]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
+const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 let PORT = 0;
 const GARBAGE = (() => { const b = Buffer.from(png(390, 800, () => [1, 2, 3])); const out = Buffer.concat([b.subarray(0, 33), Buffer.from("this is not image data at all, just text".repeat(5))]); return out; })();
 let S; // per-scenario state

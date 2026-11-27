@@ -24,7 +24,7 @@ const missingWarned = new Set();
 export const warn = (msg, err) => console.warn(`[design] ${msg}`, ...(err ? [err] : []));
 
 /**
- * Loads copy and the route registry. Never throws. `enabled: false` (the isolation canary failed, lib/canary-probe.js, D19) loads NOTHING from design/:
+ * Loads copy and the route registry. Never throws. `enabled: false` (the isolation canary failed, lib/canary/probe.js, D19) loads NOTHING from design/:
  * no copy, no route, no view; the built-in screens and copy are used. Called once, by app.js.
  */
 export async function loadDesign({ enabled = true } = {}) {

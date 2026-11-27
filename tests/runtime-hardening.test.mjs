@@ -46,7 +46,7 @@ test('lib/api.js exports only ApiError, takeApi and sealApi; nothing imports or 
     assert.ok(!/import\s*\{[^}]*\btokens\b/.test(s), `${p} imports tokens`);
     assert.ok(!/export\s*\{[^}]*\b(api|apiRaw|publicApi|refreshTokens|restoreSession)\b/.test(s), `${p} re-exports the client`);
     assert.ok(!/export (?:const|function|async function) (api|apiRaw|publicApi|refreshTokens|restoreSession|tokens)\b/.test(s), `${p} exports the client`);
-    if (p !== 'lib/design.js' && p !== 'lib/canary-probe.js') assert.ok(!/\bimport\s*\(/.test(s), `${p} has a dynamic import (it could evaluate after the seal)`);
+    if (p !== 'lib/design.js' && p !== 'lib/canary/probe.js') assert.ok(!/\bimport\s*\(/.test(s), `${p} has a dynamic import (it could evaluate after the seal)`);
   }
 });
 

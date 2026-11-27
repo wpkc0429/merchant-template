@@ -455,10 +455,10 @@ Design modules are loaded with `import()` into the same page, origin and module 
 
 ### Import-map isolation (decision D19, v0.5.0)
 
-Your modules are loaded from `/design/`. The page carries an import map (`index.html`) that lets a module under `/design/` import **only files under `/design/`**; every other import, in any spelling (`../../lib/x.js`, `/lib/x.js`, a full URL, a query string, percent-encoding, `import()` with a computed name, `new URL(..., import.meta.url)`), fails with a TypeError. This is the second wall behind the scan (which already refuses imports outside `design/`). You do not have to do anything; import your own `../parts/*.js` as before. Do not put a percent sign in a design file name or path (nginx refuses it).
+Your modules are loaded from `/design/`. The page carries an import map (`index.html`) that lets a module under `/design/` import **only files under `/design/`**; every other import, in any spelling (`../../lib/x.js`, `/lib/x.js`, a full URL, a query string, percent-encoding, `import()` with a computed name, `new URL(..., import.meta.url)`), fails with a TypeError. This is the second wall behind the scan (which already refuses imports outside `design/`). You do not have to do anything; import your own `../parts/*.js` as before. Do not put a percent sign in a design file name or path (nginx refuses any path with an encoded slash, dot or backslash, and any double slash).
 
 - **If the design looks like the built-in one and a note says "custom design is disabled"**, the isolation could not be verified (the server's CSP lacks the import-map hash, the map text was changed, or the browser has no import maps): the core did not load any design module. That is a hosting problem, not a design bug. Preview hosts must be the same image as production.
-- The console shows one 404 for `/deny/lib/canary-target.js` on every load: that is the start-up check, expected.
+- The console shows one 404 for `/deny/lib/canary/target.js` on every load: that is the start-up check, expected.
 - Not isolation: a module can still read the page and call whatever `ctx` gives it. Firefox and Safari are unverified; there the check fails closed (design off) if the map is not enforced.
 
 ### Preview hosts: what the operator sets (decision D18)
