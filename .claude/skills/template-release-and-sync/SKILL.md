@@ -43,6 +43,7 @@ Its output lists the next steps, including the human-only content schema registr
    git -C <template checkout> status --short        # must print nothing
    ```
    **First hop only:** a merchant still on v0.1.0 runs its OWN old `scripts/sync-core.mjs`, which has no tag check (the check arrives with v0.2.0). For that one sync, step 2 above (`git describe --exact-match` on the template checkout, clean status) is your manual check; from v0.2.0 on the script enforces the tag rule itself.
+   **First hop to v0.5.0 or later from an older merchant:** the merchant's own old `sync-core` does not know `merchant.headers.json`. Before the sync a human creates and fills it (apiOrigin, imageOrigin) and renders `public/_headers` with the template's `render-headers.mjs`; see the MIGRATION section of `docs/CORE-CHANGELOG.md` v0.5.0. Without it the sync fails at verification and is rolled back. The sync needs `--ack-design-actions`.
 3. **Dry run first**, read it:
    ```bash
    node scripts/sync-core.mjs --from <template checkout> --dry-run

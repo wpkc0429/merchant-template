@@ -567,6 +567,6 @@ test('D20 is recorded (newest first) with the approvals, the mechanism, the scan
   assert.match(body.trim(), /\.$/);
   const cl = f('docs/CORE-CHANGELOG.md');
   assert.match(cl, /decision D20/); assert.match(cl, /merchant\.headers\.json/);
-  assert.equal(JSON.parse(f('template.json')).version, V1, 'template.json is bumped only by the release PR');
+  assert.equal(JSON.parse(f('template.json')).version, V1, 'template.json carries the release version');
   for (const doc of ['README.md', 'docs/TEMPLATE-NOTES.md', '.claude/skills/storefront-design/SKILL.md', '.claude/skills/merchant-onboarding/SKILL.md', 'CLAUDE.md']) assert.match(f(doc), /merchant\.headers\.json/, doc);
 });

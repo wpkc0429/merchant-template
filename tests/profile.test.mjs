@@ -22,10 +22,10 @@ test('D21 is recorded (newest first) with the owner approval, the validation, th
   for (const l of body.split('\n')) assert.ok(l === '' || /^[A-Z0-9*\-|`#>(\[]/.test(l), 'a line starts mid-sentence: ' + l.slice(0, 50));
   const cl = f('docs/CORE-CHANGELOG.md');
   assert.ok(/Personal profile \(decision D21/.test(cl) && /core\/profile-display-name/.test(cl));
-  assert.ok(cl.indexOf('Personal profile (decision D21') < cl.indexOf('\n## v0.4.2\n'), 'the entry belongs to the unreleased v0.5.0 section');
+  assert.ok(cl.indexOf('Personal profile (decision D21') < cl.indexOf('\n## v0.4.2\n'), 'the entry belongs to the v0.5.0 section');
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /personal profile page \(decision D21/);
   assert.match(f('README.md'), /D21/);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2', 'no version bump before the release PR');
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0', 'template.json carries the release version');
 });
 
 test('the design layer gained nothing: public-api.json, the route ids and the copy files carry no profile function or key', async () => {

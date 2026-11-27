@@ -73,9 +73,9 @@ test('core additions are data only: route state readOnly and the single preview 
   const api = JSON.parse(f('admin/lib/public-api.json'));
   assert.equal(api['ctx.data'].filter((n) => /Design/.test(n)).length, 3);
   assert.equal(api['ctx.actions'].filter((n) => /Design/.test(n)).length, 3);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0');
   const log = f('docs/CORE-CHANGELOG.md');
-  assert.match(log, /^## v0\.5\.0 \(UNRELEASED/m);
+  assert.match(log, /^## v0\.5\.0 \(2026-11-28\)$/m);
   assert.match(log, /^Design-layer action: adopt the new default history views/m);
 });
 
@@ -116,5 +116,5 @@ test('D16 is recorded (newest first) with the four owner approvals, and the desi
   // still no new ctx function, no release
   const api = JSON.parse(f('admin/lib/public-api.json'));
   assert.equal(api['ctx.data'].filter((n) => /Design/.test(n)).length, 3);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0');
 });
