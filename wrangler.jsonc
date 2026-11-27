@@ -7,7 +7,7 @@
   // anything that contains admin/ (the admin is served separately, behind
   // Cloudflare Access; see admin/README.md "部署").
   //
-  // public/_headers (locked) is read from this directory by Cloudflare and sends the strict Content-Security-Policy with
+  // public/_headers (derived: scripts/render-headers.mjs renders it from scripts/headers.core.txt + merchant.headers.json) is read from this directory by Cloudflare and sends the strict Content-Security-Policy with
   // every response. That CSP is a DEPLOYMENT REQUIREMENT (docs/DECISIONS.md): keep the file in public/, never delete it.
   //
   // Pure static assets: no `main`, no Worker script, no KV. The storefront

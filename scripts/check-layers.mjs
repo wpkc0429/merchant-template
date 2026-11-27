@@ -29,13 +29,22 @@
      5. Strict CSP: public/_headers must exist and carry a strict Content-Security-Policy (script-src 'self' only, object-src/base-uri/frame-ancestors locked down); an inline <script>/on*= in index.html is an error in the template, a warning in a merchant repo.
      5d. (D12, v0.4.2) No dialog tag, popover/inert attribute, dialog/popover/fullscreen/pointer-lock
         method, programmatic click/submit/dispatchEvent or synthetic Event in the design layer.
-     6. Prints a sha256 manifest of public/commerce/, public/config.js and public/_headers.
+     5e. (D20, v0.5.0) public/_headers is DERIVED: it must be byte-identical to scripts/render-headers.mjs applied to the core template
+        (scripts/headers.core.txt) and the merchant's own origins (merchant.headers.json, strict: https origins only, no wildcard, no
+        `https:` / `*` / `data:` scheme source in connect-src). connect-src / img-src may not carry a bare scheme or wildcard.
+        Leftover replace-with-* placeholders in merchant.headers.json: a warning in the template, an ERROR in a merchant repo
+        (--allow-placeholders turns that into a warning; new-merchant.mjs uses it for its own scripted verification only).
+     5f. (D20) Storefront network scan: fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest, new Image / Audio, dynamic
+        import(), RTCPeerConnection and window.open are refused in the design layer as identifiers and as exact string values
+        (window['fetch'], 'fe' + 'tch'), including aliases such as (0, fetch)(x) and var f = fetch.
+     6. Prints a sha256 manifest of public/commerce/ and public/config.js (public/_headers is verified by 5e, not hashed).
    ============================================================ */
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
+import { validateConfig, renderForRoot, parseConfigText, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUB = path.join(ROOT, 'public');
@@ -79,7 +88,13 @@ const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) 
 // admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line (any length); nothing is
 // blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
 // wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
-function canonicalSource(src) {
+function canonicalSource(src, mask = 0) {
+  // mask: the text of string and template literals (outside ${...}) becomes spaces (line breaks kept), so a rule on identifiers does
+  // not fire on copy text such as 'we fetch your order'. Used by the storefront network scan (5f).
+  // mask 1: string / template text and regex literals blanked; mask 2: regex literals only (strings kept, for exact-value rules).
+  const blank = (s) => s.replace(/[^\r\n\u2028\u2029]/g, ' ');
+  const lit = (mask === true || mask === 1) ? blank : (s) => s;
+  const lastSig = () => { for (let q = out.length - 1; q >= 0; q--) { const k = out[q].search(/\S\s*$/); if (k >= 0) return out[q][k]; } return ''; };
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
   const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
@@ -122,9 +137,9 @@ function canonicalSource(src) {
   const keepEsc = (s) => '"\'`\\$'.includes(s) || LT(s);
   const escape = () => { // inside a string or template, at a backslash
     const e = esc(i);
-    if (e && !keepEsc(e[0])) { out.push(e[0]); i = e[1]; return; }
+    if (e && !keepEsc(e[0])) { out.push(lit(e[0])); i = e[1]; return; }
     const adv = src[i + 1] === '\r' && src[i + 2] === '\n' ? 3 : 2;
-    out.push(src.slice(i, i + adv)); i += adv;
+    out.push(lit(src.slice(i, i + adv))); i += adv;
   };
   const template = () => { // after a backtick or the "}" that closes a ${...}
     while (i < n) {
@@ -132,7 +147,7 @@ function canonicalSource(src) {
       if (c === '\\') { escape(); continue; }
       if (c === '`') { out.push(c); i++; regexOk = false; return; }
       if (c === '$' && src[i + 1] === '{') { out.push('${'); i += 2; braces.push('tpl'); regexOk = true; return; }
-      out.push(c); i++;
+      out.push(lit(c)); i++;
     }
   };
   while (i < n) {
@@ -145,7 +160,7 @@ function canonicalSource(src) {
     }
     if (c === '"' || c === "'") {
       out.push(c); i++;
-      while (i < n && src[i] !== c && src[i] !== '\n' && src[i] !== '\r') { if (src[i] === '\\') escape(); else { out.push(src[i]); i++; } }
+      while (i < n && src[i] !== c && src[i] !== '\n' && src[i] !== '\r') { if (src[i] === '\\') escape(); else { out.push(lit(src[i])); i++; } }
       if (src[i] === c) { out.push(c); i++; }
       regexOk = false; word = ''; afterDot = false; continue;
     }
@@ -168,7 +183,8 @@ function canonicalSource(src) {
       const close = regexClose(i + 1);
       let j = close + 1;
       const closed = close >= 0;
-      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
+      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; const sure = mask && (KW.has(word) || /^[(,=:\[!&|?;{]?$/.test(lastSig()));   // blank a regex literal only where it cannot be a division
+      out.push(sure ? blank(src.slice(i, j)) : decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
     }
     if (c === '?' && src[i + 1] === '.' && !/[0-9]/.test(src[i + 2] || '')) { out.push('?.'); i += 2; regexOk = true; word = ''; afterDot = true; continue; }
     // punctuator
@@ -296,6 +312,11 @@ function checkCsp(headersText, indexHtml, tpl = true) {
       need('object-src', (v) => v.join(' ') === "'none'", "must be 'none'");
       need('base-uri', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
       need('frame-ancestors', (v) => v.join(' ') === "'none'" || v.join(' ') === "'self'", "must be 'none' or 'self'");
+      for (const n of ['connect-src', 'img-src', 'font-src', 'style-src', 'frame-src']) {
+        const bad = (dirs.get(n) || []).filter((v) => /^(https?|wss?|ftp|blob|filesystem):?$/i.test(v) || v.includes('*') || (n !== 'img-src' && /^data:$/i.test(v)) || /^'unsafe-/.test(v));
+        if (bad.length) errors.push(`CSP ${n} must list explicit origins only (found: ${bad.join(' ')}); declare the merchant's origins in merchant.headers.json`);
+      }
+      if (!dirs.has('connect-src')) errors.push('CSP lacks connect-src (it must pin the platform API origin)');
       if (!dirs.has('default-src')) errors.push('CSP lacks default-src');
       if (!dirs.has('form-action')) errors.push('CSP lacks form-action');
       else if ((dirs.get('form-action') || []).some((v) => /^\*$|^https?:$|^data:$/i.test(v))) errors.push('CSP form-action must list explicit hosts (no wildcard or bare scheme)');
@@ -310,6 +331,43 @@ function checkCsp(headersText, indexHtml, tpl = true) {
   const hp = path.join(PUB, '_headers'), ip = path.join(PUB, 'index.html');
   const r = checkCsp(existsSync(hp) ? readFileSync(hp, 'utf8') : null, existsSync(ip) ? readFileSync(ip, 'utf8') : '', isTemplate);
   r.errors.forEach(fail); warnings.push(...r.warnings);
+}
+
+/* ---------- 5e: public/_headers is DERIVED from the core template + the merchant's own origins (D20) ---------- */
+
+{
+  const allowPlaceholders = process.argv.includes('--allow-placeholders');
+  const cfgPath = path.join(ROOT, CONFIG_FILE);
+  let cfg = null;
+  if (!existsSync(cfgPath)) fail(`${CONFIG_FILE} is missing: it holds the merchant's own API / image origins for the storefront CSP (copy it from the template checkout, set apiOrigin and imageOrigin, then run \`node <template checkout>/scripts/render-headers.mjs --root . --core <template checkout>/scripts/headers.core.txt\`; see docs/CORE-CHANGELOG.md v0.5.0 MIGRATION and docs/DECISIONS.md D20)`);
+  else {
+    try { cfg = parseConfigText(readFileSync(cfgPath, 'utf8')); } catch (e) { fail(`${CONFIG_FILE} is not valid JSON: ${e.message}`); }
+  }
+  if (cfg) {
+    const v = validateConfig(cfg);
+    v.errors.forEach(fail);
+    if (v.placeholders.length) {
+      const msg = `${CONFIG_FILE} still holds template placeholders (${v.placeholders.join(', ')}): set the real origins (a human edit), then run \`node scripts/render-headers.mjs\``;
+      if (isTemplate || allowPlaceholders) warnings.push(msg); else fail(msg);
+    }
+    if (!v.errors.length) {
+      try {
+        const { text } = renderForRoot(ROOT);
+        const hp = path.join(PUB, '_headers');
+        const cur = existsSync(hp) ? readFileSync(hp, 'utf8').replace(/\r\n/g, '\n') : null;
+        if (cur !== text) fail(`${OUT_FILE} is not the rendering of scripts/headers.core.txt + ${CONFIG_FILE} (hand edit or stale file): run \`node scripts/render-headers.mjs\` and commit the result`);
+      } catch (e) { fail('cannot render ' + OUT_FILE + ': ' + e.message); }
+      // the config must agree with config.js: the API origin the storefront really calls has to be allowed by connect-src
+      const cj = canonicalSource(readFileSync(path.join(PUB, 'config.js'), 'utf8'));   // comments blanked: the header shows an example apiBase
+      const m = /\bapiBase\s*:\s*(['"])(.*?)\1/.exec(cj);
+      if (m && !/REPLACE_WITH_/.test(m[2])) {
+        let o = null; try { o = new URL(m[2]).origin; } catch { /* not a URL */ }
+        const allowed = [cfg.apiOrigin, ...(cfg.extraConnect || [])];
+        if (!o) fail(`public/config.js apiBase is not a URL: ${m[2]}`);
+        else if (!allowed.includes(o)) (isTemplate ? warnings : errors).push(`public/config.js apiBase origin ${o} is not allowed by ${CONFIG_FILE} (apiOrigin / extraConnect): the browser would block every API call`);
+      }
+    }
+  }
 }
 
 /* ---------- 5b: script load order in index.html (content-allowlist.js and content.js before the design layer) ---------- */
@@ -382,9 +440,167 @@ for (const f of designFiles) {
   }
 }
 
+/* ---------- 5f: storefront network egress scan (D20, v0.5.0) ---------- */
+
+// The strict CSP (connect-src pinned to the merchant's API origin, 5e) is the real fence; this scan is the cheap early warning that a design
+// change tried to talk to the network itself. The design layer never needs any of these: every request goes through ShopCommerce.
+// Works on the canonical source (D17) in three views: MASKED (comments, string and template text and regex literals blanked: identifiers only),
+// REGEX-MASKED (strings kept, regex literals blanked: exact string values) and the plain canonical text (string values for the navigation rule).
+//  * identifiers fetch, sendBeacon, WebSocket, EventSource, XMLHttpRequest: refused when used bare ((0, fetch)(x), var f = fetch, fetch(x)), and as a
+//    property ONLY when the receiver is a global object (window, globalThis, self, top, parent, frames, navigator): window.fetch, self?.fetch,
+//    (window).fetch, navigator.sendBeacon. A property of anything else (o.fetch, api?.fetch), an object key ({ fetch: 1 }, { "fetch": 1 }),
+//    a case label, and a destructuring from a non-global object (const { fetch: f } = api) are data, not a reference. const { fetch: f } = window is refused.
+//  * exact string values, after joining 'fe' + 'tch': window['fetch'], self["sendBeacon"], Reflect.get(window, 'fetch') (escapes are decoded by canonicalSource);
+//  * new Image / Audio / Worker / SharedWorker (also new window.Image), RTCPeerConnection, navigator.serviceWorker, window.open / window?.open / (window).open /
+//    a bare open(...) call, dynamic import() / import.meta, createElement of script / link / iframe / meta / object / embed / base, an a/area ping attribute;
+//  * aliasing a global object (const w = window; g = globalThis; ...): the alias creation is refused, because everything after it is invisible to a lexical scan;
+//  * navigation: location = ..., location.href = ..., location.assign(...) / replace(...) (also window. / document. / top. prefixed) unless every string literal
+//    in the target starts with '#' (an in-page hash route, which the storefront uses).
+// NOT detected (residual, the CSP is the fence): a global reached through a function result or a parameter ((function (w) {...})(window)), computed names built from
+// non-literals, a.b.c chains such as document.defaultView.fetch, <meta http-equiv=refresh> or <a href> built as text, bracket access with the string 'open'.
+// Core files (public/commerce/**, config.js) are not design files and are exempt, exactly as for the rules above.
+const NET_NAMES = 'fetch|sendBeacon|WebSocket|EventSource|XMLHttpRequest';
+const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames']);
+const NET_RECEIVERS = new Set([...GLOBAL_OBJECTS, 'navigator']);
+const GLOBAL_RE = 'window|globalThis|self|top|parent|frames';
+function joinStringConcats(text) { // 'a' + 'b' -> 'ab' (repeated; each pass shortens the text, so it ends)
+  const re = new RegExp(String.raw`(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\1\s*\+\s*(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\3`, 'g');
+  for (let k = 0; k < 64; k++) {
+    const next = text.replace(re, (m, q, a, q2, b) => q + a + b + q);
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+// the closer that ends the bracket group which contains position i (scanning forward), or -1
+function groupEnd(s, i, limit = 4000) {
+  let d = 0;
+  for (let k = i; k < s.length && k < i + limit; k++) {
+    const c = s[k];
+    if (c === '{' || c === '[' || c === '(') d++;
+    else if (c === '}' || c === ']' || c === ')') { if (d === 0) return k; d--; }
+  }
+  return -1;
+}
+// For a name sitting in a key position ({ name: v }, { name }, { "name": v }): 'literal' (object data), or 'pattern' + the identifier on the right of the
+// `=` ({ name: f } = window), so that only a pattern taken from a global object counts as a reference.
+function keyContext(text, end) {
+  const close = groupEnd(text, end);
+  const rest = close >= 0 ? text.slice(close + 1, close + 160) : '';
+  const pm = /^\s*=(?![=>])\s*\(?\s*([\w$]+)/.exec(rest);
+  return pm ? { pattern: true, from: pm[1] } : { pattern: false };
+}
+// an argument or assignment value: the text from `from` to the end of the call (')') or the statement (';' or a line break)
+function valueText(s, from, call) {
+  if (call) { const e = groupEnd(s, from); return s.slice(from, e < 0 ? from + 300 : e); }
+  const m = /[;\r\n]/.exec(s.slice(from, from + 400));
+  return s.slice(from, m ? from + m.index : from + 400);
+}
+// Names the file itself declares (variables, destructured names, functions, classes, parameters, catch bindings, arrow parameters): a local
+// "parent", "top", "self" or "open" is not the browser global. Conservative: any declaration anywhere in the file exempts the name in the whole file.
+function declaredNames(masked) {
+  const names = new Set();
+  const add = (s) => { for (const m of String(s).matchAll(/[\w$]+/g)) names.add(m[0]); };
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const|function\*?|class)\s+([\w$]+)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s*[{\[]([^}\]]*)[}\]]/g)) add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s+[\w$]+\s*=[^;\n]*?,\s*([\w$]+)\s*=(?!=)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])function\*?\s*[\w$]*\s*\(([^)]*)\)/g)) add(m[1]);
+  for (const m of masked.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])([\w$]+)\s*=>/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])catch\s*\(\s*([\w$]+)/g)) names.add(m[1]);
+  for (const m of masked.matchAll(/(?<![\w$.])(?:async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\(([^()]*)\)\s*\{/g)) add(m[1]);   // method parameters
+  return names;
+}
+function storefrontNetworkFindings(source) {
+  const found = [];
+  const masked = canonicalSource(source, 1);
+  const withStrings = canonicalSource(source, 2);
+  const plain = canonicalSource(source);
+  const idRe = new RegExp(String.raw`(?<![\w$])(` + NET_NAMES + String.raw`)(?![\w$])`, 'g');
+  const why = 'network access; every request goes through ShopCommerce';
+  const declared = declaredNames(masked);
+  for (const m of masked.matchAll(idRe)) {
+    const idx = m.index, end = idx + m[0].length, name = m[1];
+    const before = masked.slice(Math.max(0, idx - 80), idx);
+    const after = masked.slice(end, end + 80);
+    if (/(?:\?\.|\.)\s*$/.test(before) && !/\.\.\.\s*$/.test(before)) { // a property: only on a global receiver
+      const r = /([\w$]+)\s*\)?\s*(?:\?\.|\.)\s*$/.exec(before);
+      if (r && NET_RECEIVERS.has(r[1])) found.push([idx, `${r[1]}.${name} (${why})`]);
+      continue;
+    }
+    const bt = before.trimEnd();
+    if (/[{,]$/.test(bt) && /^\s*(?::(?!:)|[,}])/.test(after)) {      // an object key or a destructuring name
+      const ctx = keyContext(masked, end);
+      const keyed = /^\s*:/.test(after);
+      if (ctx.pattern) { if (GLOBAL_OBJECTS.has(ctx.from)) found.push([idx, `${name} taken from ${ctx.from} (${why})`]); continue; }
+      if (keyed) continue;                                              // { fetch: 1 }: data
+    }
+    found.push([idx, `${name} (${why})`]);
+  }
+  const strRe = new RegExp(String.raw`(["'\x60])(` + NET_NAMES + String.raw`)\1`, 'g');
+  const joined = joinStringConcats(withStrings);
+  for (const m of joined.matchAll(strRe)) {
+    const idx = m.index, end = idx + m[0].length;
+    const bt = joined.slice(Math.max(0, idx - 80), idx).trimEnd(), after = joined.slice(end, end + 80);
+    if (/^\s*:(?!:)/.test(after) && /\bcase$/.test(bt)) continue;       // case "fetch":
+    if (/[{,]$/.test(bt) && /^\s*(?::(?!:)|[,}])/.test(after)) {         // { "fetch": 1 } / const { "fetch": f } = api
+      const ctx = keyContext(joined, end);
+      if (ctx.pattern) { if (GLOBAL_OBJECTS.has(ctx.from)) found.push([idx, `the string "${m[2]}" taken from ${ctx.from}`]); continue; }
+      if (/^\s*:/.test(after)) continue;
+    }
+    found.push([idx, `the string "${m[2]}" (a computed property name for a network API)`]);
+  }
+  const rules = [
+    [new RegExp(String.raw`(?<![\w$.])new\s+(?:\(?\s*(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*\.\s*)?(?:Image|Audio|Worker|SharedWorker)\b`), 'new Image / Audio / Worker (a script-created element or worker is a request to any allowed origin)'],
+    [/(?<![\w$])(?:RTCPeerConnection|webkitRTCPeerConnection)\b/, 'RTCPeerConnection (WebRTC is not limited by connect-src)'],
+    [/(?<![\w$])navigator\s*(?:\?\.|\.)\s*serviceWorker\b/, 'navigator.serviceWorker'],
+    [new RegExp(String.raw`(?<![\w$])(?:` + GLOBAL_RE + String.raw`)\s*\)?\s*(?:\?\.|\.)\s*open\b`), 'window.open'],
+    [/(?<![\w$.])import\s*\(|(?<![\w$.])import\s*\.\s*meta\b/, 'dynamic import() / import.meta'],
+  ];
+  for (const [re, label] of rules) { const m = re.exec(masked); if (m) found.push([m.index, label]); }
+  // aliasing a global object (const w = window): refused unless the name on the right is declared in this file (a local "parent", "top" or "self")
+  const aliasRe = new RegExp('(?<![\\w$.])[\\w$]+\\s*=(?!=)\\s*\\(?\\s*(' + GLOBAL_RE + ')\\s*\\)?\\s*(?:[;,)\\r\\n]|$)', 'gm');
+  for (const m of masked.matchAll(aliasRe)) if (!declared.has(m[1])) { found.push([m.index, 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']); break; }
+  // a bare open(...) call is window.open, unless open is declared in this file or this is a method definition ({ open() { ... } })
+  if (!declared.has('open')) {
+    for (const m of masked.matchAll(/(?<![\w$.])open\s*\(/g)) {
+      const close = groupEnd(masked, m.index + m[0].length);
+      if (close >= 0 && /^\s*\{/.test(masked.slice(close + 1, close + 40))) continue;   // method definition
+      found.push([m.index, 'a bare open(...) call (window.open)']); break;
+    }
+  }
+  const textRules = [
+    [/\bcreateElement\s*\(\s*(["'`])(?:script|link|iframe|meta|object|embed|base)\1/i, 'createElement of script / link / iframe / meta / object / embed / base'],
+    [/<(?:a|area)\b[^>]*\sping\s*=|setAttribute\(\s*["']ping["']/i, 'the ping attribute (a request to any origin when the link is followed)'],
+    [/\[\s*(["'`])serviceWorker\1\s*\]/, "navigator['serviceWorker']"]
+  ];
+  for (const [re, label] of textRules) { const m = re.exec(withStrings); if (m) found.push([m.index, label]); }
+  // an element's .ping = ... (the anchor attribute); custom data on a dataset / style / props / state / data / options object is not
+  for (const m of withStrings.matchAll(/(?<![\w$])([\w$]+)\s*\.\s*ping\s*=(?!=)/g)) {
+    if (!/^(dataset|style|props|state|data|options|opts|config|settings)$/.test(m[1])) { found.push([m.index, 'the ping attribute (a request to any origin when the link is followed)']); break; }
+  }
+  // navigation: a location write or assign / replace whose target is not an in-page hash route
+  const navRe = new RegExp(String.raw`(?<![\w$.])(?:(?:window|self|top|parent|document|globalThis)\s*\.\s*)?location\s*(?:=(?!=)|\.\s*(?:href|assign|replace)\s*(?:=(?!=)|\())`, 'g');
+  for (const m of plain.matchAll(navRe)) {
+    const call = m[0].endsWith('(');
+    const target = valueText(plain, m.index + m[0].length, call);
+    const lits = [...target.matchAll(/(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)].map((x) => x[2]);
+    if (!(lits.length && lits.every((x) => x.startsWith('#')))) found.push([m.index, 'navigation: a location assignment / assign / replace whose target is not an in-page "#..." route']);
+  }
+  return found.sort((a, b) => a[0] - b[0]);
+}
+for (const f of designFiles) {
+  const raw = readFileSync(f, 'utf8');
+  const seen = new Set();
+  for (const [idx, label] of storefrontNetworkFindings(raw)) {
+    if (seen.has(label)) continue; seen.add(label);
+    fail(`${rel(f)}: forbidden in design layer (storefront network scan, D20): ${label}`);
+  }
+}
+
 /* ---------- 6: hash manifest ---------- */
 
-const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js'), ...(existsSync(path.join(PUB, '_headers')) ? [path.join(PUB, '_headers')] : [])].sort();
+const locked = [...walk(path.join(PUB, 'commerce')), path.join(PUB, 'config.js')].sort();   // public/_headers is DERIVED (5e), not hashed
 const manifest = {};
 for (const f of locked) {
   // normalise line endings so CRLF checkouts hash the same as LF
@@ -403,6 +619,7 @@ if (process.argv.includes('--check')) {
   else {
     const saved = JSON.parse(readFileSync(MANIFEST, 'utf8'));
     for (const f of new Set([...Object.keys(saved), ...Object.keys(manifest)])) {
+      if (f === 'public/_headers') continue;   // manifests written before v0.5.0 carry a hash of it; 5e verifies the file now
       if (saved[f] !== manifest[f]) fail(`locked file changed: ${f} (${saved[f] ? (manifest[f] ? 'modified' : 'removed') : 'added'})`);
     }
   }

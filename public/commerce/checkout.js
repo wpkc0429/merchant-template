@@ -111,6 +111,13 @@
     }
   };
 
+  // D20 (storefront trust boundary): this is the LAST core script. The scripts above took what they need from C._internal into closures
+  // while they loaded, so the handle (apiFetch with the publishable key and bearer tokens, the config, the image-origin registry) is
+  // removed before the design layer runs, and the config object is frozen so design code cannot repoint apiBase or the key.
+  // (The strict CSP in public/_headers is the second fence: connect-src lists only the merchant's API origin.)
+  if (C._internal) { try { Object.freeze(C._internal.allowlist); } catch (e) { /* none */ } delete C._internal; }
+  if (root.SHOP_CONFIG && typeof root.SHOP_CONFIG === 'object') Object.freeze(root.SHOP_CONFIG);
+
   Object.freeze(C.cart);
   Object.freeze(C.checkout);
   if (C.content) Object.freeze(C.content);   // content.js must load before this file (it adds C.content)

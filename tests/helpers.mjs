@@ -36,7 +36,7 @@ export function makeMerchant(extra = {}) {
   const dir = path.join(tmp(), 'shop');
   const r = createMerchant({
     target: dir, name: '測試商店', slug: 'test-shop', apiBase: 'https://api.example.com', publishableKey: 'pk_testkey123456',
-    siteUrl: 'https://shop.example.com', adminOrigin: 'https://admin.shop.example.com', ...extra
+    siteUrl: 'https://shop.example.com', imageOrigin: 'https://img.example.com', adminOrigin: 'https://admin.shop.example.com', ...extra
   });
   return { dir, ...r };
 }
@@ -60,7 +60,7 @@ export function makeTemplateCopy(version, mutate = () => {}, { tag = true, dirty
   // (its Design-layer action lines would block every fixture sync until acknowledged).
   write(dir, 'docs/CORE-CHANGELOG.md', read(dir, 'docs/CORE-CHANGELOG.md').replace(/^## v\d+\.\d+\.\d+ \(UNRELEASED[\s\S]*?(?=^## v\d)/m, ''));
   mutate(dir);
-  const a = node(['scripts/check-layers.mjs', '--update'], dir);
+  const a = node(['scripts/check-layers.mjs', '--update', '--allow-placeholders'], dir);
   const b = node(['scripts/check-design.mjs', '--update'], path.join(dir, 'admin'));
   if (a.status !== 0 || b.status !== 0) throw new Error(`could not re-lock the template copy:\n${a.out}\n${b.out}`);
   const g = (...x) => { const r = git(dir, ...x); if (r.status !== 0) throw new Error(`git ${x.join(' ')}: ${r.out}`); };
@@ -75,3 +75,12 @@ export const sync = (merchantDir, tplDir, ...flags) => node(['scripts/sync-core.
 
 /** Snapshot of file contents (for "unchanged" assertions). */
 export const snap = (root, files) => Object.fromEntries(files.map((f) => [f, existsSync(path.join(root, f)) ? readFileSync(path.join(root, f), 'utf8') : null]));
+
+/** For tests that build a bare scratch dir with only check-layers.mjs: the files check-layers now needs (D20), with example.test origins rendered. */
+export function copyHeaderFiles(dir, { apiOrigin = 'https://api.example.com', imageOrigin = 'https://img.example.com' } = {}) {
+  mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  for (const f of ['scripts/render-headers.mjs', 'scripts/headers.core.txt']) copyFileSync(path.join(TEMPLATE, f), path.join(dir, f));
+  writeFileSync(path.join(dir, 'merchant.headers.json'), JSON.stringify({ apiOrigin, imageOrigin }, null, 2) + '\n');
+  const r = node(['scripts/render-headers.mjs'], dir);
+  if (r.status !== 0) throw new Error('render-headers failed: ' + r.out);
+}

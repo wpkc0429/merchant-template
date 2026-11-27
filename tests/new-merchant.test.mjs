@@ -53,11 +53,13 @@ test('new-merchant: brand, config values, version records, no template-only file
 });
 
 test('new-merchant without config values leaves marked placeholders; check-layers only warns', () => {
-  const m = makeMerchant({ apiBase: undefined, publishableKey: undefined, siteUrl: undefined, adminOrigin: undefined });
+  const m = makeMerchant({ apiBase: undefined, publishableKey: undefined, siteUrl: undefined, adminOrigin: undefined, imageOrigin: undefined });
   assert.match(read(m.dir, 'public/config.js'), /REPLACE_WITH_PLATFORM_API_BASE/);
   assert.match(read(m.dir, 'public/config.js'), /REPLACE_WITH_PUBLISHABLE_KEY/);
-  const r = node(['scripts/check-layers.mjs', '--check'], m.dir);
-  assert.equal(r.status, 0);
+  // config.js placeholders only warn; the headers config placeholders are an ERROR in a merchant repo (D20) unless explicitly allowed
+  assert.equal(node(['scripts/check-layers.mjs', '--check'], m.dir).status, 1);
+  const r = node(['scripts/check-layers.mjs', '--check', '--allow-placeholders'], m.dir);
+  assert.equal(r.status, 0, r.out);
   assert.match(r.out, /warning: public\/config\.js still holds REPLACE_WITH_/);
 });
 

@@ -74,13 +74,15 @@ catalog/   目錄資料（import-catalog.mjs 的輸入；範本附佔位範例�
 - 本機測試用 **gitignored 的 `public/config.local.js` / `admin/config.local.js`**（複製各自的 `.example`）；店面版只在 localhost / 127.0.0.1 載入，用 `Object.assign(window.SHOP_CONFIG, { apiBase, publishableKey })` 覆寫。不要為了本機測試改任何被追蹤的檔案。
 - API 契約的權威在平台 repo（`api/openapi/openapi.yaml`、`docs/storefront-integration.md`、`docs/admin-frontend-integration.md`）。**不要把那些文件抄進這裡**，直接引用；平台 repo 對本 repo 是唯讀的。
 
+**`merchant.headers.json`（repo 根，只有人類能改，D20）**：店面 CSP 的 `connect-src`／`img-src` 釘死在商家自己的 API 與圖片網域（`apiOrigin`、`imageOrigin`，另有受限的 `extraConnect`／`extraImg`／`extraFont`／`extraStyle`／`extraFrame`；只收 `https` 來源，不收萬用字元、`https:`、`data:`）。改完由人類執行 `node scripts/render-headers.mjs` 重新渲染 `public/_headers`；AI 工作階段（店面或後台）不得改它、也不得改 `public/_headers`、`scripts/headers.core.txt`、`scripts/render-headers.mjs`（`check-scope` 明文拒絕）。`sync-core` 保留這個檔並在同步後重新渲染；範本裡是 `replace-with-*` 佔位值（警告），商家 repo 殘留佔位值是錯誤。
+
 ## 分層：設計層與鎖定的商務層
 
 程式碼在實體上分成兩層（經典 `<script>`，無打包、無 ES module；全域只有 `window.ShopCommerce`、`window.SHOP_CONFIG`、`window.SHOP_CONTENT`）：
 
 | 層 | 檔案 | 誰可以改 |
 | --- | --- | --- |
-| **鎖定的商務層** | `public/commerce/**`（`api.js` API client 與目錄載入、`cart.js` 購物袋、`checkout.js` 結帳／付款導向／訂單狀態、`local-config.js` localhost 才載入的本機覆寫、`public-api.json` 公開面清單）、`public/config.js`（`apiBase`、`publishableKey`、`showPrices`、`featuredCategory`）、`public/_headers`（嚴格 CSP） | **AI agent 與做設計的人都不得修改**；只有人類的「核心變更」（B）才能動，並需 `--update` 重鎖雜湊 |
+| **鎖定的商務層** | `public/commerce/**`（`api.js` API client 與目錄載入、`cart.js` 購物袋、`checkout.js` 結帳／付款導向／訂單狀態、`local-config.js` localhost 才載入的本機覆寫、`public-api.json` 公開面清單）、`public/config.js`（`apiBase`、`publishableKey`、`showPrices`、`featuredCategory`）、`public/_headers`（嚴格 CSP；自 v0.5.0 起是**衍生檔**：由 `scripts/render-headers.mjs` 用核心範本 `scripts/headers.core.txt` + 商家自己的 `merchant.headers.json` 渲染，守門員要求兩者逐位元組一致） | **AI agent 與做設計的人都不得修改**；只有人類的「核心變更」（B）才能動，並需 `--update` 重鎖雜湊 |
 | **設計層** | `public/app.js`（畫面、狀態、路由）、`public/content.js`（靜態文案與設計常數）、`public/content.schema.json`（內容欄位 schema，平台註冊只能由人類做）、`public/styles.css`、`public/index.html`、`public/assets/` | 可自由修改 |
 
 規則（由 `scripts/check-layers.mjs` 強制，改完設計檔請跑它）：

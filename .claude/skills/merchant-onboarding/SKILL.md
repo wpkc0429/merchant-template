@@ -62,6 +62,10 @@ In production the platform-level admin API is reachable only from `PLATFORM_ADMI
 
 Steps 7, 9 (credentials) and 13 are the usual critical path: start them first because they wait on the human.
 
+## Storefront CSP origins (`merchant.headers.json`, human-only, D20)
+
+`scripts/new-merchant.mjs --api-base <API> --image-origin <public image host>` writes the shop's two origins into `merchant.headers.json` and renders `public/_headers`; without `--image-origin` the placeholder stays and `check-layers` reports an ERROR until a human sets `imageOrigin` and runs `node scripts/render-headers.mjs`. The image host is the platform's public object-storage origin as it appears in product image URLs (`https://<public-image-host>`, no path). It must match what the API returns or the photos are blocked by the CSP. An agent never edits this file.
+
 ## Stop and ask when
 
 - `setup-status` flags stay false after the step that should flip them.

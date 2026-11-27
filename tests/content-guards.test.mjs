@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { TEMPLATE, tmp, cleanup, node, read, write } from './helpers.mjs';
+import { TEMPLATE, tmp, cleanup, node, read, write, copyHeaderFiles } from './helpers.mjs';
 
 after(cleanup);
 const layers = (d) => node(['scripts/check-layers.mjs', '--check'], d);
@@ -14,6 +14,7 @@ const fresh = (asTemplate = false) => {
   cpSync(path.join(TEMPLATE, 'public'), path.join(dir, 'public'), { recursive: true });
   mkdirSync(path.join(dir, 'scripts'));
   cpSync(path.join(TEMPLATE, 'scripts/check-layers.mjs'), path.join(dir, 'scripts/check-layers.mjs'));
+  copyHeaderFiles(dir);
   const tj = JSON.parse(readFileSync(path.join(TEMPLATE, 'template.json'), 'utf8')); tj.isTemplate = asTemplate;
   writeFileSync(path.join(dir, 'template.json'), JSON.stringify(tj));
   if (!asTemplate) writeFileSync(path.join(dir, 'public/config.js'), readFileSync(path.join(dir, 'public/config.js'), 'utf8').replace('REPLACE_WITH_PLATFORM_API_BASE', 'https://api.example.com').replace('REPLACE_WITH_PUBLISHABLE_KEY', 'pk_test123456'));

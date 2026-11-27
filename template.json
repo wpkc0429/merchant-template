@@ -25,11 +25,12 @@
   "lockedPaths": [
     "public/commerce/",
     "public/config.js",
-    "public/_headers",
     "scripts/check-layers.mjs",
     "scripts/check-scope.mjs",
     "scripts/check-locked.mjs",
     "scripts/sync-core.mjs",
+    "scripts/render-headers.mjs",
+    "scripts/headers.core.txt",
     "scripts/import-catalog.mjs",
     "scripts/check-content-schema.mjs",
     "scripts/lib/",
@@ -60,6 +61,8 @@
   ],
   "merchantOwnedPaths": [
     "public/config.js",
+    "public/_headers",
+    "merchant.headers.json",
     "wrangler.jsonc"
   ],
   "keepExtraPaths": [

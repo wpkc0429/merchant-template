@@ -1,0 +1,10 @@
+{
+  "_comment": "HUMAN-OWNED. This merchant's own origins for the storefront Content-Security-Policy (decision D20). In the template these are placeholders; new-merchant.mjs fills them, and in a merchant repo a leftover replace-with-* value is an ERROR. After editing run: node scripts/render-headers.mjs. Never edited by a design session; sync-core preserves it.",
+  "apiOrigin": "https://replace-with-api-origin.example.test",
+  "imageOrigin": "https://replace-with-image-origin.example.test",
+  "extraConnect": [],
+  "extraImg": [],
+  "extraFont": [],
+  "extraStyle": [],
+  "extraFrame": []
+}

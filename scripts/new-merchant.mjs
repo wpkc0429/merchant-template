@@ -4,7 +4,7 @@
 
      node scripts/new-merchant.mjs <target-dir> --name "<Shop name>" --slug <slug>
           [--api-base <url>] [--publishable-key <pk_...>] [--site-url <storefront origin>]
-          [--admin-origin <admin origin>] [--no-git]
+          [--image-origin <product image origin>] [--admin-origin <admin origin>] [--no-git]
 
    RUN BY A HUMAN. It writes the merchant's real config.js values and re-locks the hash manifests, which are
    steps that AI design sessions must never do. It never pushes anything and creates no GitHub repo.
@@ -18,6 +18,9 @@
        wrangler.jsonc (worker name = slug)
      * writes apiBase / publishableKey into public/config.js when given, otherwise leaves the clearly marked
        REPLACE_WITH_* placeholders (check-layers then warns until a human fills them in)
+     * (D20) writes merchant.headers.json (the shop's own API origin from --api-base and image origin from --image-origin; whatever
+       is not given keeps the replace-with-* placeholder, which check-layers reports as an ERROR in a merchant repo until a human
+       fills it in) and renders public/_headers from it with scripts/render-headers.mjs
      * sets "isTemplate": false, records the template version in .template-version and template.json
      * re-locks the hash manifests (check-layers --update, admin check-design --update) after all edits
      * records provenance (version, tag, commit) in .template-version
@@ -28,6 +31,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { originProblem } from './render-headers.mjs';
 import { readJson, inPaths, listFiles, sourceInfo, withHistory } from './lib/template.mjs';
 
 const TEMPLATE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,7 +56,7 @@ function replaceOnce(text, from, to, what) {
 }
 const jsStr = (s) => JSON.stringify(s);   // a double-quoted JS/JSON string literal (escapes quotes and backslashes)
 
-export function createMerchant({ target, name, slug, apiBase, publishableKey, siteUrl, adminOrigin, git = true, templateRoot = TEMPLATE_ROOT }) {
+export function createMerchant({ target, name, slug, apiBase, publishableKey, siteUrl, adminOrigin, imageOrigin, git = true, templateRoot = TEMPLATE_ROOT }) {
   const tpl = readJson(path.join(templateRoot, 'template.json'));
   if (tpl.isTemplate !== true) throw new Error('this checkout is not the template (template.json isTemplate is not true)');
   if (!name || !name.trim() || name.length > 60 || /[\r\n]/.test(name)) throw new Error('--name is required (1 to 60 characters, one line)');
@@ -66,6 +70,11 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
   const api = origin(apiBase, '--api-base', true);
   const site = origin(siteUrl, '--site-url', true);
   const admin = origin(adminOrigin, '--admin-origin', true);
+  const img = origin(imageOrigin, '--image-origin', true);
+  for (const [u, flag] of [[api, '--api-base'], [img, '--image-origin']]) {
+    const p = u ? originProblem(u.origin) : '';
+    if (p) throw new Error(`${flag} ${u.origin} ${p} (it goes into the storefront Content-Security-Policy)`);
+  }
   if (publishableKey !== undefined && !/^pk_[A-Za-z0-9_]{8,}$/.test(publishableKey)) throw new Error('--publishable-key must look like pk_... (letters, digits, underscore)');
 
   const dest = path.resolve(target);
@@ -133,6 +142,16 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
     });
   }
 
+  // ---- merchant.headers.json (HUMAN-owned CSP origins; D20): this shop's API and image origins, rendered into public/_headers below
+  {
+    const f = path.join(dest, 'merchant.headers.json');
+    const cfg = JSON.parse(readFileSync(f, 'utf8'));
+    cfg._comment = "HUMAN-OWNED. This shop's own origins for the storefront Content-Security-Policy (decision D20): apiOrigin is the platform API, imageOrigin the product image host, extra* are optional additions. After editing run: node scripts/render-headers.mjs (the guard fails when public/_headers is not its exact rendering). Never edited by a design session; sync-core preserves it. A replace-with-* value is a placeholder and an ERROR here.";
+    if (api) cfg.apiOrigin = api.origin;
+    if (img) cfg.imageOrigin = img.origin;
+    writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+  }
+
   // ---- template.json and .template-version
   const next = { ...tpl, isTemplate: false, merchant: { name: shopName, slug, siteUrl: site ? site.origin : null, adminOrigin: admin ? admin.origin : null } };
   delete next.description;
@@ -150,9 +169,11 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
     if (r.status !== 0) throw new Error(`${args.join(' ')} failed in ${cwd}:\n${r.stdout}${r.stderr}`);
     return r.stdout;
   };
-  run(dest, ['scripts/check-layers.mjs', '--update']);
+  run(dest, ['scripts/render-headers.mjs']);
+  // --allow-placeholders: only this scripted verification tolerates a replace-with-* origin (not given on the command line); CI and humans do not
+  run(dest, ['scripts/check-layers.mjs', '--update', '--allow-placeholders']);
   run(path.join(dest, 'admin'), ['scripts/check-design.mjs', '--update']);
-  run(dest, ['scripts/check-layers.mjs', '--check']);
+  run(dest, ['scripts/check-layers.mjs', '--check', '--allow-placeholders']);
   run(path.join(dest, 'admin'), ['scripts/check-design.mjs']);
 
   // ---- git
@@ -164,7 +185,7 @@ export function createMerchant({ target, name, slug, apiBase, publishableKey, si
     const ident = has('user.name') && has('user.email') ? [] : ['-c', 'user.name=merchant-template', '-c', 'user.email=merchant-template@localhost'];
     g(...ident, 'commit', '-q', '-m', `Initial commit from merchant-template v${tpl.version}\n\nCreated by scripts/new-merchant.mjs for "${shopName}" (${slug}).`);
   }
-  return { dest, files: n, version: tpl.version, hasConfig: !!(api && publishableKey !== undefined) };
+  return { dest, files: n, version: tpl.version, hasConfig: !!(api && publishableKey !== undefined), hasOrigins: !!(api && img) };
 }
 
 function merchantReadme({ shopName, slug, version, site, admin }) {
@@ -183,6 +204,7 @@ catalog/  catalogue data for scripts/import-catalog.mjs
 - Admin: \`cd admin && node scripts/serve.mjs --proxy <API>\` (local override: \`admin/config.local.js\`).
 - Guards: \`node scripts/check-layers.mjs --check\`, \`node admin/scripts/check-design.mjs --base <ref>\`, \`node scripts/check-scope.mjs <storefront|admin> --base <ref>\`.
 - \`public/config.js\` holds this shop's real \`apiBase\` and \`publishableKey\` (locked and hash-protected; a human edits it, then runs \`node scripts/check-layers.mjs --update\`).
+- \`merchant.headers.json\` holds this shop's own API and image origins for the storefront CSP (a human edit; \`node scripts/render-headers.mjs\` re-renders \`public/_headers\`, which is DERIVED: never edit it by hand). \`sync-core\` preserves the file and re-renders.
 - Strict CSP is a deployment requirement: \`public/_headers\` (storefront) and \`admin/deploy/nginx.conf.template\` (admin) carry it; AI-edit previews must serve it too (\`docs/DECISIONS.md\`).
 - \`public/content.schema.json\` describes the shop's editable content (design layer). Editing it registers nothing: registration on the platform is a HUMAN step (dry run with \`node scripts/check-content-schema.mjs\`, then register; never CI or an AI session).
 - Core updates: a human runs \`node scripts/sync-core.mjs --from <template checkout> --dry-run\` (never an AI session).
@@ -196,6 +218,7 @@ created ${r.dest}
 
 Next steps (see .claude/skills/merchant-onboarding for the platform side):
   1. ${r.hasConfig ? 'config.js already holds apiBase and publishableKey.' : 'public/config.js still has REPLACE_WITH_* placeholders: after the platform provisions the shop and issues a publishable key, a human edits apiBase / publishableKey and runs  node scripts/check-layers.mjs --update  (check-layers warns until then).'}
+  1b. ${r.hasOrigins ? 'merchant.headers.json holds the API and image origins; public/_headers is rendered from it.' : 'merchant.headers.json still has replace-with-* placeholders (the guard reports an ERROR until a human sets apiOrigin and imageOrigin, then runs  node scripts/render-headers.mjs).'}
   2. Register the storefront origin${flags.siteUrl ? ` (${flags.siteUrl})` : ''} as purpose=storefront and the admin origin${flags.adminOrigin ? ` (${flags.adminOrigin})` : ''} as purpose=admin on the platform; add the admin origin to the R2 bucket CORS.
   3. Import the catalogue: copy catalog/catalog.sample.json to catalog/catalog.json, edit it, then
        IMPORT_API_BASE=... IMPORT_ADMIN_EMAIL=... IMPORT_ADMIN_PASSWORD=... node scripts/import-catalog.mjs catalog/catalog.json --dry-run
@@ -220,9 +243,9 @@ Next steps (see .claude/skills/merchant-onboarding for the platform side):
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const a = parseArgs(process.argv.slice(2));
-  if (a._.length !== 1 || !a.name || !a.slug) die('usage: node scripts/new-merchant.mjs <target-dir> --name "<Shop name>" --slug <slug> [--api-base <url>] [--publishable-key <key>] [--site-url <url>] [--admin-origin <url>] [--no-git]');
+  if (a._.length !== 1 || !a.name || !a.slug) die('usage: node scripts/new-merchant.mjs <target-dir> --name "<Shop name>" --slug <slug> [--api-base <url>] [--publishable-key <key>] [--site-url <url>] [--image-origin <url>] [--admin-origin <url>] [--no-git]');
   try {
-    const r = createMerchant({ target: a._[0], name: a.name, slug: a.slug, apiBase: a['api-base'], publishableKey: a['publishable-key'], siteUrl: a['site-url'], adminOrigin: a['admin-origin'], git: !a.noGit });
+    const r = createMerchant({ target: a._[0], name: a.name, slug: a.slug, apiBase: a['api-base'], publishableKey: a['publishable-key'], siteUrl: a['site-url'], imageOrigin: a['image-origin'], adminOrigin: a['admin-origin'], git: !a.noGit });
     nextSteps(r, a.name, a.slug, { siteUrl: a['site-url'], adminOrigin: a['admin-origin'] });
   } catch (e) { die(e.message, 1); }
 }
