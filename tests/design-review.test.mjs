@@ -14,7 +14,7 @@ const code = (p) => f(p).split('\n').filter((l) => !['//', '/*', '*'].some((c) =
 test('D14 is recorded whole in docs/DECISIONS.md, newest first, and names the approvals and what is not in PR2', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[0], 'D14');
+  assert.ok(ids.indexOf('D14') >= 0 && ids.indexOf('D14') < ids.indexOf('D13'));
   assert.equal(new Set(ids).size, ids.length);
   const start = lines.findIndex((l) => l.startsWith('### D14.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;

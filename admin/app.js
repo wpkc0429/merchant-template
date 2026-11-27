@@ -14,6 +14,7 @@ import { makeContext } from "./core/context.js";
 import { makeAuth } from "./core/auth.js";
 import { mountView } from "./core/host.js";
 import { installPreviewBanner, verifyBanner } from "./ui/preview-banner.js";
+import { isReadOnly } from "./lib/preview.js";
 
 const visibleNav = () => NAV.filter((n) => n.perm.every((p) => can(p)));
 
@@ -125,7 +126,7 @@ async function renderIn(token, def, m) {
   // The permission gate is the core's: a route whose nodes are not all granted never mounts its own view.
   const allowed = (def.perm || []).every((p) => can(p));
   const id = allowed ? def.id : "noPermission";
-  const ctxFor = () => makeContext({ routeId: id, params: m.params, query: m.query, alive: () => token === viewToken, nav: visibleNav(), auth: authFor(null) });
+  const ctxFor = () => makeContext({ routeId: id, params: m.params, query: m.query, state: { readOnly: isReadOnly() }, alive: () => token === viewToken, nav: visibleNav(), auth: authFor(null) });
   try {
     const { root: view } = await mountView(id, holder, ctxFor);
     if (token !== viewToken) return;

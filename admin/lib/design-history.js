@@ -200,7 +200,8 @@ export function normalizeRequest(d, events = []) {
 
 export function normalizeState(d, site) {
   d = d && typeof d === "object" ? d : {};
-  const sites = (Array.isArray(d.sites) ? d.sites : []).map((s) => {
+  const own = (k) => (Object.hasOwn(d, k) ? d[k] : undefined); // own properties only: a polluted Object.prototype must not switch anything on
+  const sites = (Array.isArray(own("sites")) ? d.sites : []).map((s) => {
     s = s && typeof s === "object" ? s : {};
     return {
       site: oneOf(s.site, SITES, "storefront"),
@@ -211,6 +212,7 @@ export function normalizeState(d, site) {
       updatedAt: date(s.updated_at),
     };
   }).filter((s) => !site || s.site === site);
-  const total = Number.isFinite(d.pending_approval_count) ? count(d.pending_approval_count) : sites.reduce((n, s) => n + s.pendingApproval, 0);
-  return { sites, pendingApproval: site ? sites.reduce((n, s) => n + s.pendingApproval, 0) : total };
+  const total = Number.isFinite(own("pending_approval_count")) ? count(d.pending_approval_count) : sites.reduce((n, s) => n + s.pendingApproval, 0);
+  // designEnabled: the platform's top-level boolean design_enabled (AI edit on for this shop); true only for a literal true, false when absent or malformed.
+  return { sites, pendingApproval: site ? sites.reduce((n, s) => n + s.pendingApproval, 0) : total, designEnabled: own("design_enabled") === true };
 }

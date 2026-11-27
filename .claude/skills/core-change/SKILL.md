@@ -37,6 +37,10 @@ Never customise per merchant: the core is identical for every merchant.
 | CSP | `public/_headers`, `admin/deploy/nginx.conf.template`, the checks (`checkCsp` in `scripts/check-layers.mjs`, `deployChecks` in `admin/scripts/check-design.mjs`) and their tests; `docs/DECISIONS.md` |
 | Any locked file | the hash manifests (below), `docs/CORE-CHANGELOG.md`, `template.json` version |
 
+### Example: the design history screens (v0.5.0, D13 to D15)
+
+A multi-PR core change shows the pattern. PR1: read functions plus route DEFINITIONS with `ready: false` (a registered route without a view would throw, a nav item would be a dead link). PR2: the actions and fixed warnings. PR3: the default views in `design-defaults/` AND `design/` (identical copies), the routes flipped to `ready: true` together with `ROUTE_IDS`, `NAV` and the `routes.js` entries, copy keys in both copy files, a real-browser e2e (`admin/e2e/design-history.mjs`) and a structure test that fails if only part of it is done (`tests/design-history-screens.test.mjs`). The release (version, tag) is its own PR.
+
 ### Re-locking the manifests (HUMAN ONLY)
 
 First run the guards WITHOUT `--update` and read what they report: every `manifest/changed|added|removed` line must be a file you meant to change.

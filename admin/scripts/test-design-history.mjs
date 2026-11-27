@@ -99,7 +99,7 @@ ok("the three design actions exist (PR2, D14) and nothing else design-related wa
 
 // routing groundwork: defined, but not registered and no nav entry
 ok("routes design and designRequest are defined with design.view", DESIGN_HISTORY_ROUTES.map((r) => `${r.id}${r.pattern}${r.perm}`).join() === "design/designdesign.view,designRequest/design/:iddesign.view");
-ok("...but not registered, not in ROUTES, NAV or ROUTE_IDS (no dead nav item, no view-less route)", DESIGN_HISTORY_ROUTES.every((r) => !ROUTES.some((x) => x.id === r.id) && !NAV.some((n) => n.key === r.nav || n.href === `#${r.pattern}`) && !ROUTE_IDS.includes(r.id) && r.ready === false));
+ok("...and registered since PR3 (D15): in ROUTES, in ROUTE_IDS and one NAV item with design.view, all together", DESIGN_HISTORY_ROUTES.every((r) => ROUTES.some((x) => x.id === r.id && x.pattern === r.pattern) && ROUTE_IDS.includes(r.id) && r.ready === true) && NAV.filter((n) => n.key === "design").length === 1 && NAV.find((n) => n.key === "design").perm.join() === "design.view");
 ok("every registered route still has a view id the design layer can map", ROUTES.filter((r) => !r.public).every((r) => ROUTE_IDS.includes(r.id)));
 
 // permission matrix, before any request
@@ -176,6 +176,21 @@ ok("state: no sha, no raw keys", !/junk|last_seen|current_sha|lastSeen/.test(JSO
 const one = await data.getDesignState({ site: "admin" });
 ok("state: site filter narrows to one site", one.sites.length === 1 && one.sites[0].site === "admin" && one.pendingApproval === 2);
 
+// designEnabled: only a literal true counts; absent or malformed is false
+ok("state: designEnabled is false when the platform field is absent", st.designEnabled === false && one.designEnabled === false);
+for (const [label, v] of [["true", true], ["false", false], ["string 'true'", "true"], ["1", 1], ["null", null], ["object", {}]]) {
+  reset(); on("/design/state", { body: { sites: [], design_enabled: v } });
+  ok(`state: design_enabled ${label} -> designEnabled ${v === true}`, (await data.getDesignState()).designEnabled === (v === true));
+}
+Object.prototype.design_enabled = true; Object.prototype.pending_approval_count = 9; Object.prototype.sites = [{ site: "admin" }];
+try {
+  reset(); on("/design/state", { body: {} });
+  const polluted = await data.getDesignState();
+  ok("state: a polluted Object.prototype switches nothing on (own properties only)", polluted.designEnabled === false && polluted.pendingApproval === 0 && polluted.sites.length === 0, JSON.stringify(polluted));
+} finally { delete Object.prototype.design_enabled; delete Object.prototype.pending_approval_count; delete Object.prototype.sites; }
+reset(); on("/design/state", { body: { sites: [], design_enabled: true } });
+ok("state: designEnabled survives the site filter", (await data.getDesignState({ site: "admin" })).designEnabled === true);
+
 // error mapping (never a raw ApiError at the design layer for the known statuses)
 const err = (status, code, headers) => ({ status, headers, body: { error: { code, message: "platform says why" } } });
 for (const [st2, kind, reason] of [[403, "permission", "permission"], [404, "state", "gone"], [422, "invalid", "invalid"], [429, "limit", "rate_limited"], [503, "state", "design_storage_not_configured"]]) {
@@ -204,7 +219,7 @@ if (PREVIEW) {
   const v1 = readFileSync(path.join(ROOT, "design/views/design-version-preview.js"), "utf8"), v2 = readFileSync(path.join(ROOT, "design-defaults/views/design-version-preview.js"), "utf8");
   ok("version preview CTA onRevert stays hidden in the default views", !/onRevert/.test(v1) && !/onRevert/.test(v2));
   const dr = (await imp("design-defaults/routes.js")).default;
-  ok("no default view is registered for design / designRequest yet", !("design" in dr) && !("designRequest" in dr));
+  ok("both default views are registered (PR3, D15) in design-defaults and design", dr.design === "views/design-history.js" && dr.designRequest === "views/design-request.js" && (await imp("design/routes.js")).default.design === "views/design-history.js");
 }
 
 process.stdout.write(`test-design-history [${MODE}]: ${pass} passed, ${fail} failed

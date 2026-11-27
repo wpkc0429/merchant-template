@@ -30,5 +30,7 @@ export default {
   contentDocument: "views/content-document.js",
   contentRevisions: "views/content-revisions.js",
   contentSchema: "views/content-schema.js",
+  design: "views/design-history.js",
+  designRequest: "views/design-request.js",
   designVersionPreview: "views/design-version-preview.js",
 };
