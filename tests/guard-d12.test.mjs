@@ -69,7 +69,7 @@ test('docs/DECISIONS.md is structurally intact: one title, unique headings, no r
   assert.equal(heads.filter((l) => l === '# Decisions').length, 1, 'exactly one title');
   assert.equal(new Set(heads).size, heads.length, 'every heading is unique: ' + heads.filter((h, i) => heads.indexOf(h) !== i).join(' | '));
   const ids = heads.map((h) => /^### (D\d+)\./.exec(h)).filter(Boolean).map((m) => m[1]);
-  assert.deepEqual(ids.slice(0, 6), ['D16', 'D15', 'D14', 'D13', 'D12', 'D11'], 'newest first');
+  assert.deepEqual(ids.slice(0, 6), ['D17', 'D16', 'D15', 'D14', 'D13', 'D12'], 'newest first');
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(ids.includes('D12') && ids.includes('D11') && ids.includes('D10'));
   const paras = dec.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 80);

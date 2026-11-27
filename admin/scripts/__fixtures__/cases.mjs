@@ -2,6 +2,7 @@
 // kind: "code" (a design view/part), "data" (design/copy.js or routes.js), "css" (design/theme.css).
 // expect: the rule id that MUST be reported, or null when the source must pass cleanly.
 // (Strings, not files, so these hostile snippets are never loadable by anything.)
+import { ESCAPED_CASES } from "./escaped-cases.mjs";
 const view = (body) => `export default function view(root, ctx) { ${body} }`;
 
 export const CASES = [
@@ -222,3 +223,6 @@ export default function view(root, ctx) {
 export default function view(root, ctx) { const kids = [...root.children]; return helper(ctx) + kids.length; }` },
   { name: "D12 valid: querySelector on root and an own element", kind: "code", expect: null, src: view("const { h, button } = ctx.ui; const card = h(\"div\", {}, h(\"p\", { class: \"muted\" })); card.querySelector(\".muted\").textContent = \"x\"; root.querySelectorAll(\"[data-nav]\");") },
 ];
+
+// D17: the scanner reads canonical (escape-decoded) values; the generated regression cases live in escaped-cases.mjs
+CASES.push(...ESCAPED_CASES);

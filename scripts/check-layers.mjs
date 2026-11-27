@@ -69,9 +69,122 @@ const isCommerce = (f) => rel(f).startsWith('public/commerce/');
 const isConfig = (f) => /^public\/config(\.local)?\.js$/.test(rel(f));
 const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) && !isConfig(f));
 
-// Strip comments (good enough for a guard: keeps string contents, drops // and /* */).
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[\s;{}(),])\/\/[^\n]*/g, '$1');
+// Canonical source for the regex rules below (decision D17). A real (small) scanner, not a regex: it walks strings, templates
+// (with nested ${}), regex literals and comments, and returns the source with
+//  * every comment blanked (spaces; line terminators kept, so line numbers stay true): // ends at \n, \r, U+2028 or U+2029;
+//  * Unicode escapes decoded where JavaScript decodes them: \uXXXX and \u{...} in identifiers (a `fetch(` IS `fetch(`), and \u, \x
+//    and octal escapes inside string and template literals (a '\x73hopcommerce:' IS 'shopcommerce:'); an escape that would decode to a quote,
+//    a backslash, a backtick, a `$` or a line terminator stays as written.
+// The contract (identifier names and property names by escape-decoded value, string / template values by cooked value) is the one of
+// admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line (any length); nothing is
+// blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
+// wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
+function canonicalSource(src) {
+  const n = src.length, out = [], braces = [], parens = [];
+  const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
+  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
+  const STMT = new Set(['if', 'while', 'for', 'with']);
+  const IDP = /[\p{ID_Continue}$\u200c\u200d]/u;
+  let i = 0, regexOk = true, word = '', afterDot = false;
+  const esc = (j) => { // the decoded escape at src[j] (a backslash) as [text, next], or null when it is kept as written
+    const d = src[j + 1];
+    let m;
+    if (d === 'u') { m = /^\\u(?:([0-9a-fA-F]{4})|\{([0-9a-fA-F]{1,6})\})/.exec(src.slice(j, j + 12)); if (m && parseInt(m[1] || m[2], 16) <= 0x10ffff) return [String.fromCodePoint(parseInt(m[1] || m[2], 16)), j + m[0].length]; }
+    else if (d === 'x') { m = /^\\x([0-9a-fA-F]{2})/.exec(src.slice(j, j + 4)); if (m) return [String.fromCharCode(parseInt(m[1], 16)), j + 4]; }
+    else if (d >= '0' && d <= '7') { m = /^\\([0-3][0-7]{0,2}|[4-7][0-7]?)/.exec(src.slice(j, j + 5)); return [String.fromCharCode(parseInt(m[1], 8)), j + 1 + m[1].length]; }
+    return null;
+  };
+  const decodeRange = (a, b) => { // src[a..b) with unicode and hex escapes decoded (the same rule as in a string), used for text that may be a regex or code
+    let r = '';
+    for (let j = a; j < b;) {
+      if (src[j] === '\\' && (src[j + 1] === 'u' || src[j + 1] === 'x')) { const e = esc(j); if (e && e[1] <= b && !keepEsc(e[0])) { r += e[0]; j = e[1]; continue; } }
+      if (src[j] === '\\') { r += src.slice(j, j + 2); j += 2; continue; }
+      r += src[j]; j++;
+    }
+    return r;
+  };
+  // regexClose(p): the "/" that closes a regex body starting at p on this line, or -1. One backward pass (on the first attempt) makes every attempt O(1)
+  // whatever the literal's length (no cap); the same rules as the admin lexer: no line break in a regex, a backslash before one ends it, "/" in [ ] does not close.
+  let afterClass = null, inClassTbl = null;
+  const regexClose = (p) => {
+    if (afterClass === null) {
+      afterClass = new Int32Array(n + 3).fill(-1); inClassTbl = new Int32Array(n + 3).fill(-1);
+      for (let q = n - 1; q >= 0; q--) {
+        const ch = src[q];
+        if (LT(ch)) continue;
+        if (ch === '\\') { const nx = src[q + 1]; if (nx !== undefined && !LT(nx)) { afterClass[q] = afterClass[q + 2]; inClassTbl[q] = inClassTbl[q + 2]; } continue; }
+        afterClass[q] = ch === '/' ? q : ch === '[' ? inClassTbl[q + 1] : afterClass[q + 1];
+        inClassTbl[q] = ch === ']' ? afterClass[q + 1] : inClassTbl[q + 1];
+      }
+    }
+    return p < n ? afterClass[p] : -1;
+  };
+  const keepEsc = (s) => '"\'`\\$'.includes(s) || LT(s);
+  const escape = () => { // inside a string or template, at a backslash
+    const e = esc(i);
+    if (e && !keepEsc(e[0])) { out.push(e[0]); i = e[1]; return; }
+    const adv = src[i + 1] === '\r' && src[i + 2] === '\n' ? 3 : 2;
+    out.push(src.slice(i, i + adv)); i += adv;
+  };
+  const template = () => { // after a backtick or the "}" that closes a ${...}
+    while (i < n) {
+      const c = src[i];
+      if (c === '\\') { escape(); continue; }
+      if (c === '`') { out.push(c); i++; regexOk = false; return; }
+      if (c === '$' && src[i + 1] === '{') { out.push('${'); i += 2; braces.push('tpl'); regexOk = true; return; }
+      out.push(c); i++;
+    }
+  };
+  while (i < n) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') { while (i < n && !LT(src[i])) { out.push(' '); i++; } continue; }
+    if (c === '/' && src[i + 1] === '*') {
+      const e = src.indexOf('*/', i + 2), stop = e < 0 ? n : e + 2;
+      for (; i < stop; i++) out.push(LT(src[i]) ? src[i] : ' ');
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      out.push(c); i++;
+      while (i < n && src[i] !== c && src[i] !== '\n' && src[i] !== '\r') { if (src[i] === '\\') escape(); else { out.push(src[i]); i++; } }
+      if (src[i] === c) { out.push(c); i++; }
+      regexOk = false; word = ''; afterDot = false; continue;
+    }
+    if (c === '`') { out.push(c); i++; template(); word = ''; afterDot = false; continue; }
+    if (/\s/.test(c)) { out.push(c); i++; continue; }
+    if (/[0-9]/.test(c)) { let j = i + 1; while (j < n && /[0-9a-zA-Z_.]/.test(src[j])) j++; out.push(src.slice(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
+    if (c === '\\' || IDP.test(String.fromCodePoint(src.codePointAt(i)))) { // identifier (with escapes)
+      let w = '';
+      while (i < n) {
+        if (src[i] === '\\' && src[i + 1] === 'u') { const e = esc(i); if (!e) break; w += e[0]; i = e[1]; continue; }
+        const ch = String.fromCodePoint(src.codePointAt(i));
+        if (!IDP.test(ch)) break;
+        w += ch; i += ch.length;
+      }
+      if (!w) { out.push(c); i++; continue; } // a lone backslash
+      out.push(w);
+      regexOk = !afterDot && KW.has(w); word = afterDot ? '' : w; afterDot = false; continue;
+    }
+    if (c === '/' && regexOk) {
+      const close = regexClose(i + 1);
+      let j = close + 1;
+      const closed = close >= 0;
+      if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
+    }
+    if (c === '?' && src[i + 1] === '.' && !/[0-9]/.test(src[i + 2] || '')) { out.push('?.'); i += 2; regexOk = true; word = ''; afterDot = true; continue; }
+    // punctuator
+    if (c === '(') { parens.push(STMT.has(word)); regexOk = true; }
+    else if (c === ')') { regexOk = Boolean(parens.pop()); }
+    else if (c === ']') regexOk = false;
+    else if (c === '{') { braces.push('{'); regexOk = true; }
+    else if (c === '}') {
+      if (braces.pop() === 'tpl') { out.push(c); i++; template(); word = ''; afterDot = false; continue; }
+      regexOk = true; // a block end or an object end: a regex is read only if it closes on the line (see above)
+    } else regexOk = true;
+    afterDot = c === '.';
+    word = '';
+    out.push(c); i++;
+  }
+  return out.join('');
 }
 
 const FORBIDDEN = [
@@ -88,7 +201,7 @@ const FORBIDDEN = [
 ];
 
 for (const f of designFiles) {
-  const src = stripComments(readFileSync(f, 'utf8'));
+  const src = canonicalSource(readFileSync(f, 'utf8'));
   for (const [re, label] of FORBIDDEN) if (re.test(src)) fail(`${rel(f)}: forbidden in design layer: ${label}`);
 
   // aliases of window.ShopCommerce
@@ -223,7 +336,7 @@ function checkCsp(headersText, indexHtml, tpl = true) {
 // through esc() (text), content.text/richText/link/image. A heuristic scan, not a proof: the server sanitiser and the
 // CSP are the other lines of defence.
 for (const f of designFiles) {
-  const src = stripComments(readFileSync(f, 'utf8'));
+  const src = canonicalSource(readFileSync(f, 'utf8'));
   if (/\b(eval|Function)\s*\(|\bdocument\.write(ln)?\s*\(|\bcreateContextualFragment\b/.test(src)) fail(`${rel(f)}: eval / new Function / document.write / createContextualFragment are forbidden in the design layer`);
   if (/(innerHTML|outerHTML)\s*[+]?=[^;\n]*\bcontent\.(get|all)\(|insertAdjacentHTML\([^;\n]*\bcontent\.(get|all)\(/.test(src)) fail(`${rel(f)}: content values must not be assigned to innerHTML; use ShopCommerce.content.text/richText/link/image or esc()`);
 }
@@ -234,19 +347,39 @@ for (const f of designFiles) {
 // delegation depends on them), so DOM traversal is NOT scanned here (the admin scan, which has an own-element rule, does).
 // What no storefront screen needs: the dialog tag, the popover / inert attributes, the dialog / popover / fullscreen /
 // pointer-lock methods, and programmatic clicks, events or submits. Comments are stripped; strings are scanned on purpose.
+// A tag carrying one of the attributes below (a "<" ... ">" run). Linear: a "<" inside an unfinished tag starts nothing new, so a line of
+// 200k "<" costs one pass (the regex <[^>]*\s(...) it replaces rescanned to the end of the line from every "<").
+function tagHasDesignAttr(text) {
+  const re = /^<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)/i;
+  let pos = 0;
+  while (pos < text.length) {
+    const lt = text.indexOf('<', pos);
+    if (lt < 0) return false;
+    const gt = text.indexOf('>', lt);
+    if (re.test(gt < 0 ? text.slice(lt) : text.slice(lt, gt + 1))) return true;
+    if (gt < 0) return false;
+    pos = gt + 1;
+  }
+  return false;
+}
 const D12_RULES = [
   [/\b(showModal|showPopover|hidePopover|togglePopover|requestFullscreen|requestPointerLock|exitFullscreen|exitPointerLock)\b/, 'dialog/popover/fullscreen/pointer-lock API (D12)'],
   [/<\s*dialog\b|createElement\(\s*['"]dialog['"]/i, 'the dialog tag (D12)'],
   // attribute / property forms only (a tag attribute, .popover, { popover: ... }, setAttribute('popover')), not the word inside copy text
-  [/<[^>]*\s(popover|inert|popovertarget|popovertargetaction|commandfor|command)(\s|=|>|\/)|\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i, 'the popover / inert attribute (D12)'],
-  [/\.\s*(click|submit|requestSubmit|dispatchEvent)\s*\(/, 'programmatic click / submit / dispatchEvent (D12)'],
-  [/\bnew\s+(Mouse|Keyboard|Pointer|Input|Focus|Touch|Wheel|Custom|UI|Submit)?Event\b/, 'constructing a synthetic event (D12)'],
+  [{ test: (ln) => tagHasDesignAttr(ln) || /\.\s*(popover|inert|popoverTargetElement)\b|['"]?\b(popover|inert|popovertarget|popoverTargetElement)['"]?\s*:|setAttribute\(\s*['"](popover|inert|popovertarget|commandfor)/i.test(ln) }, 'the popover / inert attribute (D12)'],
+  [/\.\s*(click|submit|requestSubmit|dispatchEvent)\s*\(/, 'programmatic click / submit / dispatchEvent (D12)', true],
+  [/\bnew\s+(Mouse|Keyboard|Pointer|Input|Focus|Touch|Wheel|Custom|UI|Submit)?Event\b/, 'constructing a synthetic event (D12)', true],
   [/confirm-(yes|no|ok|cancel|warning|detail)\b/i, 'a core confirmation control id (D12)']
 ];
 for (const f of designFiles) {
-  // comments blanked with their newlines kept, so the reported line numbers are the real ones
-  const lines = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/(^|[\s;{}(),])\/\/[^\n]*/g, '$1').split('\n');
-  lines.forEach((ln, i) => { for (const [re, label] of D12_RULES) if (re.test(ln)) fail(`${rel(f)}:${i + 1}: forbidden in design layer: ${label}`); });
+  // comments blanked with their newlines kept and escapes decoded (canonicalSource), so the reported line numbers are the real ones.
+  // The call and constructor rules are matched on the whole text (x.click\n() and new\nMouseEvent are the same code as on one line); the
+  // attribute rules stay per line (their [^>]* would otherwise run across unrelated lines).
+  const text = canonicalSource(readFileSync(f, 'utf8')), lines = text.split('\n');
+  for (const [re, label, whole] of D12_RULES) {
+    if (whole) { const m = re.exec(text); if (m) fail(`${rel(f)}:${text.slice(0, m.index).split('\n').length}: forbidden in design layer: ${label}`); }
+    else lines.forEach((ln, i) => { if (re.test(ln)) fail(`${rel(f)}:${i + 1}: forbidden in design layer: ${label}`); });
+  }
 }
 
 /* ---------- 6: hash manifest ---------- */
