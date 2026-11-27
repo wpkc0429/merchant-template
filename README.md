@@ -8,7 +8,7 @@ inside a fenced "design layer".
 
 * `CLAUDE.md`: rules for design sessions (AI) and, separately, for the human maintainers of the locked core.
 * `docs/TEMPLATE-NOTES.md`: guide for adapting an existing storefront, every locked-code change, known limitations, open decisions.
-* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline, `v0.2.0` = the 2026-11-25 decisions); `template.json` holds the version.
+* `docs/CORE-CHANGELOG.md`: versioned core changes (`v0.1.0` = baseline, `v0.2.0` = the 2026-11-25 decisions, `v0.5.0` = design history, hardening, profile page; read its MIGRATION section before the first sync: a merchant repo needs `merchant.headers.json` first); `template.json` holds the version (currently 0.5.0).
 * `docs/DECISIONS.md`: the standing decisions (strict CSP is a deployment requirement, `admin/styles.css` stays locked, fixed
   warnings in irreversible confirmations, locked-core changes are human-reviewed, merchant repos come from `new-merchant.mjs` and
   syncs from a tag only, the content schema is registered by a human only).
@@ -148,6 +148,8 @@ never `config.js`, `wrangler.jsonc`, `.gitignore`); runs the template's own guar
 restores everything if verification fails. If the new core needs the design layer to adopt something (a new `ctx`
 function, a new config key, a removal), it stops with a "design-layer action needed" notice taken from
 `docs/CORE-CHANGELOG.md` and from the `public-api.json` diffs.
+
+**Syncing to v0.5.0 or later from an older repo:** a merchant repo made before v0.5.0 must first create and fill `merchant.headers.json` (its own API and image origins) and render `public/_headers` with the template's `scripts/render-headers.mjs`, then sync with `--yes --ack-design-actions`. The exact steps, the deploy requirements (CSP hash for the admin import map, `/deny/`, encoded-slash refusal) and the known limits are in the v0.5.0 MIGRATION section of `docs/CORE-CHANGELOG.md`.
 
 ## Tests
 

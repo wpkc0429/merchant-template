@@ -24,12 +24,12 @@ test('D13 is recorded whole in docs/DECISIONS.md, newest first, and names what i
   assert.match(body.trim(), /\.$/, 'the entry ends with a full stop (not cut off)');
 });
 
-test('CORE-CHANGELOG has a clearly marked UNRELEASED v0.5.0 section; template.json is NOT bumped; the section does not block a sync', async () => {
+test('CORE-CHANGELOG has a dated v0.5.0 section; template.json is 0.5.0; the section does not block a sync', async () => {
   const log = f('docs/CORE-CHANGELOG.md');
-  assert.match(log, /^## v0\.5\.0 \(UNRELEASED/m);
+  assert.match(log, /^## v0\.5\.0 \(2026-11-28\)$/m);
   assert.ok(log.indexOf('## v0.5.0') < log.indexOf('## v0.4.2'), 'newest first');
-  assert.match(log, /^Design-layer action: none yet; the three ctx\.data functions are additive$/m);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
+  assert.match(log, /^Design-layer action: none; the three ctx\.data functions are additive$/m);
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0');
   const { designActions } = await import('../scripts/sync-core.mjs');
   assert.deepEqual(designActions({ fromVersion: '0.4.1', toVersion: '0.4.2', changelogText: log, apiPairs: [] }).filter((a) => a.startsWith('v0.5.0')), []);
 });

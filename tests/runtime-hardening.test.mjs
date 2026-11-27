@@ -23,8 +23,8 @@ test('D18 is recorded (newest first) with the owner approval, the five items, th
   assert.match(body.trim(), /\.$/);
   const cl = f('docs/CORE-CHANGELOG.md');
   assert.match(cl, /decision D18/);
-  assert.match(cl, /UNRELEASED/);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2', 'template.json is bumped only by the release PR');
+  assert.doesNotMatch(cl, /UNRELEASED/);
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0', 'template.json carries the release version');
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /Runtime hardening \(decision D18/);
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /Preview hosts: what the operator sets/);
   assert.match(f('admin/README.md'), /ADMIN_PREVIEW_ORIGINS/);

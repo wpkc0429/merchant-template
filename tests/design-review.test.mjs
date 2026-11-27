@@ -23,11 +23,11 @@ test('D14 is recorded whole in docs/DECISIONS.md, newest first, and names the ap
   assert.match(body.trim(), /\.$/, 'ends with a full stop (not cut off)');
 });
 
-test('CORE-CHANGELOG describes step 2 under the unreleased v0.5.0; template.json is NOT bumped', () => {
+test('CORE-CHANGELOG describes step 2 under v0.5.0', () => {
   const log = f('docs/CORE-CHANGELOG.md');
-  assert.match(log, /^## v0\.5\.0 \(UNRELEASED/m);
+  assert.match(log, /^## v0\.5\.0 \(2026-11-28\)$/m);
   assert.ok(log.includes('Design history, step 2 of 4 (decision D14'));
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2');
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0');
 });
 
 test('ctx: exactly the three actions were added; ctx.ui and every other namespace is unchanged', () => {

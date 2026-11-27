@@ -24,9 +24,9 @@ test('D19 is recorded (newest first) with the owner approval, the guard rule cha
   assert.match(body.trim(), /\.$/);
   const cl = f('docs/CORE-CHANGELOG.md');
   assert.match(cl, /decision D19/);
-  assert.match(cl, /UNRELEASED/);
+  assert.doesNotMatch(cl, /UNRELEASED/);
   assert.match(cl, /Design-layer action: none; no design file in this template imports outside/);
-  assert.equal(JSON.parse(f('template.json')).version, '0.4.2', 'template.json is bumped only by the release PR');
+  assert.equal(JSON.parse(f('template.json')).version, '0.5.0', 'template.json carries the release version');
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /Import-map isolation \(decision D19/);
   assert.match(f('admin/docs/AI-EDIT-SERVICE-NOTES.md'), /decision D19/);
   assert.match(f('admin/README.md'), /Firefox 與 Safari \*\*未驗證/);
