@@ -47,7 +47,9 @@ import vm from 'node:vm';
 import { validateConfig, renderForRoot, parseConfigText, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PUB = path.join(ROOT, 'public');
+// HTML comments the way the browser ends them (D23): <!--> and <!---> are empty comments, and a comment ends at --> OR --!> (the tokenizer's "comment end bang" state)
+const HTML_COMMENT = /<!--(?:-?>|[\s\S]*?(?:-->|--!>))/g;
+const PUB =path.join(ROOT, 'public');
 const MANIFEST = path.join(ROOT, 'scripts', 'commerce.manifest.json');
 const TEMPLATE_JSON = path.join(ROOT, 'template.json');
 const rel = (f) => path.relative(ROOT, f).split(path.sep).join('/');
@@ -322,7 +324,7 @@ function checkCsp(headersText, indexHtml, tpl = true) {
       else if ((dirs.get('form-action') || []).some((v) => /^\*$|^https?:$|^data:$/i.test(v))) errors.push('CSP form-action must list explicit hosts (no wildcard or bare scheme)');
     }
   }
-  const html = String(indexHtml || '').replace(/<!--[\s\S]*?-->/g, '');
+  const html = String(indexHtml || '').replace(HTML_COMMENT, '');
   const inline = /<script(?![^>]*\bsrc\s*=)[^>]*>/i.test(html) || /\son[a-z]+\s*=\s*["']/i.test(html);
   if (inline) (tpl ? errors : warnings).push('public/index.html has an inline <script> or an on*= handler: the strict CSP in public/_headers blocks it. Use an external file (see commerce/local-config.js); a merchant repo made from v0.1.0 must replace its inline localhost-override script with <script src="commerce/local-config.js"></script>');
   return { errors, warnings };
@@ -375,7 +377,7 @@ function checkCsp(headersText, indexHtml, tpl = true) {
 {
   const ip = path.join(PUB, 'index.html');
   if (existsSync(ip)) {
-    const srcs = [...readFileSync(ip, 'utf8').replace(/<!--[\s\S]*?-->/g, '').matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
+    const srcs = [...readFileSync(ip, 'utf8').replace(HTML_COMMENT, '').matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
     const order = ['commerce/api.js', 'commerce/cart.js', 'commerce/content-allowlist.js', 'commerce/content.js', 'commerce/checkout.js', 'content.js', 'app.js'];
     let last = -1;
     for (const s of order) {
@@ -452,12 +454,12 @@ for (const f of designFiles) {
 //    a case label, and a destructuring from a non-global object (const { fetch: f } = api) are data, not a reference. const { fetch: f } = window is refused.
 //  * exact string values, after joining 'fe' + 'tch': window['fetch'], self["sendBeacon"], Reflect.get(window, 'fetch') (escapes are decoded by canonicalSource);
 //  * new Image / Audio / Worker / SharedWorker (also new window.Image), RTCPeerConnection, navigator.serviceWorker, window.open / window?.open / (window).open /
-//    a bare open(...) call, dynamic import() / import.meta, createElement of script / link / iframe / meta / object / embed / base, an a/area ping attribute;
+//    a bare open(...) call (unless a function open is declared), open / location / history destructured, aliased or read by string out of a global object (D23), dynamic import() / import.meta, createElement of script / link / iframe / meta / object / embed / base, an a/area ping attribute;
 //  * aliasing a global object (const w = window; g = globalThis; ...): the alias creation is refused, because everything after it is invisible to a lexical scan;
 //  * navigation: location = ..., location.href = ..., location.assign(...) / replace(...) (also window. / document. / top. prefixed) unless every string literal
 //    in the target starts with '#' (an in-page hash route, which the storefront uses).
 // NOT detected (residual, the CSP is the fence): a global reached through a function result or a parameter ((function (w) {...})(window)), computed names built from
-// non-literals, a.b.c chains such as document.defaultView.fetch, <meta http-equiv=refresh> or <a href> built as text, bracket access with the string 'open'.
+// non-literals, a.b.c chains such as document.defaultView.fetch, <meta http-equiv=refresh> or <a href> built as text, bracket access whose name is built from a non-literal.
 // Core files (public/commerce/**, config.js) are not design files and are exempt, exactly as for the rules above.
 const NET_NAMES = 'fetch|sendBeacon|WebSocket|EventSource|XMLHttpRequest';
 const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames']);
@@ -497,7 +499,7 @@ function valueText(s, from, call) {
   return s.slice(from, m ? from + m.index : from + 400);
 }
 // Names the file itself declares (variables, destructured names, functions, classes, parameters, catch bindings, arrow parameters): a local
-// "parent", "top", "self" or "open" is not the browser global. Conservative: any declaration anywhere in the file exempts the name in the whole file.
+// "parent", "top" or "self" is not the browser global (for "open" only a function declaration counts, D23). Conservative: any declaration anywhere in the file exempts the name in the whole file.
 function declaredNames(masked) {
   const names = new Set();
   const add = (s) => { for (const m of String(s).matchAll(/[\w$]+/g)) names.add(m[0]); };
@@ -561,14 +563,36 @@ function storefrontNetworkFindings(source) {
   // aliasing a global object (const w = window): refused unless the name on the right is declared in this file (a local "parent", "top" or "self")
   const aliasRe = new RegExp('(?<![\\w$.])[\\w$]+\\s*=(?!=)\\s*\\(?\\s*(' + GLOBAL_RE + ')\\s*\\)?\\s*(?:[;,)\\r\\n]|$)', 'gm');
   for (const m of masked.matchAll(aliasRe)) if (!declared.has(m[1])) { found.push([m.index, 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']); break; }
-  // a bare open(...) call is window.open, unless open is declared in this file or this is a method definition ({ open() { ... } })
-  if (!declared.has('open')) {
+  // a bare open(...) call is window.open, unless this file declares a genuine FUNCTION named open (function open() {...}) or the call is a method
+  // definition ({ open() { ... } }). D23: a variable, parameter, destructured or arrow-valued binding named open no longer exempts the file
+  // (const open = window['op' + 'en'] used to).
+  if (!/(?<![\w$.])function\*?\s+open\s*\(/.test(masked)) {
     for (const m of masked.matchAll(/(?<![\w$.])open\s*\(/g)) {
       const close = groupEnd(masked, m.index + m[0].length);
       if (close >= 0 && /^\s*\{/.test(masked.slice(close + 1, close + 40))) continue;   // method definition
       found.push([m.index, 'a bare open(...) call (window.open)']); break;
     }
   }
+  // D23: open / location / history taken OUT of a global object. Destructuring ({ open } = window, { open: o, ...rest } = self, { ["op" + "en"]: o } = top),
+  // an alias of window.location / window.history / location / history, and a bracket or Reflect.get access with the exact string.
+  const joinedStr = joinStringConcats(withStrings);
+  const KEYS = 'open|location|history';
+  const patternRe = new RegExp(String.raw`(?<![\w$.])(?:${KEYS})(?![\w$])|["'\x60](?:${KEYS})["'\x60]|\[|\.\.\.`);
+  const destructRe = new RegExp(String.raw`\}\s*=(?!=)\s*\(?\s*(${GLOBAL_RE})\s*\)?\s*(?:[;,)\r\n]|$)`, 'g');
+  for (const m of joinedStr.matchAll(destructRe)) {
+    if (declared.has(m[1])) continue;
+    let d = 0, k = m.index;
+    for (; k >= 0 && m.index - k < 2000; k--) { const c = joinedStr[k]; if (c === '}') d++; else if (c === '{') { d--; if (d === 0) break; } }
+    const pattern = k >= 0 && d === 0 ? joinedStr.slice(k, m.index + 1) : '';
+    if (patternRe.test(pattern)) { found.push([m.index, `destructuring open / location / history (or a computed or rest pattern) out of ${m[1]} (use the property directly)`]); break; }
+  }
+  const aliasKeyRe = new RegExp(String.raw`(?<![\w$.])[\w$]+\s*=(?!=)\s*\(?\s*(?:(?:${GLOBAL_RE}|document)\s*\)?\s*(?:\?\.|\.)\s*)?(location|history)\s*\)?\s*(?:[;,)\r\n]|$)`, 'gm');
+  for (const m of masked.matchAll(aliasKeyRe)) {
+    if (declared.has(m[1]) && !/(?:window|globalThis|self|top|parent|frames|document)\s*\)?\s*(?:\?\.|\.)/.test(m[0])) continue;
+    found.push([m.index, `aliasing ${m[1]} (const l = window.${m[1]}): the alias hides every later use from a lexical scan`]); break;
+  }
+  const brRe = new RegExp(String.raw`(?<![\w$.])(?:${GLOBAL_RE})\s*\)?\s*(?:\?\.)?\s*\[\s*(["'\x60])(?:${KEYS})\1\s*\]|(?<![\w$.])Reflect\s*\.\s*get\s*\(\s*(?:${GLOBAL_RE})\s*,\s*(["'\x60])(?:${KEYS})\2`, 'g');
+  for (const m of joinedStr.matchAll(brRe)) { found.push([m.index, 'window["open"] / ["location"] / ["history"] (computed access to a navigation API)']); break; }
   const textRules = [
     [/\bcreateElement\s*\(\s*(["'`])(?:script|link|iframe|meta|object|embed|base)\1/i, 'createElement of script / link / iframe / meta / object / embed / base'],
     [/<(?:a|area)\b[^>]*\sping\s*=|setAttribute\(\s*["']ping["']/i, 'the ping attribute (a request to any origin when the link is followed)'],

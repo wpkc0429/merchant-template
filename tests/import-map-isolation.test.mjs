@@ -14,7 +14,7 @@ const MAP_RE = /<script type="importmap">([^<]*)<\/script>/;
 test('D19 is recorded (newest first) with the owner approval, the guard rule change, the limits and the unverified browsers', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[1], 'D21'); assert.equal(ids[2], 'D20'); assert.equal(ids[3], 'D19'); assert.equal(ids[4], 'D18');
+  assert.equal(ids[2], 'D21'); assert.equal(ids[3], 'D20'); assert.equal(ids[4], 'D19'); assert.equal(ids[5], 'D18');
   const start = lines.findIndex((l) => l.startsWith('### D19.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');

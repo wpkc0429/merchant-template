@@ -25,8 +25,9 @@ export async function checkIsolation() {
   if (supports !== true) return { ok: false, reason: "unsupported" };
   try { await import("./allowed/ok.js"); } catch { return { ok: false, reason: "control" }; }
   try {
-    const res = await fetch(new URL("./target.js", import.meta.url).href, { cache: "no-store", credentials: "same-origin" });
-    if (res.status !== 200 || !/javascript/i.test(res.headers.get("content-type") || "")) return { ok: false, reason: "unverifiable" };
+    const res = await fetch(new URL("./target.js", import.meta.url).href, { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+    // D23: redirect "manual": a redirect (an opaque response, status 0) is "unverifiable" and never followed to some other file that happens to be JavaScript
+    if (res.type === "opaqueredirect" || res.redirected || res.status !== 200 || !/javascript/i.test(res.headers.get("content-type") || "")) return { ok: false, reason: "unverifiable" };
   } catch { return { ok: false, reason: "unverifiable" }; }
   let reached = false;
   try { await import("./target.js"); reached = true; } catch { /* expected: the map sends it to /deny/ */ }
