@@ -49,6 +49,7 @@ const SELECTOR_METHODS = new Set(["querySelector", "querySelectorAll"]);
 const CLIMB_METHODS = new Set(["closest"]);
 /** Whole-string values that can only be used to build or reach the above by name (computed access is also refused). */
 /** "dialog" is refused only as a call argument (h("dialog")): role: "dialog" is just an ARIA value. */
+const POPOVER_INERT_LOWER = new Set([...POPOVER_INERT].map((x) => x.toLowerCase()));
 const DIALOG_STRINGS = new Set(["dialog", "popover", "inert"]);
 const NAMED_API_STRINGS = new Set([...DIALOG_API, ...SYNTHETIC_INPUT, ...DOM_ESCAPE, ...SELECTOR_METHODS, ...CLIMB_METHODS, "showDialog", "confirmDialog"]);
 /** Core confirmation controls named in a string (ids, test ids, selectors): "confirm-yes", "confirm-warning", ... */
@@ -58,83 +59,272 @@ const HTML_IN_STRING = /<\s*\/?\s*(script|iframe|frame|object|embed|link|meta|st
 const SCHEME_IN_STRING = /(javascript|vbscript)\s*:|data\s*:\s*text\/html|:\/\//i;
 
 const KEYWORDS_BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "yield", "await", "instanceof"]);
-const PUNCT3 = ["...", "===", "!=="];
-const PUNCT2 = ["?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "*=", "/=", "%=", "**", "<<", ">>"];
+/** Punctuators, longest first (so `&&=`, `>>>=`, `**=`, `?.` ... are one token; a missing entry would split an operator into pieces the rules misread). */
+const PUNCT = [">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"];
+/** Assignment operators (a token right after `ctx` that changes it). */
+const ASSIGN_OPS = new Set(["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="]);
 
-/** Minimal JS lexer: strings, templates (with nested expressions), comments, regex literals, numbers, identifiers, punctuators. */
-export function lex(src) {
+// ── THE NORMALISATION CONTRACT (decision D17) ──
+// Every rule compares CANONICAL values, never the spelling in the source:
+//  * an identifier or property name token (t "id") has v = its escape-decoded name: \uXXXX and \u{...} are decoded wherever they
+//    occur in the name (JavaScript treats `fetch` and `fetch` as the same identifier); non-ASCII ID_Start / ID_Continue
+//    characters, ZWNJ and ZWJ belong to a name; NO Unicode normalisation is applied (JavaScript compares code points).
+//    `raw` keeps the source spelling, `esc` says whether an escape was used;
+//  * a string literal token (t "str") has v = its COOKED value: \x, \u, \u{}, legacy octal, \0, \b \t \n \v \f \r, line
+//    continuations and identity escapes are resolved, so "fetch" and "fetch" are the same string;
+//  * a template literal chunk (t "tpl") has v = its cooked value (same cooking); `raw` keeps the source text;
+//  * line terminators are \n, \r, \r\n, U+2028 and U+2029 everywhere (they end a // comment and an unterminated string and
+//    count lines); whitespace is whatever JavaScript's \s covers (NBSP, BOM, the Zs spaces);
+//  * a number token never swallows a following `.name` (1..constructor is num `1.`, `.`, id `constructor`);
+//  * `/` is a regex start or a division by context (paren and brace tracking). The one place where the context cannot be known
+//    (a `}` that may end a block or an object literal, then `/`) is lexed BOTH ways (lexAll) and every rule runs on both;
+//  * compound assignments (`&&=`, `||=`, `??=`, ...) are single punctuators.
+// Malformed escapes never throw and never loop: they decode as leniently as possible (the code would be a SyntaxError when
+// loaded, so it cannot run). HTML-like comments (`<!--`, `-->`) are NOT comments here (a syntax error in a module), so their
+// content is scanned like any other code. A hashbang line at the very start IS a comment.
+const ID_START = /[\p{ID_Start}_$]/u, ID_PART = /[\p{ID_Continue}$\u200c\u200d]/u;
+const isLT = (c) => c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029";
+const HEX = /^[0-9a-fA-F]+$/;
+const SIMPLE_ESC = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v" };
+
+/** Reads the escape at src[j] === "\\" (inside a string or template). Returns { s: cooked text, next: index after it, lines: line terminators consumed, bad }. */
+function cookEscape(src, j) {
+  const d = src[j + 1];
+  if (d === undefined) return { s: "", next: j + 1, lines: 0 };
+  if (d === "\r") return { s: "", next: src[j + 2] === "\n" ? j + 3 : j + 2, lines: 1 };
+  if (d === "\n" || d === "\u2028" || d === "\u2029") return { s: "", next: j + 2, lines: 1 };
+  if (d === "u") {
+    if (src[j + 2] === "{") {
+      const e = src.indexOf("}", j + 3), hex = e < 0 ? "" : src.slice(j + 3, e);
+      if (HEX.test(hex) && parseInt(hex, 16) <= 0x10ffff) return { s: String.fromCodePoint(parseInt(hex, 16)), next: e + 1, lines: 0 };
+    } else {
+      const hex = src.slice(j + 2, j + 6);
+      if (hex.length === 4 && HEX.test(hex)) return { s: String.fromCharCode(parseInt(hex, 16)), next: j + 6, lines: 0 };
+    }
+    return { s: "u", next: j + 2, lines: 0, bad: true };
+  }
+  if (d === "x") {
+    const hex = src.slice(j + 2, j + 4);
+    if (hex.length === 2 && HEX.test(hex)) return { s: String.fromCharCode(parseInt(hex, 16)), next: j + 4, lines: 0 };
+    return { s: "x", next: j + 2, lines: 0, bad: true };
+  }
+  if (d >= "0" && d <= "7") { // \0 (NUL) and the legacy octal escapes: up to 3 digits when the first is 0-3, else up to 2
+    let k = j + 1, val = 0;
+    const max = d <= "3" ? 3 : 2;
+    while (k < j + 1 + max && src[k] >= "0" && src[k] <= "7") { val = val * 8 + (src.charCodeAt(k) - 48); k++; }
+    return { s: String.fromCharCode(val), next: k, lines: 0 };
+  }
+  if (SIMPLE_ESC[d] !== undefined) return { s: SIMPLE_ESC[d], next: j + 2, lines: 0 };
+  const ch = String.fromCodePoint(src.codePointAt(j + 1));
+  return { s: ch, next: j + 1 + ch.length, lines: 0 };
+}
+
+/** Reads an identifier name (or `#private` name) at src[i]. Returns { v: canonical name, raw, end, esc } or null when no name starts here. */
+function readName(src, i) {
+  const n = src.length;
+  let j = i, v = "", esc = false, first = true;
+  if (src[j] === "#") { v = "#"; j++; }
+  while (j < n) {
+    let ch, len;
+    if (src[j] === "\\") {
+      if (src[j + 1] !== "u") break;
+      const e = cookEscape(src, j);
+      if (e.bad) break;
+      ch = e.s; len = e.next - j; esc = true; // a decoded character that is not a legal name character is a SyntaxError in JS: still decoded
+    } else {
+      ch = String.fromCodePoint(src.codePointAt(j)); len = ch.length;
+      if (!(first ? ID_START : ID_PART).test(ch)) break;
+    }
+    v += ch; j += len; first = false;
+  }
+  if (j === i) return null;
+  return { v, raw: src.slice(i, j), end: j, esc };
+}
+
+/** Number literal at src[i] (a digit, or "." followed by a digit). Never swallows `.name`: 1..constructor is `1.` `.` `constructor`. */
+function readNumber(src, i) {
+  const n = src.length;
+  let j = i;
+  const digits = (re) => { while (j < n && re.test(src[j])) j++; };
+  if (src[j] === "0" && /[xXoObB]/.test(src[j + 1] || "")) { j += 2; digits(/[0-9a-fA-F_]/); if (src[j] === "n") j++; return j; }
+  digits(/[0-9_]/);
+  if (src[j] === "n") return j + 1;
+  if (src[j] === ".") { j++; digits(/[0-9_]/); }
+  if (/[eE]/.test(src[j] || "") && (/[0-9]/.test(src[j + 1] || "") || (/[+-]/.test(src[j + 1] || "") && /[0-9]/.test(src[j + 2] || "")))) { j += 2; digits(/[0-9_]/); }
+  return j;
+}
+
+/** Operand-end tokens: a `/` after them is a division, and a `[` after them is a member access. */
+const endsOperand = (t) => Boolean(t) && (t.t === "num" || t.t === "str" || t.t === "regex" || (t.t === "tpl" && t.end) ||
+  (t.t === "id" && !KEYWORDS_BEFORE_REGEX.has(t.v)) || (t.t === "punct" && (t.v === "]" || (t.v === ")" && !t.stmtParen) || (t.v === "}" && t.exprEnd === true))));
+
+/**
+ * Minimal JS lexer: strings, templates (with nested expressions), comments, regex literals, numbers, identifiers, punctuators.
+ * `mode` only matters where a `/` follows a `}` that could end a block or an object literal: "div" reads a division, "regex" a
+ * regex. lexAll() runs both when the source has such a place (the returned array has .ambiguous set then).
+ */
+export function lex(src, mode = "div") {
   const toks = [];
   let i = 0, line = 1;
   const n = src.length;
-  const stack = []; // "{" | "tpl"
-  const push = (t, v, extra = {}) => toks.push({ t, v, line, ...extra });
-  const prevSig = () => toks[toks.length - 1];
-  const idStart = /[\p{L}_$]/u, idPart = /[\p{L}\p{N}_$‌‍]/u;
+  const stack = []; // "tpl" | { kind: "block" | "expr" | "amb" }
+  const parens = []; // index in toks of each open "(" (marked .stmt when it follows if / while / for / with / switch / catch)
+  const push = (t, v, extra = {}) => { const tk = { t, v, line, ...extra }; toks.push(tk); return tk; };
+  const last = (back = 1) => toks[toks.length - back];
+  const isDot = (tk) => Boolean(tk) && tk.t === "punct" && (tk.v === "." || tk.v === "?.");
+  toks.ambiguous = false;
+
+  // is a `function` / `class` keyword after this token an EXPRESSION (so the body's "}" ends an operand)?
+  const isExprStart = (tk) => {
+    if (!tk) return false;
+    if (tk.t === "punct") return !(tk.v === ";" || tk.v === "{" || tk.v === "}" || (tk.v === ")" && tk.stmtParen));
+    if (tk.t === "id") return KEYWORDS_BEFORE_REGEX.has(tk.v) && tk.v !== "else" && tk.v !== "do";
+    return false;
+  };
+  const classifyBrace = () => {
+    const p = last();
+    if (!p) return "block";
+    if (p.t === "punct") {
+      if (p.v === ")") {
+        if (p.stmtParen) return "block";
+        let m = (p.open === undefined ? -2 : p.open) - 1; // function expression or declaration, or a method
+        if (toks[m] && toks[m].t === "id" && toks[m].v !== "function") m--;
+        if (toks[m] && toks[m].t === "punct" && toks[m].v === "*") m--;
+        if (toks[m] && toks[m].t === "id" && toks[m].v === "function") {
+          m--;
+          if (toks[m] && toks[m].t === "id" && toks[m].v === "async") m--;
+          return isExprStart(toks[m]) ? "expr" : "block";
+        }
+        return "block"; // method body, get / set body
+      }
+      if (p.v === "=>") return "expr";
+      if (p.v === ";" || p.v === "{" || p.v === "}") return "block";
+      if (p.v === ":") return "amb"; // object value or ternary branch, or a case label / labelled block
+      return "expr";
+    }
+    if (p.t === "id") {
+      if (p.v === "else" || p.v === "do" || p.v === "try" || p.v === "finally") return "block";
+      if (KEYWORDS_BEFORE_REGEX.has(p.v)) return "expr";
+      for (let m = toks.length - 1, c = 0; m >= 0 && c < 60; m--, c++) { // class X extends Y {
+        const t = toks[m];
+        if (t.t === "punct" && (t.v === ";" || t.v === "{" || t.v === "}")) break;
+        if (t.t === "id" && t.v === "class" && !isDot(toks[m - 1])) return isExprStart(toks[m - 1]) ? "expr" : "block";
+      }
+      return "block"; // static { }, a bare block after an identifier statement
+    }
+    return "amb";
+  };
+  const regexAllowed = () => {
+    const p = last();
+    if (!p) return true;
+    if (p.t === "num" || p.t === "str" || p.t === "regex") return false;
+    if (p.t === "tpl") return !p.end;
+    if (p.t === "id") return !isDot(last(2)) && KEYWORDS_BEFORE_REGEX.has(p.v); // `a.in / 2`: a property named like a keyword
+    if (p.v === ")") return Boolean(p.stmtParen);
+    if (p.v === "]") return false;
+    if (p.v === "}") {
+      if (p.exprEnd === true) return false;
+      if (p.exprEnd === false) return true;
+      toks.ambiguous = true;
+      return mode === "regex";
+    }
+    if (p.v === "++" || p.v === "--") return !endsOperand(last(2)); // a++ / 2 is a division, ++/re/.lastIndex a regex
+    return true;
+  };
 
   function readTemplate() { // after the opening backtick or a closing "}" of an expression
-    let text = "";
+    let text = "", raw = "";
     while (i < n) {
       const c = src[i];
-      if (c === "\\") { text += src[i] + (src[i + 1] ?? ""); i += 2; continue; }
-      if (c === "`") { i++; push("tpl", text, { end: true }); return; }
-      if (c === "$" && src[i + 1] === "{") { i += 2; push("tpl", text, { end: false }); stack.push("tpl"); return; }
-      if (c === "\n") line++;
-      text += c; i++;
+      if (c === "\\") { const e = cookEscape(src, i); text += e.s; raw += src.slice(i, e.next); line += e.lines; i = e.next; continue; }
+      if (c === "`") { i++; push("tpl", text, { end: true, raw }); return; }
+      if (c === "$" && src[i + 1] === "{") { i += 2; push("tpl", text, { end: false, raw }); stack.push("tpl"); return; }
+      if (c === "\r") { const crlf = src[i + 1] === "\n"; line++; text += "\n"; raw += crlf ? "\r\n" : "\r"; i += crlf ? 2 : 1; continue; }
+      if (c === "\n" || c === "\u2028" || c === "\u2029") line++;
+      text += c; raw += c; i++;
     }
-    push("tpl", text, { end: true, unterminated: true });
+    push("tpl", text, { end: true, unterminated: true, raw });
   }
 
+  if (src.startsWith("#!")) while (i < n && !isLT(src[i])) i++; // hashbang: a comment, only at the very start
   while (i < n) {
     const c = src[i];
-    if (c === "\n") { line++; i++; continue; }
+    if (c === "\r") { line++; i += src[i + 1] === "\n" ? 2 : 1; continue; }
+    if (c === "\n" || c === "\u2028" || c === "\u2029") { line++; i++; continue; }
     if (/\s/.test(c)) { i++; continue; }
-    if (c === "/" && src[i + 1] === "/") { while (i < n && src[i] !== "\n") i++; continue; }
-    if (c === "/" && src[i + 1] === "*") { const e = src.indexOf("*/", i + 2); const stop = e < 0 ? n : e + 2; for (let k = i; k < stop; k++) if (src[k] === "\n") line++; i = stop; continue; }
+    if (c === "/" && src[i + 1] === "/") { while (i < n && !isLT(src[i])) i++; continue; }
+    if (c === "/" && src[i + 1] === "*") {
+      const e = src.indexOf("*/", i + 2), stop = e < 0 ? n : e + 2;
+      for (let k = i; k < stop; k++) { if (src[k] === "\r") { if (src[k + 1] !== "\n") line++; } else if (src[k] === "\n" || src[k] === "\u2028" || src[k] === "\u2029") line++; }
+      i = stop; continue;
+    }
     if (c === '"' || c === "'") {
-      let j = i + 1, val = "";
-      while (j < n && src[j] !== c && src[j] !== "\n") {
-        if (src[j] === "\\") {
-          const d = src[j + 1];
-          if (d === "u" && src[j + 2] === "{") { const e = src.indexOf("}", j); val += String.fromCodePoint(parseInt(src.slice(j + 3, e), 16) || 63); j = e + 1; continue; }
-          if (d === "u") { val += String.fromCharCode(parseInt(src.slice(j + 2, j + 6), 16) || 63); j += 6; continue; }
-          if (d === "x") { val += String.fromCharCode(parseInt(src.slice(j + 2, j + 4), 16) || 63); j += 4; continue; }
-          val += { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" }[d] ?? d; j += 2; continue;
-        }
-        val += src[j]; j++;
+      const startLine = line;
+      let j = i + 1, val = "", closed = false;
+      while (j < n) {
+        const d = src[j];
+        if (d === c) { closed = true; break; }
+        if (d === "\n" || d === "\r") break; // an unterminated string ends at the line terminator (a SyntaxError in JS)
+        if (d === "\\") { const e = cookEscape(src, j); val += e.s; line += e.lines; j = e.next; continue; }
+        if (d === "\u2028" || d === "\u2029") line++;
+        val += d; j++;
       }
-      push("str", val, { raw: src.slice(i, j + 1) });
-      i = j + 1; continue;
+      const tk = push("str", val, { raw: src.slice(i, closed ? j + 1 : j) });
+      tk.line = startLine;
+      if (!closed) tk.unterminated = true;
+      i = closed ? j + 1 : j; continue;
     }
     if (c === "`") { i++; readTemplate(); continue; }
-    if (c === "{") { stack.push("{"); push("punct", "{"); i++; continue; }
+    if (c === "{") { const kind = classifyBrace(); stack.push({ kind }); push("punct", "{"); i++; continue; }
     if (c === "}") {
       const top = stack.pop();
       if (top === "tpl") { i++; readTemplate(); continue; }
-      push("punct", "}"); i++; continue;
+      const tk = push("punct", "}");
+      tk.exprEnd = top ? (top.kind === "expr" ? true : top.kind === "block" ? false : "amb") : false;
+      i++; continue;
     }
-    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(src[i + 1] || ""))) {
-      let j = i + 1; while (j < n && /[0-9a-zA-Z_.]/.test(src[j])) j++;
-      push("num", src.slice(i, j)); i = j; continue;
+    if (c === "(") {
+      let b = last(), bi = toks.length - 1;
+      if (b && b.t === "id" && b.v === "await" && last(2) && last(2).t === "id" && last(2).v === "for") { b = last(2); bi = toks.length - 2; }
+      const stmt = Boolean(b && b.t === "id" && ["if", "while", "for", "with", "switch", "catch"].includes(b.v) && !isDot(toks[bi - 1]));
+      push("punct", "(", { stmt }); parens.push(toks.length - 1); i++; continue;
     }
-    if (idStart.test(c) || c === "#") {
-      let j = i + 1; while (j < n && idPart.test(src[j])) j++;
-      push("id", src.slice(i, j)); i = j; continue;
+    if (c === ")") {
+      const o = parens.pop();
+      const tk = push("punct", ")");
+      if (o !== undefined) { tk.open = o; tk.stmtParen = Boolean(toks[o].stmt); }
+      i++; continue;
     }
-    if (c === "/") {
-      const p = prevSig();
-      const regexOk = !p || (p.t === "punct" && ![")", "]", "}"].includes(p.v)) || (p.t === "id" && KEYWORDS_BEFORE_REGEX.has(p.v));
-      if (regexOk) {
-        let j = i + 1, inClass = false;
-        while (j < n && src[j] !== "\n") { if (src[j] === "\\") { j += 2; continue; } if (src[j] === "[") inClass = true; else if (src[j] === "]") inClass = false; else if (src[j] === "/" && !inClass) break; j++; }
-        j++; while (j < n && /[a-z]/i.test(src[j])) j++;
+    if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(src[i + 1] || ""))) { const j = readNumber(src, i); push("num", src.slice(i, j)); i = j; continue; }
+    if (c === "#" || c === "\\" || ID_START.test(String.fromCodePoint(src.codePointAt(i)))) {
+      const r = readName(src, i);
+      if (r) { push("id", r.v, { raw: r.raw, ...(r.esc ? { esc: true } : {}) }); i = r.end; continue; }
+      if (c === "#") { push("id", "#"); i++; continue; }
+    }
+    if (c === "/" && regexAllowed()) {
+      let j = i + 1, inClass = false, closed = false;
+      while (j < n && !isLT(src[j])) {
+        if (src[j] === "\\") { j += 2; continue; }
+        if (src[j] === "[") inClass = true; else if (src[j] === "]") inClass = false; else if (src[j] === "/" && !inClass) { closed = true; break; }
+        j++;
+      }
+      if (closed) { // an unterminated regex is not a regex: "/" stays an operator so the rest of the line is not hidden
+        j++; while (j < n && ID_PART.test(src[j])) j++;
         push("regex", src.slice(i, j)); i = j; continue;
       }
     }
-    const three = src.slice(i, i + 3), two = src.slice(i, i + 2);
-    const p = PUNCT3.includes(three) ? three : PUNCT2.includes(two) ? two : c;
+    if (c === "?" && src[i + 1] === "." && /[0-9]/.test(src[i + 2] || "")) { push("punct", "?"); i++; continue; } // a ?.5 : b
+    let p = PUNCT.find((cand) => src.startsWith(cand, i));
+    if (!p) p = String.fromCodePoint(src.codePointAt(i));
     push("punct", p); i += p.length;
   }
   return toks;
+}
+
+/** lex() once, or twice (both readings of an ambiguous `}` then `/`) when the source has such a place. Every rule must run on each result. */
+export function lexAll(src) {
+  const a = lex(src, "div");
+  return a.ambiguous ? [a, lex(src, "regex")] : [a];
 }
 
 const v = (rule, msg, file, line) => ({ rule, msg, file, line });
@@ -181,9 +371,21 @@ const SIMPLE_INDEX = (inner) => {
  * Code files (views, parts). `api` is lib/public-api.json (or null to skip the ctx-name check).
  * `designRelPath` is the path of this file relative to the repo root (e.g. "design/views/home.js").
  */
-export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
+export function scanCode(src, file, opts = {}) {
+  // lexAll: usually one token list; two when a "}" followed by "/" could be read as a block end or an object end (see lex). The rules
+  // run on each reading and the findings are merged, so neither reading can hide code from the other.
+  const seen = new Set(), out = [];
+  for (const toks of lexAll(src)) {
+    for (const f of scanCodeTokens(toks, file, opts)) {
+      const key = `${f.rule}|${f.line}|${f.msg}`;
+      if (!seen.has(key)) { seen.add(key); out.push(f); }
+    }
+  }
+  return out;
+}
+
+function scanCodeTokens(toks, file, { api = null, designRelPath = file } = {}) {
   const out = [];
-  const toks = lex(src);
   const at = (k) => toks[k];
   const isP = (tk, val) => tk && tk.t === "punct" && tk.v === val;
 
@@ -214,6 +416,8 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     }
   }
   for (const n of ["$", "$$", "append", "toast", "copyText", "clear", "busy", "showDialog", "confirmDialog", "applyFieldErrors", "clearFieldErrors", "setFieldError", "showFormError"]) uiNames.delete(n);
+  // index of the "(" that CALLS the name at k, looking through closing parens and an optional-call `?.`: (f)(x), (0, f)(x), f?.(x); 0 when it is not called
+  const callFollows = (k) => { let j = k + 1; while (isP(toks[j], ")")) j++; if (isP(toks[j], "?.") && isP(toks[j + 1], "(")) j++; return isP(toks[j], "(") ? j : 0; };
   const own = new Set(); // const/let/var X = <ctx.ui builder>(...)
   for (let k = 3; k < toks.length; k++) {
     if (!isP(toks[k - 1], "=") || toks[k - 2].t !== "id" || !(toks[k - 3].t === "id" && ["const", "let", "var"].includes(toks[k - 3].v))) continue;
@@ -294,6 +498,7 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     if (tk.t === "str") {
       const sv = tk.v.trim();
       if (DIALOG_STRINGS.has(sv.toLowerCase()) && (sv.toLowerCase() !== "dialog" || isP(prev, "("))) out.push(v("js/dialog-element", `the string "${tk.v}" names the dialog tag or a popover/inert attribute: the core owns every dialog (use ctx.ui.showDialog)`, file, tk.line));
+      else if (POPOVER_INERT_LOWER.has(sv.toLowerCase())) out.push(v("js/popover-inert", `the string "${tk.v}" names the popover or inert attribute / property (el["popoverTargetElement"] is el.popoverTargetElement): refused`, file, tk.line));
       else if (NAMED_API_STRINGS.has(sv)) out.push(v("js/dom-escape", `the string "${tk.v}" names a forbidden DOM API (synthetic input, a dialog method or traversal out of the design's own subtree)`, file, tk.line));
       if (CORE_CONFIRM_REF.test(tk.v)) out.push(v("js/core-ui-selector", `the string "${tk.v.slice(0, 60)}" refers to a core confirmation control`, file, tk.line));
       if (BANNED_STRINGS.has(tk.v.trim())) out.push(v("js/banned-string", `the string "${tk.v}" names a forbidden API`, file, tk.line));
@@ -317,7 +522,7 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     if (POPOVER_INERT.has(name)) { out.push(v("js/popover-inert", `"${name}" is not allowed: the popover and inert attributes and properties are refused`, file, tk.line)); continue; }
     if (SYNTHETIC_INPUT.has(name)) { out.push(v("js/synthetic-input", `"${name}" is not allowed: design code may not dispatch or construct events or request a submit`, file, tk.line)); continue; }
     if (DOM_ESCAPE.has(name) && !isObjectLiteralKey(k)) { out.push(v("js/dom-escape", `"${name}" is not allowed: design code may not reach elements outside its own subtree`, file, tk.line)); continue; }
-    if (afterDot && (name === "show" || name === "close") && isP(next, "(")) { out.push(v("js/dialog-api", `.${name}( is refused (it opens or closes a dialog); close a ctx.ui.showDialog dialog through the { close } argument of its action`, file, tk.line)); continue; }
+    if (afterDot && (name === "show" || name === "close") && callFollows(k)) { out.push(v("js/dialog-api", `.${name}( is refused (it opens or closes a dialog); close a ctx.ui.showDialog dialog through the { close } argument of its action`, file, tk.line)); continue; }
     if (afterDot && name === "submit" && !coreSubmit(k)) { out.push(v("js/synthetic-input", ".submit is refused (it submits a form programmatically)", file, tk.line)); continue; }
     if (afterDot && name === "click" && !fileInputReceiver(k)) { out.push(v("js/synthetic-input", ".click is allowed only on a hidden file input this file created itself: const f = h('input', { type: 'file' }); f.click()", file, tk.line)); continue; }
     if (afterDot && CLIMB_METHODS.has(name)) { out.push(v("js/dom-escape", `.${name}( climbs out of the design's own subtree and is refused: keep a reference to the element you need`, file, tk.line)); continue; }
@@ -342,7 +547,7 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     }
 
     // setTimeout("code") / setInterval("code")
-    if ((name === "setTimeout" || name === "setInterval") && isP(next, "(") && at(k + 2) && (at(k + 2).t === "str" || at(k + 2).t === "tpl")) {
+    if ((name === "setTimeout" || name === "setInterval") && callFollows(k) && at(callFollows(k) + 1) && (at(callFollows(k) + 1).t === "str" || at(callFollows(k) + 1).t === "tpl")) {
       out.push(v("js/timer-string", `${name} with a string argument is code injection`, file, tk.line));
     }
     // form submission targets are not the design layer's business
@@ -360,12 +565,15 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
   for (let k = 1; k < toks.length; k++) {
     if (!isP(toks[k], "[")) continue;
     const p = toks[k - 1];
-    const isMember = (p.t === "id" && !KEYWORDS_BEFORE_REGEX.has(p.v) && !["return", "const", "let", "var", "export", "default", "in", "of"].includes(p.v)) || isP(p, ")") || isP(p, "]") || p.t === "str" || p.t === "tpl";
+    // "?.[" is a member access too (a?.[x + y] is as computed as a[x + y]); so is a number, a regex or a closed template before "[", and the "}" of an object literal or function expression
+    const isMember = (p.t === "id" && !KEYWORDS_BEFORE_REGEX.has(p.v) && !["return", "const", "let", "var", "export", "default", "in", "of"].includes(p.v)) || isP(p, ")") || isP(p, "]") || isP(p, "?.") || (isP(p, "}") && p.exprEnd === true) || p.t === "str" || p.t === "num" || p.t === "regex" || (p.t === "tpl" && p.end);
     if (!isMember) continue; // array literal
     let depth = 1, j = k + 1;
     while (j < toks.length && depth) { if (isP(toks[j], "[")) depth++; else if (isP(toks[j], "]")) depth--; j++; }
     const inner = toks.slice(k + 1, j - 1);
     if (inner.length === 1 && inner[0].t === "str" && ["click", "submit", "show", "close", "$", "$$", "showDialog", "confirmDialog", "closest"].includes(inner[0].v)) out.push(v("js/synthetic-input", `computed access to ["${inner[0].v}"] is refused (it can click, submit, open or close)`, file, toks[k].line));
+    if (inner.length === 1 && inner[0].t === "str" && DOM_ESCAPE_DOT.has(inner[0].v)) out.push(v("js/dom-escape", `computed access to ["${inner[0].v}"] reaches the window and is refused (as .${inner[0].v} is)`, file, toks[k].line));
+    if (inner.length === 1 && inner[0].t === "str" && /^on[a-z]+$/.test(inner[0].v) && isP(toks[j], "=")) out.push(v("js/event-handler-assignment", `assigning ["${inner[0].v}"] is refused (use h({ ${inner[0].v}: fn }) or addEventListener)`, file, toks[k].line));
     if (!inner.length || !SIMPLE_INDEX(inner)) out.push(v("js/computed-access", "computed member access with a non-trivial expression is refused (use a plain index, identifier or string literal)", file, toks[k].line));
   }
 
@@ -391,13 +599,20 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
     const braceDepth = new Array(toks.length).fill(0);
     let d = 0;
     toks.forEach((t, i) => { if (isP(t, "{")) d++; braceDepth[i] = d; if (isP(t, "}")) d--; });
+    // the member called on Object at toks[k]: Object.x(, Object?.x(, Object["x"]( or Object?.["x"]( -> { name, open: index of the "(" } or null
+    const objectMember = (k) => {
+      let j = k + 1, name = null;
+      if (isP(toks[j], ".") || isP(toks[j], "?.")) { if (toks[j + 1] && toks[j + 1].t === "id") { name = toks[j + 1].v; j += 2; } else if (isP(toks[j], "?.") && isP(toks[j + 1], "[")) j++; else return null; }
+      if (name === null) { if (isP(toks[j], "[") && toks[j + 1] && toks[j + 1].t === "str" && isP(toks[j + 2], "]")) { name = toks[j + 1].v; j += 3; } else return null; }
+      return isP(toks[j], "(") ? { name, open: j } : null;
+    };
     const closeOf = (i) => { let dd = 0; for (let j = i; j < toks.length; j++) { if (isP(toks[j], "(")) dd++; else if (isP(toks[j], ")") && --dd === 0) return j; } return -1; };
     for (let k = 0; k < toks.length; k++) {
       const tk = toks[k];
       if (tk.t === "id" && tk.v === "ctx" && !isP(toks[k - 1], ".") && !isP(toks[k - 1], "?.")) {
         const p = toks[k - 1];
         if (p && p.t === "id" && ["const", "let", "var", "function", "class"].includes(p.v)) out.push(v("js/ctx-shadow", "declaring another `ctx` hides the real one from the scan; use another name", file, tk.line));
-        else if (isP(toks[k + 1], "=") && !isP(toks[k + 1], "==")) out.push(v("js/ctx-shadow", "assigning to `ctx` is refused", file, tk.line));
+        else if (toks[k + 1] && toks[k + 1].t === "punct" && ASSIGN_OPS.has(toks[k + 1].v)) out.push(v("js/ctx-shadow", "assigning to `ctx` is refused", file, tk.line));
         else if (isP(toks[k + 1], "=>")) out.push(v("js/ctx-shadow", "an arrow parameter named `ctx` hides the real one; use another name", file, tk.line));
         else if (p && p.t === "id" && p.v === "catch") out.push(v("js/ctx-shadow", "a catch parameter named ctx is refused", file, tk.line));
       }
@@ -420,14 +635,16 @@ export function scanCode(src, file, { api = null, designRelPath = file } = {}) {
         if (t0.v === "ctx") return Boolean(api && api[path]);
         return path === t0.v && ((ctxNames.has(t0.v) && t0.v !== "t") || uiNs.has(t0.v));
       };
-      if (tk.t === "id" && tk.v === "Object" && isP(toks[k + 1], ".") && toks[k + 2] && ["values", "entries", "assign", "fromEntries", "keys", "getOwnPropertyNames", "getOwnPropertyDescriptors", "getOwnPropertyDescriptor", "getPrototypeOf", "create", "defineProperty", "defineProperties"].includes(toks[k + 2].v) && isP(toks[k + 3], "(")) {
-        const c = closeOf(k + 3);
+      // Object.x( / Object?.x( / Object["x"]( / Object?.["x"]( with ctx or a namespace of it as an argument
+      const objCall = tk.t === "id" && tk.v === "Object" ? objectMember(k) : null;
+      if (objCall && ["values", "entries", "assign", "fromEntries", "keys", "getOwnPropertyNames", "getOwnPropertyDescriptors", "getOwnPropertyDescriptor", "getPrototypeOf", "create", "defineProperty", "defineProperties"].includes(objCall.name)) {
+        const c = closeOf(objCall.open);
         let dd = 0;
-        for (let j = k + 4; j < c; j++) {
+        for (let j = objCall.open + 1; j < c; j++) {
           if (isP(toks[j], "(") || isP(toks[j], "[") || isP(toks[j], "{")) dd++;
           else if (isP(toks[j], ")") || isP(toks[j], "]") || isP(toks[j], "}")) dd--;
-          const argStart = dd === 0 && (j === k + 4 || isP(toks[j - 1], ","));
-          if (argStart && nsOperand(j)) { out.push(v("js/ctx-unknown", `Object.${toks[k + 2].v} over ctx or one of its namespaces is refused (it can enumerate functions the guard cannot see by name)`, file, tk.line)); break; }
+          const argStart = dd === 0 && (j === objCall.open + 1 || isP(toks[j - 1], ","));
+          if (argStart && nsOperand(j)) { out.push(v("js/ctx-unknown", `Object.${objCall.name} over ctx or one of its namespaces is refused (it can enumerate functions the guard cannot see by name)`, file, tk.line)); break; }
         }
       }
       if (isP(tk, "...") && nsOperand(k + 1)) out.push(v("js/ctx-unknown", "spreading ctx or one of its namespaces is refused", file, tk.line));
