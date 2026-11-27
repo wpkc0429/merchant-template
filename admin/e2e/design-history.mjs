@@ -15,9 +15,10 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const csp = (connect) => "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 const SHOTS = process.env.HISTORY_SHOTS || resolve(ADMIN, "e2e/out/design-history");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -159,6 +160,7 @@ async function open(hash, { width = 1280, height = 900, ...state } = {}) {
   const pg = await ctx.newPage();
   const tag = `${state.role || "owner"}@${width} ${hash}`;
   pg.on("console", (m) => {
+    if (m.location().url.includes("/deny/")) return; // the canary's deliberate probe of /deny/ (lib/canary-probe.js, D19) is a 404 the browser logs as an error
     const x = m.text();
     if (state.expectHttp && /status of (404|500|503)/.test(x)) void 0;
     else if (m.type() === "error" || /Content Security Policy|Refused to/i.test(x)) problems.push(`${tag}: ${x}`);

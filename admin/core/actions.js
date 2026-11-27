@@ -9,16 +9,20 @@ import * as members from "../lib/members.js";
 import * as team from "../lib/team.js";
 import * as upload from "../lib/upload.js";
 import { t } from "../lib/design.js";
-import { confirmDialog, toast } from "../ui/kit.js";
+import { takeCoreUi, toast } from "../ui/kit.js";
 import { showReview } from "../ui/design-review.js";
 import { coreText, CORE_CONFIRM_IDS } from "../lib/fixed-text.js";
 import { fixedWarning, WARNED_CONFIRMS } from "./warnings.js";
 import { parseInteger, isValidSlug } from "../ui/format.js";
 import { need, readOnlyGuarded } from "./guard.js";
 import { requestVersionPreview } from "./version-preview.js";
-import { createContentActions } from "./content-actions.js";
-import { createDesignActions } from "./design-actions.js";
+import { takeContentActions } from "./content-actions.js";
+import { takeDesignActions } from "./design-actions.js";
 import { ActionError, invalid, blocked } from "./errors.js";
+
+const { confirmDialog } = takeCoreUi(); // boot phase only (lib/boot.js, D19)
+const createContentActions = takeContentActions();
+const createDesignActions = takeDesignActions();
 
 const S = () => session.shopID;
 const CANCELLED = Object.freeze({ cancelled: true });

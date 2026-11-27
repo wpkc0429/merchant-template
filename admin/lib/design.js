@@ -17,12 +17,18 @@ let defaultCopy = {};
 let copy = {};
 let designRoutes = {};
 let defaultRoutes = {};
+let designEnabled = true;
+let switchedOff = false;
 const missingWarned = new Set();
 
 export const warn = (msg, err) => console.warn(`[design] ${msg}`, ...(err ? [err] : []));
 
-/** Loads copy and the route registry. Never throws. */
-export async function loadDesign() {
+/**
+ * Loads copy and the route registry. Never throws. `enabled: false` (the isolation canary failed, lib/canary-probe.js, D19) loads NOTHING from design/:
+ * no copy, no route, no view; the built-in screens and copy are used. Called once, by app.js.
+ */
+export async function loadDesign({ enabled = true } = {}) {
+  if (switchedOff) return; // once the canary switched the design layer off, a later call (from anywhere) cannot switch it on again
   try {
     defaultCopy = (await import(`${DEFAULTS}copy.js`)).default || {};
     defaultRoutes = (await import(`${DEFAULTS}routes.js`)).default || {};
@@ -31,6 +37,8 @@ export async function loadDesign() {
   }
   // Fixed core-owned texts (lib/fixed-text.js): the built-in copy must carry exactly the fixed text (a mismatch is a core bug, so fail loud).
   for (const [k, v] of Object.entries(FIXED_COPY)) if (defaultCopy[k] !== v) throw new Error(`design-defaults/copy.js: "${k}" must equal the fixed text in lib/fixed-text.js`);
+  designEnabled = enabled === true;
+  if (!designEnabled) { switchedOff = true; return; }
   try {
     const mod = await import(`${DESIGN}copy.js`);
     const r = validateCopy(mod.default, defaultCopy);
@@ -63,7 +71,7 @@ export function t(key, params) {
 /** Resolves a route's view function from the design layer, or null (caller then uses the default). */
 export async function designView(id) {
   const path = designRoutes[id];
-  if (!path) return null;
+  if (!path || !designEnabled) return null;
   try {
     const mod = await import(`${DESIGN}${path}`);
     if (typeof mod.default !== "function") throw new Error("the module has no default export function");
@@ -79,4 +87,4 @@ export async function defaultView(id) {
 }
 
 /** Everything the design layer exposes, for diagnostics and e2e. */
-export const designInfo = () => ({ routes: { ...designRoutes }, copyKeys: Object.keys(copy).length });
+export const designInfo = () => ({ routes: { ...designRoutes }, copyKeys: Object.keys(copy).length, enabled: designEnabled });

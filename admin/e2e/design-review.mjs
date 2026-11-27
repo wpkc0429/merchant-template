@@ -16,11 +16,12 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Under the REAL strict CSP of admin/deploy/nginx.conf.template (style-src 'self': no inline style, constructable stylesheets are what the core dialog uses).
 // The shared test hook (e2e/lib/shadow-hook.mjs) opens the shadow roots in the test browser so Playwright and __dq() can look inside; the unpatched scenarios use a second, RAW browser to prove the root is closed.
-const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const csp = (connect) => "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 const SHOTS = process.env.REVIEW_SHOTS || resolve(ADMIN, "e2e/out/review-ui");
 const HOST = "admin.example.test";
 function loadPlaywright() {

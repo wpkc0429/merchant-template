@@ -18,10 +18,11 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { SCRIPT_SRC } from "./lib/csp.mjs";
 import { readdirSync } from "node:fs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const csp = (connect) => "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
+const csp = (connect) => "default-src 'self'; " + SCRIPT_SRC + "; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src " + connect + "; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'";
 const SHOTS = process.env.HARDENING_SHOTS || resolve(ADMIN, "e2e/out/hardening");
 const HOST = "admin.example.test";
 function loadPlaywright() {
@@ -156,7 +157,7 @@ const server = createServer(async (req, res) => {
   }
   const path = p === "/" ? "/index.html" : p;
   if (!ALLOW.test(path) || path.includes("..")) { res.writeHead(404); res.end("no"); return; }
-  const extra = path === "/index.html" ? { "Content-Security-Policy": csp("'self' http://127.0.0.1:" + PORT).replace("script-src 'self'", APP_MODE.evalCsp ? "script-src 'self' 'unsafe-eval'" : "script-src 'self'") } : {};
+  const extra = path === "/index.html" ? { "Content-Security-Policy": csp("'self' http://127.0.0.1:" + PORT).replace(SCRIPT_SRC, APP_MODE.evalCsp ? SCRIPT_SRC + " 'unsafe-eval'" : SCRIPT_SRC) } : {};
   try { let b = await readFile(join(ADMIN, path)); if (path === "/app.js") { let t = b.toString("utf8"); if (APP_MODE.noLockdown) t = t.replace("lockdownIntrinsics();", "/* control run: lockdown off */"); if (APP_MODE.noSeal) t = t.replace("  sealApi();", "  /* control run: seal off */"); b = Buffer.from(t); } res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store", ...extra }); res.end(b); } catch { res.writeHead(404); res.end("no"); }
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -178,6 +179,7 @@ async function open(hash, { width = 1280, height = 900, ...state } = {}) {
   const pg = await ctx.newPage();
   const tag = `${state.role || "owner"}@${width} ${hash}`;
   pg.on("console", (m) => {
+    if (m.location().url.includes("/deny/")) return; // the canary's deliberate probe of /deny/ (lib/canary-probe.js, D19) is a 404 the browser logs as an error
     const x = m.text();
     if (state.expectHttp && /status of (404|500|503)/.test(x)) void 0;
     else if (m.type() === "error" || /Content Security Policy|Refused to/i.test(x)) problems.push(`${tag}: ${x}`);

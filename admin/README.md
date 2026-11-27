@@ -69,12 +69,12 @@ node scripts/check-layers.mjs                # 分層檢查
 
 ### 必要的 CSP（伺服器標頭；核心沒有行內 script，不需要 unsafe-inline）
 
-**嚴格 CSP 是部署的硬性要求（2026-11-25 使用者決定，見 `../docs/DECISIONS.md`）：正式環境與每一個 AI 改版預覽環境都必須帶上它，不是建議、不可關閉。** `deploy/nginx.conf.template` 預設就帶（沒有任何開關可以關掉），`deploy/Dockerfile` 會安裝它；`node scripts/check-design.mjs`（步驟 "deploy"）在 `deploy/` 缺少 CSP、放寬 `script-src`（`unsafe-inline`／`unsafe-eval`／萬用字元）、少了 `object-src`／`base-uri`／`frame-ancestors 'none'`、沒有 `always`，或 Dockerfile 沒安裝／刪掉它時會失敗。repo 外的自訂主機設定不在守門員範圍內，必須由人類照樣帶上。
+**嚴格 CSP 是部署的硬性要求（2026-11-25 使用者決定，見 `../docs/DECISIONS.md`）：正式環境與每一個 AI 改版預覽環境都必須帶上它，不是建議、不可關閉。** `deploy/nginx.conf.template` 預設就帶（沒有任何開關可以關掉），`deploy/Dockerfile` 會安裝它；`node scripts/check-design.mjs`（步驟 "deploy"）在 `deploy/` 缺少 CSP、放寬 `script-src`（`unsafe-inline`／`unsafe-eval`／萬用字元；唯一允許的額外 token 是 `index.html` import map 的 sha256，決策 D19）、少了 `object-src`／`base-uri`／`frame-ancestors 'none'`、沒有 `always`，或 Dockerfile 沒安裝／刪掉它時會失敗。repo 外的自訂主機設定不在守門員範圍內，必須由人類照樣帶上。
 
 範本不載入任何第三方字型（`index.html` 已移除 Google Fonts），所以 `style-src` 與 `font-src` 只有 `'self'`：
 
 ```
-default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self';
+default-src 'self'; script-src 'self' 'sha256-<import map 文字的雜湊，見下方 D19>'; style-src 'self'; font-src 'self';
 img-src 'self' data: https://<IMAGE_PUBLIC_BASE_URL 網域>; connect-src 'self' https://<R2 直傳網域>; frame-ancestors 'none';
 base-uri 'none'; form-action 'none'; object-src 'none'
 ```
@@ -166,6 +166,16 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
    （或在平台後台「前端接入」頁選「後台」。）登記後，登入前的 `GET /admin/branding` 才認得這個網域、邀請與設定密碼連結才會指向這裡、並啟用主機綁定。
 4. 圖片上傳：bucket 的 CORS 要加入這個 origin（平台 `docs/media-r2-setup.md` 第 4 步），否則瀏覽器直傳會失敗。
 5. 靜態伺服器**必須**帶上面「必要的 CSP」（`deploy/nginx.conf.template` 已帶，不可移除；上線後用 `curl -sI https://admin.<shop-domain>/ | grep -i content-security-policy` 確認）。店面的 CSP 是 `../public/_headers`（Cloudflare 從 `public/` 讀取）。
+
+### 設計模組隔離：import map 與 CSP 雜湊（v0.5.0，決策 D19）
+
+`index.html` 有**唯一一段**行內 `<script type="importmap">`（單行，放在所有 module script 之前）：對 `/design/` 底下的模組，除了 `/design/` 自己以外的任何 import 都導向 `/deny/`（nginx 回 404），所以即使靜態掃描被繞過，設計模組也 import 不到 `lib/`、`core/`、`ui/`。瀏覽器只有在 CSP 的 `script-src` 帶這段文字的 `'sha256-...'` 時才會執行行內 map，否則**靜默忽略**，所以：
+
+- `deploy/nginx.conf.template` 的 `script-src 'self' 'sha256-…'` 是**靜態值**；`node scripts/check-design.mjs` 每次都重算 `index.html` 的 map 雜湊並要求兩者一致（且只允許這一個額外 token）。改了 map 之後由人類跑 `node scripts/check-design.mjs --update`（會同時改寫 nginx 範本的雜湊與核心雜湊清單）。
+- 部署要求：所有提供後台檔案的主機（正式、預覽主機、AI 服務的預覽環境）都要用同一個映像：CSP 雜湊、`location ^~ /deny/`（404）、`/design/` 路徑不得含 `%`。
+- **失效即關閉**：`lib/canary-probe.js` 在載入任何設計模組之前檢查 map 是否生效；沒生效（CSP 沒帶雜湊、map 被改、瀏覽器不支援 import map）就**不載入設計層**，使用內建畫面、console 警告，並在畫面頂端顯示一行說明。每次載入 console 會有一筆 `/deny/lib/canary-target.js` 的 404，是這項檢查的預期結果。
+- **瀏覽器**：只在 Chromium 驗證過。Firefox 與 Safari **未驗證**：這兩個瀏覽器若不強制執行 map，上述檢查會讓自訂設計關閉（而不是失去保護），但在驗證完成前不要宣稱它們支援自訂設計。
+- 這不是真正的隔離（同源模組仍可讀 DOM、呼叫 `ctx`、呼叫 cookie 換發端點）；沙箱 iframe／worker／DSL 仍延後。
 
 ### 預覽主機（v0.5.0，決策 D18）
 

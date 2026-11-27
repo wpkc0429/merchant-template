@@ -71,6 +71,7 @@ A preview host is the same image with `ADMIN_PREVIEW_MODE=version|change` (and o
 * Run the agent with a token that can reach other repos, the platform API, or production hosting.
 * Publish when the gate fails, when the diff touches anything outside `design/`, or without the merchant's approval.
 * Run `check-design.mjs --update` (it rewrites the core manifest). Only a human, in a reviewed core change (`.claude/skills/core-change`), does that. The same goes for adding anything to `ctx`: that is a human-reviewed core change.
+* Serve a preview (or any host that serves the admin) without the SAME strict CSP including the `'sha256-...'` of the import map, the `/deny/` 404 and the percent-sign refusal of `deploy/nginx.conf.template` (decision D19): use the same image. Without them the core's start-up canary turns the custom design OFF (the preview then shows the built-in screens and a note): safe, but the preview is not showing the agent's work. The agent must not edit `index.html` (the import map), `lib/` or `deploy/`; after a map change a human runs `check-design.mjs --update`.
 * Serve a preview without the strict CSP, or let the agent change `deploy/`, `public/_headers`, `core/warnings.js` or `styles.css`.
 * Register the storefront's content schema (`public/content.schema.json`) on the platform, or hold credentials that could: registration is a human step.
 * Trust the scan as a sandbox: it is defence in depth (see "Known limits" in `docs/DESIGN-LAYER.md`). Human approval of the

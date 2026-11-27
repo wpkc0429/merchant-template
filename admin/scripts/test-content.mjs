@@ -44,8 +44,8 @@ const puts = () => calls.filter((c) => c.method === "PUT" && /\/content\/schema/
 
 // ── load the real modules ──
 const net = (await imp("lib/api.js")).takeApi();
-const { session } = await imp("lib/session.js");
-const { setPermissions } = await imp("lib/perm.js");
+const { state: session } = (await imp("lib/session.js")).takeSession(); // boot phase: the mutable state (D19)
+const { setPermissions } = (await imp("lib/perm.js")).takePermissions(); // boot phase (D19)
 const { loadDesign } = await imp("lib/design.js");
 const C = await imp("lib/content.js");
 const S = await imp("lib/content-schema.js");
@@ -64,7 +64,7 @@ session.shopID = 1;
 
 const asked = [];
 let answers = [];
-const actions = CA.createContentActions({ ask: async (key, params, opts) => { asked.push({ key, params, opts }); return answers.length ? answers.shift() : true; } });
+const actions = CA.takeContentActions()({ ask: async (key, params, opts) => { asked.push({ key, params, opts }); return answers.length ? answers.shift() : true; } });
 const perms = { staff: [], editor: ["content.view", "content.edit"], owner: ["content.view", "content.edit", "content.publish", "content.manage"] };
 const as = (who) => setPermissions(perms[who]);
 

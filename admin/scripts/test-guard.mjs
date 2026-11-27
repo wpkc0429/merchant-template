@@ -178,6 +178,64 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
     ok("deploy: a missing deploy/ directory -> csp-missing", (rmSync(path.join(dir, "deploy"), { recursive: true }), /deploy\/csp-missing/.test(deployChecks(dir).map((x) => x.rule).join())));
     cpSync(path.join(ROOT, "deploy"), path.join(dir, "deploy"), { recursive: true });
     ok("deploy: restored -> passes", deployChecks(dir).length === 0);
+    // D19 (owner-approved rule change 2026-11-28): script-src is exactly 'self' + the sha256 of the import map text in index.html, nothing else; one inline import map, no other inline script
+    {
+      const idx = readFileSync(path.join(dir, "index.html"), "utf8");
+      const ngHash = ng.match(/script-src 'self' ('sha256-[A-Za-z0-9+/=]+')/)[1];
+      const setIdx = (html) => write(dir, "index.html", html);
+      const rules = () => deployChecks(dir).map((x) => `${x.rule} ${x.msg}`).join("\n");
+      write(dir, "deploy/nginx.conf.template", ng); setIdx(idx);
+      ok("D19: the shipped index.html + nginx template agree (hash of the import map text)", deployChecks(dir).length === 0, rules());
+      const withNg = (n) => { write(dir, "deploy/nginx.conf.template", n); return rules(); };
+      ok("D19: script-src 'self' without the hash -> csp-weak", /csp-weak.*must be exactly 'self' 'sha256-/.test(withNg(ng.replaceAll(` ${ngHash}`, ""))));
+      ok("D19: order tolerant ('sha256-..' 'self') passes", withNg(ng.replaceAll(`'self' ${ngHash};`, `${ngHash} 'self';`)) === "");
+      ok("D19: another hash -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, "'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"))));
+      ok("D19: the right hash AND another hash -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='`))));
+      ok("D19: the hash twice -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} ${ngHash}`))));
+      ok("D19: hash + 'unsafe-inline' -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} 'unsafe-inline'`))));
+      ok("D19: hash + 'unsafe-eval' -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} 'unsafe-eval'`))));
+      ok("D19: hash + a nonce -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} 'nonce-abc123'`))));
+      ok("D19: hash + 'strict-dynamic' -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} 'strict-dynamic'`))));
+      ok("D19: hash + a host -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} https://cdn.example`))));
+      ok("D19: hash + a scheme source -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, `${ngHash} https:`))));
+      ok("D19: a sha384 / sha512 token instead -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll(ngHash, "'sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'"))));
+      ok("D19: a hash smuggled into another directive (default-src) -> csp-weak", /csp-weak.*default-src/.test(withNg(ng.replaceAll("default-src 'self';", `default-src 'self' ${ngHash};`))));
+      ok("D19: a hash in script-src-elem -> csp-weak", /csp-weak/.test(withNg(ng.replaceAll("worker-src", `script-src-elem 'self' ${ngHash}; worker-src`))));
+      ok("D19: /site-config.js CSP without the hash -> csp-weak naming the location", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(` ${ngHash}`, "")))));
+      ok("D19: /site-config.js CSP with a nonce -> csp-weak naming the location", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(ngHash, `${ngHash} 'nonce-x'`)))));
+      ok("D19: /site-config.js CSP with another hash -> csp-weak naming the location", /csp-weak location = \/site-config\.js/.test(locMsgs(inLoc("= /site-config.js", (b) => b.replace(ngHash, "'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='")))));
+      write(dir, "deploy/nginx.conf.template", ng);
+      // the import map text changes -> the hash in nginx no longer matches (a tampered or edited map)
+      setIdx(idx.replace('"/lib/canary-ok.js":"/lib/canary-ok.js"', '"/lib/canary-ok.js":"/lib/canary-ok.js","/lib/":"/lib/"'));
+      ok("D19: a changed import map text (hash mismatch) -> csp-weak", /csp-weak.*must be exactly 'self' 'sha256-/.test(rules()));
+      // --update recomputes the hash and rewrites the nginx template (the documented human flow)
+      const manifest0 = readFileSync(path.join(dir, "scripts/core.manifest.json"), "utf8");
+      const up = CLI(dir, "--update");
+      ok("D19: --update rewrites the hash in the nginx template", up.status === 0 && /written to deploy\/nginx\.conf\.template/.test(up.stdout), up.stdout + up.stderr);
+      ok("D19: ... and then deploy passes again", deployChecks(dir).length === 0, rules());
+      write(dir, "deploy/nginx.conf.template", ng); setIdx(idx); write(dir, "scripts/core.manifest.json", manifest0); // --update also re-locked the manifest of the temp copy
+      // index.html rules
+      const inl = (s) => `<script>${s}</script>`;
+      setIdx(idx.replace("</head>", `${inl("1+1")}</head>`));
+      ok("D19: a second INLINE script -> deploy/importmap", /deploy\/importmap.*no inline script other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", `<script type="module">import("/x.js")</script></head>`));
+      ok("D19: an inline module script -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()));
+      setIdx(idx.replace("</head>", `${inl("1")}</head>`).replace("<script>1</script>", "<SCRIPT >1</SCRIPT >"));
+      ok("D19: <SCRIPT > spelling variants are still inline scripts", /deploy\/importmap/.test(rules()));
+      setIdx(idx.replace(/<script type="importmap">[^<]*<\/script>/, ""));
+      ok("D19: no import map at all -> deploy/importmap (exactly ONE required)", /deploy\/importmap.*exactly ONE.*found 0/.test(rules()));
+      const mapTag = idx.match(/<script type="importmap">[^<]*<\/script>/)[0];
+      setIdx(idx.replace(mapTag, mapTag + mapTag));
+      ok("D19: two import maps -> deploy/importmap", /deploy\/importmap.*exactly ONE.*found 2/.test(rules()));
+      setIdx(idx.replace(mapTag, mapTag + `<script type="importmap">{}</script>`));
+      ok("D19: a second import map with other text -> deploy/importmap", /deploy\/importmap.*exactly ONE/.test(rules()));
+      setIdx(idx.replace("</head>", `<!-- ${inl("2+2")} --></head>`));
+      ok("D19: an inline script inside an HTML comment is not a script (passes)", deployChecks(dir).length === 0, rules());
+      setIdx(idx.replace("</head>", `<script src="extra.js"></script></head>`));
+      ok("D19: an external script is not inline (the other guards police it)", !/deploy\/importmap/.test(rules()));
+      setIdx(idx);
+      ok("D19: restored -> passes", deployChecks(dir).length === 0, rules());
+    }
 
     // theme / assets
     write(dir, "design/theme.css", `@import url(https://evil.example/x.css);`);

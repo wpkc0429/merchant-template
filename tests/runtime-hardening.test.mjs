@@ -13,7 +13,7 @@ const js = (dir) => readdirSync(path.join(TEMPLATE, 'admin', dir)).filter((x) =>
 test('D18 is recorded (newest first) with the owner approval, the five items, the residual risks and what is postponed', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[0], 'D18'); assert.equal(ids[1], 'D17');
+  assert.equal(ids[0], 'D19'); assert.equal(ids[1], 'D18'); assert.equal(ids[2], 'D17');
   const start = lines.findIndex((l) => l.startsWith('### D18.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
@@ -46,7 +46,7 @@ test('lib/api.js exports only ApiError, takeApi and sealApi; nothing imports or 
     assert.ok(!/import\s*\{[^}]*\btokens\b/.test(s), `${p} imports tokens`);
     assert.ok(!/export\s*\{[^}]*\b(api|apiRaw|publicApi|refreshTokens|restoreSession)\b/.test(s), `${p} re-exports the client`);
     assert.ok(!/export (?:const|function|async function) (api|apiRaw|publicApi|refreshTokens|restoreSession|tokens)\b/.test(s), `${p} exports the client`);
-    if (p !== 'lib/design.js') assert.ok(!/\bimport\s*\(/.test(s), `${p} has a dynamic import (it could evaluate after the seal)`);
+    if (p !== 'lib/design.js' && p !== 'lib/canary-probe.js') assert.ok(!/\bimport\s*\(/.test(s), `${p} has a dynamic import (it could evaluate after the seal)`);
   }
 });
 
@@ -54,8 +54,8 @@ test('app.js seals the API, then freezes the intrinsics, then loads the design l
   const app = f('admin/app.js');
   const boot = app.slice(app.indexOf('async function boot()'));
   const i = (s) => boot.indexOf(s);
-  assert.ok(i('sealApi()') > 0 && i('sealUpload()') > i('sealApi()') && i('lockdownIntrinsics()') > i('sealUpload()') && i('await loadDesign()') > i('lockdownIntrinsics()'));
-  assert.equal([...app.matchAll(/loadDesign\(\)/g)].length, 1);
+  assert.ok(i('sealApi()') > 0 && i('sealUpload()') > i('sealApi()') && i('lockdownIntrinsics()') > i('sealUpload()') && i('await loadDesign({ enabled: iso.ok })') > i('lockdownIntrinsics()'));
+  assert.equal([...app.matchAll(/loadDesign\(/g)].length, 1);
 });
 
 test('lockdownIntrinsics() in a plain realm: poisoning throws, instance assignment of name / toString still works, the report is sane', () => {

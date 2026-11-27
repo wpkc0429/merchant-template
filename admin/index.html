@@ -12,6 +12,10 @@
 <link rel="stylesheet" href="design/tokens.css">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="design/theme.css">
+<!-- THE IMPORT MAP (docs/DECISIONS.md D19): ONE inline script, on ONE line, before every module script. For importers inside /design/ it sends everything
+     outside /design/ to /deny/ (404), so a design module cannot import lib/, core/ or ui/. The CSP in deploy/nginx.conf.template allows exactly this text through its
+     sha256 hash; change one character here and the hash there must change too (node scripts/check-design.mjs --update). lib/canary-probe.js checks at boot that it is in effect. -->
+<script type="importmap">{"scopes":{"/design/":{"/":"/deny/","/design/":"/design/","https://":"/deny/","http://":"/deny/"},"/lib/canary-probe.js":{"/":"/deny/","/lib/canary-ok.js":"/lib/canary-ok.js","https://":"/deny/","http://":"/deny/"}}}</script>
 <script src="config.js"></script>
 <script src="config-loader.js"></script>
 </head>

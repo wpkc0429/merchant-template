@@ -20,6 +20,7 @@ import { t } from "../lib/design.js";
 import { coreText } from "../lib/fixed-text.js";
 import { formatDateTime } from "../ui/format.js";
 import { fixedWarning } from "./warnings.js";
+import { capability } from "../lib/boot.js";
 import { need, readOnlyError } from "./guard.js";
 import { ActionError, invalid } from "./errors.js";
 import { genericError, toActionError as readError } from "./design-history.js";
@@ -75,7 +76,7 @@ const params = (req) => ({
  * The actions. `ask` is core/actions.js's confirmation helper (copy title/text/yes + the FIXED warning), `review` shows the dialog
  * (ui/design-review.js; injected so the logic is testable without a DOM), `notify` shows a status text (a toast).
  */
-export function createDesignActions({ ask, review, notify = () => {} }) {
+function createDesignActions({ ask, review, notify = () => {} }) {
   /** One read of a request, plus the basis that read pinned. Everything the dialog shows comes from this. */
   async function readForReview(shopID, id) {
     const { data, basis } = await dh.fetchRequestForReview(shopID, id);
@@ -270,3 +271,6 @@ export function createDesignActions({ ask, review, notify = () => {} }) {
   // Declared with one (or two) parameters on purpose: nothing else can be passed in, and extra arguments are ignored.
   return { openDesignReview: (id) => openDesignReview(id), requestDesignRevert: (id, opts) => requestDesignRevert(id, opts), cancelDesignRequest: (id) => cancelDesignRequest(id) };
 }
+
+/** The factory, for the boot phase only (lib/boot.js, D19): core/actions.js takes it once; nothing imported later can build design actions (approve, revert, cancel). */
+export const takeDesignActions = capability("design actions", createDesignActions);

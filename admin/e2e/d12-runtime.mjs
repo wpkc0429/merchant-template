@@ -37,7 +37,7 @@ const server = createServer(async (req, res) => {
   if (p === "/preview-config.js") { res.writeHead(200, { "Content-Type": TYPES[".js"] }); res.end(["window.ADMIN_CONFIG.preview = null;", "window.ADMIN_CONFIG.previewConfig = true;", ""].join(String.fromCharCode(10))); return; }
   const path = p === "/" ? "/index.html" : p;
   if (!ALLOW.test(path) || path.includes("..")) { res.writeHead(404); res.end("no"); return; }
-  try { const b = await readFile(join(ADMIN, path)); res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" }); res.end(b); } catch { res.writeHead(404); res.end("no"); }
+  try { let b = await readFile(join(ADMIN, path)); if (path === "/app.js") b = Buffer.from(b.toString("utf8").replace("  sealApi();", "  /* test only: boot phase left open so the test can take the dialog primitives */")); res.writeHead(200, { "Content-Type": TYPES[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" }); res.end(b); } catch { res.writeHead(404); res.end("no"); }
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const URL0 = `http://${HOST}:${server.address().port}/`;
@@ -60,9 +60,9 @@ try {
   console.log("core confirmation vs synthetic input");
   await page.evaluate(async () => {
     const kit = await import("/ui/kit.js");
-    window.__kit = kit;
+    window.__kit = { ...kit, ...kit.takeCoreUi() }; // the dialog primitives are boot-phase capabilities (D19): this test serves app.js WITHOUT sealApi() to reach them
     window.__answer = "pending";
-    kit.confirmDialog({ title: "刪除商品", message: "確定要刪除？", warning: "此動作無法復原。", confirmText: "刪除", cancelText: "取消", danger: true }).then((a) => { window.__answer = a; });
+    window.__kit.confirmDialog({ title: "刪除商品", message: "確定要刪除？", warning: "此動作無法復原。", confirmText: "刪除", cancelText: "取消", danger: true }).then((a) => { window.__answer = a; });
   });
   await page.waitForSelector("dialog[open] [data-testid=confirm-yes]");
   check("the fixed warning is shown", (await page.locator("[data-testid=confirm-warning]").textContent()).includes("無法復原"));

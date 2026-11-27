@@ -1,14 +1,16 @@
 // Authentication functions handed to the design layer (ctx.auth). Tokens (the session's access token, and
 // the one-time set-password / invitation link token) stay inside the core: the design layer never sees,
 // stores or sends them. Password rules are enforced here. `hooks` are the shell's transitions.
-import { login as sessionLogin, passwordSetup, invitations } from "../lib/session.js";
+import { takeSession } from "../lib/session.js";
 import { takeApi } from "../lib/api.js";
+import { capability } from "../lib/boot.js";
 import { t } from "../lib/design.js";
 import { coreText } from "../lib/fixed-text.js";
 import { errorMessage } from "../ui/kit.js";
 import { ActionError, invalid } from "./errors.js";
 
 const { refreshTokens } = takeApi(); // boot phase only (lib/api.js)
+const { login: sessionLogin, passwordSetup, invitations } = takeSession(); // boot phase only (lib/boot.js)
 
 export const MIN_PASSWORD = 12;
 
@@ -29,7 +31,7 @@ export function loginMessage(err) {
 }
 
 /** linkToken: the set-password / accept-invite token from the URL (already scrubbed from the address bar). */
-export function makeAuth({ linkToken = null, hooks }) {
+function makeAuth({ linkToken = null, hooks }) {
   let token = linkToken;
   let info = null;
   const need = () => { if (!token) throw new ActionError("state", t("auth.link.invalid"), { reason: "link", status: 404 }); return token; };
@@ -85,3 +87,6 @@ export function makeAuth({ linkToken = null, hooks }) {
     },
   };
 }
+
+/** The factory of ctx.auth, for the boot phase only (lib/boot.js, D19): app.js takes it once; nothing imported later can build an auth object with the core's hooks. */
+export const takeMakeAuth = capability("makeAuth", makeAuth);
