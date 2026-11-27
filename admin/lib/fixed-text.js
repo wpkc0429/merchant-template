@@ -35,10 +35,11 @@ export const CORE_TEXT = Object.freeze({
   "rv.scan.candidate": "要核准的版本：{sha}", "rv.scan.version": "守門員版本：{v}", "rv.scan.at": "檢查時間：{time}",
   "rv.scan.count": "共 {n} 個檔案被變更", "rv.scan.listed": "（只列出前 {m} 個）", "rv.scan.fileList": "完整的變更檔案清單（{m} 個，點一下展開）",
   "rv.delay": "為了避免誤按，這個按鈕 {s} 秒後才能使用。",
+  "rv.delay.over": "等待時間已過，現在可以按下按鈕。",
   // Preview host (D18): the platform enforces read-only sessions there; these are the calm messages.
   "pv.readOnly": "這是預覽畫面，不能在這裡修改。想編輯請回到正常的後台。",
-  "pv.expired": "預覽的登入已到期（預覽登入最長 30 分鐘），請重新登入。",
-  "pv.scopeMissing": "這個預覽網址沒有被平台登記為預覽網域，所以不能在這裡登入。請聯絡管理員。",
+  "pv.expired": "預覽已到期（預覽登入最長 30 分鐘），請重新登入。",
+  "pv.scopeMissing": "這個網址沒有設定成預覽主機（平台沒有把它登記為預覽網域），所以不能在這裡登入。請聯絡管理員。",
   "rv.status": "狀態", "rv.approvedBy": "核准者", "rv.approvedAt": "核准時間", "rv.proposedBy": "提出者",
   "rv.shots.heading": "前後對照",
   "rv.shots.note": "截圖由服務擷取，不是證明：平台無法確認這些畫面真的來自這個版本。請同時開啟改版預覽，自己確認。",

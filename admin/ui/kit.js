@@ -8,6 +8,7 @@ import { t } from "../lib/design.js";
 import { buildCoreCss } from "./core-dialog-css.js";
 import { resolveTheme } from "./core-theme.js";
 import { coreText } from "../lib/fixed-text.js";
+import { gcs, raf as rafNative, hasRaf } from "../lib/natives.js";
 
 const PROPS = new Set(["value", "checked", "disabled", "hidden", "selected", "indeterminate", "textContent"]);
 const BLOCKED_TAGS = new Set(["script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "style", "applet", "portal", "noscript"]);
@@ -193,13 +194,13 @@ const HOST_STYLE = [["all", "initial"], ["display", "block"], ["position", "stat
 // incompatible syntax just reads as an invalid colour and the default is used.
 /** The design's tokens as the core sees them: an opaque colour per token (or null) and a trimmed raw string. */
 function readTokens(host, colorProbe) {
-  const cs = getComputedStyle(host);
+  const cs = gcs(host);
   const raw = (n) => String(cs.getPropertyValue(n) || "").trim();
   const color = (n) => {
     const v = raw(n);
     if (!v) return null;
     colorProbe.style.color = "rgb(1, 2, 3)"; colorProbe.style.color = v;
-    const c = getComputedStyle(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
+    const c = gcs(colorProbe).color, m = /^rgb\((\d{1,3}), (\d{1,3}), (\d{1,3})\)$/.exec(c);
     if (!m || (c === "rgb(1, 2, 3)" && v.replace(/\s+/g, "") !== "rgb(1,2,3)")) return null; // invalid, or not opaque (rgba / color() are refused)
     return [Number(m[1]), Number(m[2]), Number(m[3])];
   };
@@ -247,9 +248,9 @@ export function showCoreDialog(opts) {
       } catch { /* no layout (a test DOM) */ }
     };
     let raf = 0, timer = 0;
-    const loop = () => { correct(); if (counted) raf = requestAnimationFrame(loop); };
+    const loop = () => { correct(); if (counted) raf = rafNative(loop); };
     correct(); theme();
-    if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(loop);
+    if (hasRaf()) raf = rafNative(loop);
     timer = setInterval(() => { correct(); theme(); }, 250);
     // At the moment of a confirmation: is the dialog really shown at its normal scale, fully inside the screen? Otherwise nothing is submitted.
     sane = () => {

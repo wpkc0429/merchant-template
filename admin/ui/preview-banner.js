@@ -18,6 +18,7 @@
 //     body/html pseudo-elements that sit over the bar.
 // It has no design-layer input at all except what the host wrote into preview-config.js (lib/preview.js).
 import { previewMode } from "../lib/preview.js";
+import { gcs, raf as rafNative, hasRaf, hasGcs } from "../lib/natives.js";
 
 export const BANNER_ID = "core-preview-banner";
 const KIND_LABEL = { version: "版本預覽", change: "改版預覽" };
@@ -144,12 +145,12 @@ function coveredByOverlay(b, r) {
   const hits = (x) => x.right > r.left && x.left < r.right && x.bottom > r.top && x.top < r.bottom;
   const paints = (c) => c.visibility === "visible" && Number(c.opacity) > 0 && (alpha(c.backgroundColor) > 0 || (c.backgroundImage && c.backgroundImage !== "none"));
   for (const host of [document.documentElement, document.body]) for (const pseudo of ["::before", "::after"]) {
-    const c = getComputedStyle(host, pseudo);
+    const c = gcs(host, pseudo);
     if (c.content && c.content !== "none" && c.content !== "normal" && (c.position === "fixed" || c.position === "absolute") && (paints(c) || c.content !== '""')) return true;
   }
   for (const n of document.body.querySelectorAll("*")) {
     if (n === b || b.contains(n) || n.id === SPACER_ID) continue;
-    const c = getComputedStyle(n);
+    const c = gcs(n);
     if ((c.position === "fixed" || c.position === "absolute") && paints(c) && hits(n.getBoundingClientRect())) return true;
   }
   return false;
@@ -169,22 +170,22 @@ const hiddenBy = (c) => (c.contentVisibility || "visible") !== "visible" || (c.f
 /** Is the element really visible to a person? Computed styles of the banner and its ancestors, geometry, and what is on top of it. */
 function visible(b) {
   try {
-    if (typeof getComputedStyle !== "function") return true; // no layout engine (offline tests): presence and text are still checked
-    const cs = getComputedStyle(b);
+    if (!hasGcs()) return true; // no layout engine (offline tests): presence and text are still checked
+    const cs = gcs(b);
     if (cs.display === "none" || cs.visibility !== "visible" || Number(cs.opacity) < 1 || hiddenBy(cs)) return false;
     if (cs.clip && cs.clip !== "auto") return false;
     if (px(cs.textIndent) !== 0 || px(cs.fontSize) < 12 || (cs.mixBlendMode || "normal") !== "normal") return false;
     if (cs.color === cs.backgroundColor || alpha(cs.color) < 1 || alpha(cs.backgroundColor) < 1) return false;
     if (cs.webkitTextFillColor && cs.webkitTextFillColor !== cs.color) return false;
     for (const pseudo of ["::before", "::after"]) {
-      const c = getComputedStyle(b, pseudo).content;
+      const c = gcs(b, pseudo).content;
       if (c && c !== "none" && c !== "normal") return false; // generated content could paint over or add to the text
     }
-    const fl = getComputedStyle(b, "::first-line");
+    const fl = gcs(b, "::first-line");
     if (fl && (fl.visibility !== "visible" || Number(fl.opacity) < 1 || fl.color === cs.backgroundColor || (fl.webkitTextFillColor && fl.webkitTextFillColor !== fl.color) || px(fl.fontSize) < 12)) return false;
     // ancestors: opacity, filter, transform, content-visibility, clip, mask or display on <body>/<html> hide or move the banner as well
     for (let a = b.parentElement; a; a = a.parentElement) {
-      const ac = getComputedStyle(a);
+      const ac = gcs(a);
       if (ac.display === "none" || ac.visibility !== "visible" || Number(ac.opacity) < 1 || hiddenBy(ac)) return false;
     }
     const r = b.getBoundingClientRect();
@@ -288,7 +289,7 @@ export function installPreviewBanner(mode = previewMode) {
   const check = () => {
     if (busy || failed || scheduled) return;
     scheduled = true;
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run); else setTimeout(run, 0);
+    if (hasRaf()) rafNative(run); else setTimeout(run, 0);
   };
   poke = check;
   if (POPOVER && typeof document.addEventListener === "function") {

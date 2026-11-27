@@ -455,7 +455,7 @@ try {
     check("Tab reaches the checkbox", await tabTo("confirm-rv-ack"));
     await pg.keyboard.press("Space");
     check("Space ticks it", await pg.locator(T("confirm-rv-ack")).isChecked());
-    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; }, null, { timeout: 5000 }); // D18: the approve button waits 1 s after the dialog appeared
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 5000 }); // D18: the approve button waits 1 s after the dialog appeared
     check("Tab reaches the approve button", await tabTo("confirm-yes"));
     await pg.keyboard.press("Enter");
     await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
@@ -629,7 +629,7 @@ try {
     await clickReview(a.pg); await waitImages(a.pg, 2);
     await a.pg.locator(T("confirm-rv-ack")).click();
     await a.pg.evaluate(() => { __dq("dialog[open]").style.setProperty("width", "180px", "important"); });
-    await a.pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; }, null, { timeout: 5000 }); // D18: 1 s delay
+    await a.pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 5000 }); // D18: 1 s delay
     await a.pg.locator("dialog " + T("confirm-yes")).click({ force: true });
     await sleep(500);
     check("approve is REFUSED when the dialog is not shown at its normal size: nothing sent, message, approve stays disabled", S.approveCalls.length === 0 && /顯示被改動/.test(await a.pg.locator(T("confirm-rv-alert")).innerText()) && (await a.pg.locator("dialog " + T("confirm-yes")).isDisabled()), String(S.approveCalls.length));
@@ -733,14 +733,14 @@ try {
     const ack = pg.locator(T("confirm-rv-ack")), yes = pg.locator('dialog ' + T("confirm-yes"));
     await sleep(1300); // D18: let the 1 s delay pass, so the forced enable below is the only thing under test
     await pg.evaluate(() => { const c = __dq('[data-testid="confirm-rv-ack"]'); c.checked = true; const b = __dq('dialog [data-testid="confirm-yes"]'); b.disabled = false; });
-    await yes.click(); await sleep(500);
+    await yes.click({ force: true }); await sleep(500);
     check("a scripted ack.checked = true followed by a real click on approve does NOT send", S.approveCalls.length === 0 && (await pg.locator("dialog[open]").count()) === 1);
     await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').checked = false; });
     await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').click(); });
     await sleep(200);
     check("el.click() on the box (a trusted change event from an untrusted click) is undone", !(await ack.isChecked()));
     await pg.evaluate(() => { const c = __dq('[data-testid="confirm-rv-ack"]'); c.checked = true; c.dispatchEvent(new Event("change", { bubbles: true })); const b = __dq('dialog [data-testid="confirm-yes"]'); b.disabled = false; });
-    await yes.click(); await sleep(500);
+    await yes.click({ force: true }); await sleep(500);
     check("a scripted change event + a real click on approve does NOT send", S.approveCalls.length === 0);
     await pg.evaluate(() => { __dq('[data-testid="confirm-rv-ack"]').checked = false; });
     await ack.click(); await sleep(100);

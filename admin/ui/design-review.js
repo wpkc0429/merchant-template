@@ -13,11 +13,12 @@ import { h, showCoreDialog, button, textarea, toast } from "./kit.js";
 import { coreText as ct } from "../lib/fixed-text.js";
 import { safeOrigin } from "../lib/versionpreview.js";
 import { formatDateTime } from "./format.js";
+import { now, matchMedia as mq } from "../lib/natives.js";
 
 /** Irreversible confirmations of the review dialog become usable this long after the dialog (or the panel) appeared. */
 export const DELAY_MS = 1000;
 const pctOf = (ppm) => (ppm / 10000).toFixed(2).replace(/\.?0+$/, "") || "0";
-const narrow = () => { try { return window.matchMedia("(max-width: 640px)").matches; } catch { return false; } };
+const narrow = () => { try { return mq("(max-width: 640px)").matches; } catch { return false; } };
 
 /** Latest attempt per (role, view, viewport, phase) -> [{key, role, viewKey, vps: {390: {before, after}, 1280: {...}}}]. */
 function groupShots(items) {
@@ -209,17 +210,23 @@ export function showReview(initial, handlers) {
     // ── actions panel ──
     let ack = null, approveBtn = null, ackTrusted = false, clickTrusted = false; // ackTrusted: the box was ticked by a real (isTrusted) change event
     // The 1-second delay (D18): armed whenever an irreversible confirmation appears; a visible hint counts it down.
-    let unlockAt = 0, timer = 0, hintEl = null, rejectBtn = null;
-    const waiting = () => performance.now() < unlockAt;
+    let unlockAt = 0, timer = 0, hintEl = null, announceEl = null, shownSecs = -1, rejectBtn = null;
+    const waiting = () => now() < unlockAt;
     const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } };
-    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || waiting() || busy || displayBad; if (rejectBtn) rejectBtn.disabled = waiting() || busy; };
+    // aria-disabled, not the disabled attribute, while the button is only "not yet": it stays focusable and reachable for assistive technology, is
+    // described by the hint next to it, and every handler below refuses to act (the isTrusted and delay gates do not depend on the attribute).
+    // The real disabled attribute is used only while a request is in flight (lock()).
+    const setWait = (btn, wait) => { btn.setAttribute("aria-disabled", wait ? "true" : "false"); btn.classList.toggle("is-wait", wait); };
+    const syncAck = () => { if (approveBtn) setWait(approveBtn, !(ack && ack.checked && ackTrusted) || waiting() || displayBad); if (rejectBtn) setWait(rejectBtn, waiting()); };
     const refreshGate = () => {
-      const left = Math.max(0, unlockAt - performance.now());
-      if (hintEl) { hintEl.textContent = left > 0 ? ct("rv.delay", { s: Math.max(1, Math.ceil(left / 1000)) }) : ""; hintEl.hidden = left <= 0; }
+      const left = Math.max(0, unlockAt - now());
+      // the visible countdown changes once per second and is NOT a live region (a 100 ms rewrite would be read out again and again); one polite
+      // announcement is made when the wait is over
+      if (hintEl) { const secs = left > 0 ? Math.max(1, Math.ceil(left / 1000)) : 0; if (secs !== shownSecs) { shownSecs = secs; hintEl.textContent = secs ? ct("rv.delay", { s: secs }) : ""; hintEl.hidden = !secs; if (!secs && announceEl) announceEl.textContent = ct("rv.delay.over"); } }
       if (!busy) syncAck();
       if (left <= 0) stopTimer();
     };
-    const armDelay = () => { unlockAt = performance.now() + DELAY_MS; stopTimer(); timer = setInterval(refreshGate, 100); refreshGate(); };
+    const armDelay = () => { unlockAt = now() + DELAY_MS; shownSecs = -1; if (announceEl) announceEl.textContent = ""; stopTimer(); timer = setInterval(refreshGate, 100); refreshGate(); };
     async function run(fn) {
       if (busy) return;
       busy = true; lock(true); // disabled at once, before anything is awaited
@@ -236,16 +243,16 @@ export function showReview(initial, handlers) {
     // Otherwise nothing is sent, the approve button stays disabled and the person is asked to reload.
     const trusted = (fn) => (ev) => {
       if (!(ev && ev.isTrusted === true)) return;
-      if (sane && !sane()) { displayBad = true; say(ct("dlg.display")); if (approveBtn) approveBtn.disabled = true; return; }
+      if (sane && !sane()) { displayBad = true; say(ct("dlg.display")); displayBad = true; syncAck(); return; }
       fn();
     };
     const back = () => { mode = "review"; say(""); renderPanel(); };
     const closeBtn = () => button(ct("rv.btn.close"), { onClick: () => { if (!busy) close(); }, "data-testid": "confirm-rv-close" });
 
     function renderPanel() {
-      ack = null; approveBtn = null; rejectBtn = null; hintEl = null; ackTrusted = false; clickTrusted = false;
+      ack = null; approveBtn = null; rejectBtn = null; hintEl = null; announceEl = null; shownSecs = -1; ackTrusted = false; clickTrusted = false;
       const kids = [];
-      const delayHint = () => { hintEl = h("p", { class: "muted", role: "status", "aria-live": "polite", "data-testid": "confirm-rv-delay" }); return hintEl; };
+      const delayHint = () => { hintEl = h("p", { class: "muted", id: "dlg-rv-delayhint", "data-testid": "confirm-rv-delay" }); announceEl = h("span", { class: "dlg-rv__sr", role: "status", "aria-live": "polite", "data-testid": "confirm-rv-ready" }); return h("div", {}, hintEl, announceEl); };
       if (mode === "reload") {
         kids.push(h("div", { class: "dlg__foot dlg-rv__btns" }, button(ct("rv.btn.reload"), { kind: "primary", "data-testid": "confirm-rv-reload", onClick: trusted(() => run(() => handlers.reload())) }), closeBtn()));
       } else if (mode === "reject") {
@@ -254,7 +261,7 @@ export function showReview(initial, handlers) {
           h("label", { class: "field" }, h("span", { class: "field__label" }, ct("rv.reject.label")), reason),
           delayHint(),
           h("div", { class: "dlg__foot dlg-rv__btns" }, button(ct("rv.btn.back"), { onClick: () => { if (!busy) back(); } }),
-            rejectBtn = button(model.reject.yes, { kind: "danger", disabled: true, "data-testid": "confirm-yes", onClick: trusted(() => { if (waiting() || busy) return; run(() => handlers.reject({ reason: reason.value })); }) })));
+            rejectBtn = button(model.reject.yes, { kind: "danger", "aria-disabled": "true", "aria-describedby": "dlg-rv-delayhint", "data-testid": "confirm-yes", onClick: trusted(() => { if (waiting() || busy) return; run(() => handlers.reject({ reason: reason.value })); }) })));
         armDelay();
       } else if (mode === "changes") {
         const note = textarea({ maxlength: 500, rows: 3, "aria-label": ct("rv.changes.label"), "data-testid": "confirm-rv-note" });
@@ -275,8 +282,8 @@ export function showReview(initial, handlers) {
             // (isTrusted on the click: a pointer press or Space / Enter on the focused box); anything else is undone.
             onclick: (ev) => { clickTrusted = ev.isTrusted === true; },
             onchange: (ev) => { if (ev.isTrusted === true && clickTrusted) ackTrusted = ack.checked; else ack.checked = ackTrusted; clickTrusted = false; syncAck(); } });
-          approveBtn = button(model.approve.yes, { kind: "danger", disabled: true, "data-testid": "confirm-yes",
-            onClick: trusted(() => { if (busy || waiting() || !ack.checked || !ackTrusted) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
+          approveBtn = button(model.approve.yes, { kind: "danger", "aria-disabled": "true", "aria-describedby": "dlg-rv-ackhint dlg-rv-delayhint", "data-testid": "confirm-yes",
+            onClick: trusted(() => { if (busy || waiting() || displayBad || !ack.checked || !ackTrusted) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
           if (model.approve.text) kids.push(h("p", { class: "dlg__msg" }, model.approve.text));
           kids.push(h("p", {}, h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, model.approve.warning)),
             h("label", { class: "check dlg-rv__ack" }, ack, h("span", {}, ct("rv.ack"))),

@@ -1,12 +1,22 @@
 // Frozen intrinsics (CORE, docs/DECISIONS.md D18). The design layer's modules are loaded with import() into the SAME realm as the core,
 // so a hostile module could otherwise poison built-ins (Promise.prototype.then, JSON.parse, Response.prototype.json, fetch, Array
-// iteration, ...) and read what the core passes through them (a refresh response, form data). app.js calls lockdownIntrinsics() once at
-// boot, after every core module and the vendored decoder are loaded and BEFORE the first design module is imported. After that,
+// iteration, a setter on a shadow root's adoptedStyleSheets, ...) and read what the core passes through them (a refresh response, form data).
+// app.js calls lockdownIntrinsics() once at boot, after every core module is loaded and BEFORE the first design module is imported. After that,
 // assigning to, redefining or deleting any of these in strict mode throws and in sloppy mode silently does nothing.
 //
+// The approach is an ENUMERATION, not a list of names: every own property of the global object is looked at.
+//   * a constructor (a function with a prototype object) is frozen together with its prototype and its parent classes;
+//   * a namespace-like object (Math, JSON, Reflect, Intl, Atomics, WebAssembly, Temporal, CSS, console, ...) is frozen with the classes inside it;
+//   * the global binding itself (window.fetch, window.getComputedStyle, window.matchMedia, window.open, window.setTimeout, ...) becomes
+//     non-writable and non-configurable;
+//   * the page's well-known singleton instances (document, performance, navigator, screen, history, crypto, ...) are frozen too, so a
+//     module cannot shadow performance.now or document.createElement on the instance.
+// A new browser API is therefore frozen without anyone adding it to a list. Only EXCEPTIONS stay open (documented below); the real-browser test
+// admin/e2e/hardening.mjs enumerates the globals again and fails if anything else is left unfrozen.
+//
 // Not covered (documented in D18): browser extensions and anything that runs before this file (the page's own classic scripts:
-// config.js, config-loader.js), objects the page itself owns, and the platform's own origin isolation (there is none for a module in the
-// same realm; a hostile module can still read the DOM and call what ctx gives it).
+// config.js, config-loader.js), objects the page itself owns, and isolation (there is none for a module in the same realm; a hostile
+// module can still read the DOM and call what ctx gives it).
 //
 // "Override mistake": once a prototype is frozen, `error.name = "X"` or `obj.toString = f` on an INSTANCE throws, because the inherited
 // data property is read-only. The core and the vendored decoder do that (`this.name = ...` in error classes), so for the few well-known
@@ -21,6 +31,17 @@ const OVERRIDABLE = {
   Error: ["name", "message", "toString"],
 };
 const ERROR_TYPES = ["EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError", "AggregateError"];
+
+/**
+ * The EXPLICIT exceptions: globals that stay as they are. Everything else found on the global object is frozen / locked.
+ *   heic2any : the vendored decoder's script assigns it on its first use (lib/upload.js takes it out of window at once and refuses a pre-seeded one).
+ * Everything the core itself assigns later is a property of its OWN objects, never of a frozen built-in.
+ */
+export const EXCEPTIONS = Object.freeze(["heic2any"]);
+const isException = (name) => EXCEPTIONS.includes(name);
+
+/** Singletons of the page whose INSTANCE is frozen (their methods live on frozen prototypes; this stops shadowing on the instance). */
+const INSTANCES = ["document", "performance", "navigator", "screen", "history", "crypto", "customElements", "visualViewport", "scheduler", "trustedTypes", "speechSynthesis", "caches", "indexedDB", "cookieStore", "navigation", "location"];
 
 function enableOverride(proto, key) {
   const d = Object.getOwnPropertyDescriptor(proto, key);
@@ -37,41 +58,29 @@ function enableOverride(proto, key) {
 
 const seen = new Set();
 function freeze(o) {
-  if (o === null || (typeof o !== "object" && typeof o !== "function") || seen.has(o)) return;
+  if (o === null || (typeof o !== "object" && typeof o !== "function") || seen.has(o)) return false;
   seen.add(o);
-  try { Object.freeze(o); } catch { /* exotic host object: skipped, reported by the caller's test */ }
+  try { Object.freeze(o); } catch { /* exotic host object: left alone, and the browser test names it */ }
+  return true;
 }
+const isCtor = (v) => typeof v === "function" && v.prototype !== null && typeof v.prototype === "object";
 function freezeClass(C) {
-  if (typeof C !== "function") return;
+  if (!isCtor(C)) return;
   freeze(C);
   freeze(C.prototype);
+  for (let p = Object.getPrototypeOf(C); typeof p === "function" && p !== Function.prototype && !seen.has(p); p = Object.getPrototypeOf(p)) { freeze(p); freeze(p.prototype); }
 }
-
-/** Names of globals whose constructor AND prototype are frozen (only those that exist in this browser). */
-const CLASSES = [
-  "Object", "Function", "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Date", "RegExp", "Error", "EvalError", "RangeError", "ReferenceError",
-  "SyntaxError", "TypeError", "URIError", "AggregateError", "Promise", "Map", "Set", "WeakMap", "WeakSet", "WeakRef", "FinalizationRegistry", "Proxy",
-  "ArrayBuffer", "SharedArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
-  "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
-  "Headers", "Request", "Response", "URL", "URLSearchParams", "FormData", "Blob", "File", "FileReader", "AbortController", "AbortSignal", "EventTarget", "Event",
-  "CustomEvent", "MessageEvent", "ErrorEvent", "ProgressEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "InputEvent", "FocusEvent", "UIEvent", "DOMException", "Node", "Element", "HTMLElement",
-  "Document", "HTMLDocument", "DocumentFragment", "CharacterData", "Text", "Comment", "Attr", "NodeList", "HTMLCollection", "DOMTokenList", "NamedNodeMap",
-  "CSSStyleDeclaration", "CSSStyleSheet", "StyleSheet", "XMLHttpRequest", "XMLHttpRequestEventTarget", "XMLHttpRequestUpload", "Storage", "TextEncoder", "TextDecoder",
-  "DOMParser", "XMLSerializer", "MutationObserver", "ResizeObserver", "IntersectionObserver", "Worker", "MessageChannel", "MessagePort", "BroadcastChannel", "WebSocket",
-  "ImageBitmap", "OffscreenCanvas", "CanvasRenderingContext2D", "OffscreenCanvasRenderingContext2D", "Image", "Option", "Audio", "DOMRect", "DOMMatrix", "ReadableStream", "WritableStream", "TransformStream", "CompressionStream", "DecompressionStream",
-  "Performance", "Crypto", "SubtleCrypto", "Location", "History", "Navigator", "Window", "MediaQueryList", "Range", "Selection", "TreeWalker",
-];
-const NAMESPACES = ["Math", "JSON", "Reflect", "Atomics", "Intl", "WebAssembly", "console"];
-/** Globals that become non-writable and non-configurable on window (so `window.fetch = ...` fails). */
-const LOCK_ON_WINDOW = [
-  "fetch", "XMLHttpRequest", "Request", "Response", "Headers", "JSON", "Promise", "Object", "Array", "Function", "String", "Number", "Boolean", "Symbol", "BigInt",
-  "Map", "Set", "WeakMap", "WeakSet", "Reflect", "Proxy", "Math", "Date", "RegExp", "Error", "TypeError", "RangeError", "SyntaxError", "URL", "URLSearchParams", "FormData", "Blob", "File",
-  "FileReader", "AbortController", "AbortSignal", "EventTarget", "Event", "CustomEvent", "TextEncoder", "TextDecoder", "Uint8Array", "ArrayBuffer", "DataView",
-  "structuredClone", "queueMicrotask", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "atob", "btoa",
-  "createImageBitmap", "WebSocket", "Worker", "DOMParser", "Intl", "WebAssembly", "Atomics", "Node", "Element", "HTMLElement", "Document", "Storage", "Image", "Option",
-  "MutationObserver", "ResizeObserver", "IntersectionObserver", "DOMException", "ImageBitmap", "OffscreenCanvas", "isNaN", "isFinite", "parseInt", "parseFloat", "encodeURIComponent", "decodeURIComponent",
-  "encodeURI", "decodeURI", "escape", "unescape", "eval", "ADMIN_CONFIG",
-];
+/** A namespace-like object: frozen, and so is every class / nested namespace inside it (Intl.NumberFormat, Temporal.PlainDate, WebAssembly.Module, ...). */
+function freezeNamespace(ns, depth = 0) {
+  if (!ns || typeof ns !== "object" || seen.has(ns) || depth > 3) return;
+  freeze(ns);
+  for (const k of Reflect.ownKeys(ns)) {
+    let d; try { d = Object.getOwnPropertyDescriptor(ns, k); } catch { continue; }
+    if (!d || !("value" in d)) continue;
+    if (isCtor(d.value)) freezeClass(d.value);
+    else if (d.value && typeof d.value === "object") freezeNamespace(d.value, depth + 1);
+  }
+}
 
 /**
  * Freezes the intrinsics. Returns a small report {frozen, locked} for diagnostics. Idempotent. Never throws.
@@ -81,33 +90,39 @@ export function lockdownIntrinsics() {
   // 1. keep the well-known instance-assignable keys assignable
   for (const [cls, keys] of Object.entries(OVERRIDABLE)) if (g[cls] && g[cls].prototype) for (const k of keys) enableOverride(g[cls].prototype, k);
   for (const n of ERROR_TYPES) if (g[n] && g[n].prototype) for (const k of ["name", "message"]) enableOverride(g[n].prototype, k);
-  // 2. the language and platform classes
-  for (const n of CLASSES) { try { freezeClass(g[n]); } catch { /* absent or exotic */ } }
-  for (const n of NAMESPACES) { try { freeze(g[n]); } catch { /* absent */ } }
-  // typed-array parent, the generator / iterator / async prototypes, and the Intl classes
-  const ta = Object.getPrototypeOf(Uint8Array);
-  freezeClass(ta);
-  const protos = [
+  // 2. the language pieces that are not reachable as a global name: typed-array parent, iterator / generator / async prototypes
+  freezeClass(Object.getPrototypeOf(Uint8Array));
+  const iterProtos = [
     Object.getPrototypeOf([][Symbol.iterator]()), Object.getPrototypeOf(new Map()[Symbol.iterator]()), Object.getPrototypeOf(new Set()[Symbol.iterator]()),
     Object.getPrototypeOf(""[Symbol.iterator]()), Object.getPrototypeOf(/x/[Symbol.matchAll]("x")),
     Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async function () {}), Object.getPrototypeOf(async function* () {}),
   ];
-  for (const p of protos) { freeze(p); freeze(p && p.prototype); freeze(p && Object.getPrototypeOf(p)); freeze(p && p.prototype && Object.getPrototypeOf(p.prototype)); }
+  for (const p of iterProtos) { freeze(p); freeze(p && p.prototype); freeze(p && Object.getPrototypeOf(p)); freeze(p && p.prototype && Object.getPrototypeOf(p.prototype)); }
   freeze(Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()))); // %IteratorPrototype%
-  if (typeof g.Iterator === "function") freezeClass(g.Iterator);
-  if (g.Intl) for (const k of Object.getOwnPropertyNames(g.Intl)) { try { freezeClass(g.Intl[k]); } catch { /* skip */ } }
-  // every HTML / SVG element interface and every Event interface the browser has
-  for (const k of Object.getOwnPropertyNames(g)) {
-    if (/^(HTML|SVG)\w*Element$/.test(k) || /^\w*Event$/.test(k) || /^(CSS|DOM)\w+$/.test(k)) { try { freezeClass(g[k]); } catch { /* skip */ } }
-  }
-  // configuration written by the page's classic scripts is read-only from here on
-  try { if (g.ADMIN_CONFIG && typeof g.ADMIN_CONFIG === "object") { for (const v of Object.values(g.ADMIN_CONFIG)) freeze(v); freeze(g.ADMIN_CONFIG); } } catch { /* skip */ }
-  // 3. the global bindings themselves
+  // 3. EVERY own property of the global object
   const locked = [];
-  for (const k of LOCK_ON_WINDOW) {
-    const d = Object.getOwnPropertyDescriptor(g, k);
-    if (!d || !d.configurable) continue;
-    try { Object.defineProperty(g, k, "value" in d ? { writable: false, configurable: false } : { configurable: false }); locked.push(k); } catch { /* skip */ }
+  for (const name of Object.getOwnPropertyNames(g)) {
+    if (isException(name)) continue;
+    let d; try { d = Object.getOwnPropertyDescriptor(g, name); } catch { continue; }
+    if (!d || !("value" in d)) continue; // accessors (document, location, localStorage ...) are handled below
+    const v = d.value;
+    if (isCtor(v)) freezeClass(v);
+    else if (v && typeof v === "object" && v !== g) { try { freezeNamespace(v); } catch { /* skip */ } }
+    if (d.configurable && (typeof v === "function" || (v && typeof v === "object" && v !== g))) {
+      try { Object.defineProperty(g, name, { writable: false, configurable: false }); locked.push(name); } catch { /* skip */ }
+    }
   }
+  // 4. the singleton instances (accessors on window)
+  for (const name of INSTANCES) {
+    try {
+      const v = g[name];
+      if (v && typeof v === "object") freeze(v);
+      // the accessor on window: keep the getter, drop the [Replaceable] setter and make it non-configurable (window.performance = x, defineProperty(window, ...))
+      const d = Object.getOwnPropertyDescriptor(g, name);
+      if (d && d.configurable && d.get) { Object.defineProperty(g, name, { get: d.get, set: undefined, enumerable: d.enumerable, configurable: false }); locked.push(name); }
+    } catch { /* absent or restricted */ }
+  }
+  // 5. configuration written by the page's classic scripts is read-only from here on
+  try { if (g.ADMIN_CONFIG && typeof g.ADMIN_CONFIG === "object") { for (const v of Object.values(g.ADMIN_CONFIG)) freeze(v); freeze(g.ADMIN_CONFIG); } } catch { /* skip */ }
   return { frozen: seen.size, locked };
 }

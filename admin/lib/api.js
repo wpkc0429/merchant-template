@@ -161,7 +161,7 @@ function refreshTokens() {
 async function restoreSession() {
   if (!canRefresh()) return false;
   try { await refreshTokens(); return true; } catch (e) {
-    if (e instanceof ApiError) return false;
+    if (e instanceof ApiError) return e.code === "preview_scope_missing" ? "preview_scope" : false; // "preview_scope": this host is not a registered preview origin
     throw e; // network down: the caller shows a connection error
   }
 }
@@ -188,15 +188,16 @@ async function apiRaw(method, path, body, extraHeaders) {
       try {
         await refreshTokens();
         res = await doFetch();
-      } catch {
+      } catch (e) {
         clearPair();
-        unauthorizedHandler(isReadOnly() ? "preview" : undefined);
+        // on a preview host say WHY: the host is not a registered preview origin (no preview_ro scope) / the 30-minute preview session ended (the refresh was refused) / anything else
+        unauthorizedHandler(!isReadOnly() ? undefined : e instanceof ApiError && e.code === "preview_scope_missing" ? "preview_scope" : e instanceof ApiError && e.status === 401 ? "preview" : undefined);
         throw new ApiError(401, { error: { message: "session expired" } });
       }
     }
     if (res.status === 401) {
       clearPair();
-      unauthorizedHandler(isReadOnly() ? "preview" : undefined);
+      unauthorizedHandler();
       throw new ApiError(401, { error: { message: "session expired" } });
     }
   }

@@ -28,6 +28,7 @@ let shell = null;          // {main, setActive}
 let viewToken = 0;         // invalidates in-flight view renders on navigation
 let pendingPath = "/";     // where to go after login
 let hostBranding = null;
+let bootNotice = ""; // why the login screen is shown at boot (a preview host that is not registered as one)
 let bootState = "pending"; // pending | in | out | error
 
 const holder = () => h("div", { class: "view" });
@@ -59,17 +60,19 @@ async function boot() {
   lockdownIntrinsics();
   installPreviewBanner(); // preview hosts only (lib/preview.js): the core-owned banner the design layer cannot remove
   await loadDesign();
-  onUnauthorized((why) => { showLogin({ notice: why === "preview" ? coreText("pv.expired") : why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
+  onUnauthorized((why) => { showLogin({ notice: why === "preview" ? coreText("pv.expired") : why === "preview_scope" ? coreText("pv.scopeMissing") : why === "membership" || why === "account" ? t("login.notice.disabled") : t("login.notice.expired") }); });
   fetchHostBranding().then((b) => { hostBranding = b; if (!session.user) applyBranding(b?.branding, b?.name); });
   start(onRoute);
 }
 
 async function establishSession() {
   try {
-    if (await restoreSession()) {
+    const restored = await restoreSession();
+    if (restored === true) {
       await enterApp();
       return true;
     }
+    if (restored === "preview_scope") bootNotice = coreText("pv.scopeMissing");
     return false;
   } catch (e) {
     bootState = "error";
@@ -113,7 +116,7 @@ async function onRoute(m) {
         const ok = await establishSession();
         if (ok === null) return;
         if (token !== viewToken) return;
-        if (!ok) { bootState = "out"; pendingPath = m.path === "/login" ? "/" : m.path; return showLogin({}); }
+        if (!ok) { bootState = "out"; pendingPath = m.path === "/login" ? "/" : m.path; return showLogin({ notice: bootNotice }); }
       } else {
         pendingPath = m.path === "/login" ? "/" : m.path;
         return showLogin({});

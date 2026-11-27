@@ -106,3 +106,25 @@ test('hardening in a real Chromium: sealed API, frozen intrinsics, preview host,
   process.stdout.write(r.stdout || '');
   assert.equal(r.status, 0, (r.stdout || '') + (r.stderr || ''));
 });
+
+test('review follow-up: enumeration freeze, captured natives, aria-disabled countdown, distinct preview messages, display-only guard (D18 item 6)', () => {
+  const lock = f('admin/lib/lockdown.js');
+  assert.match(lock, /Object\.getOwnPropertyNames\(g\)/, 'the global object is enumerated');
+  assert.ok(!/const CLASSES = \[/.test(lock), 'no hand-written class list');
+  assert.match(lock, /export const EXCEPTIONS = Object\.freeze\(\["heic2any"\]\)/);
+  // the core's own checks use the captured natives, never a live global lookup
+  for (const p of ['ui/design-review.js', 'ui/kit.js', 'ui/preview-banner.js']) {
+    const s = f(`admin/${p}`).replace(/\/\/.*$/gm, '');
+    assert.ok(!/\bperformance\.now\b/.test(s) && !/\bgetComputedStyle\(/.test(s) && !/\bwindow\.matchMedia\b/.test(s) && !/[^.\w]requestAnimationFrame\(/.test(s), `${p} uses a live global`);
+    assert.match(s, /lib\/natives\.js/, p);
+  }
+  const ui = f('admin/ui/design-review.js');
+  assert.match(ui, /"aria-disabled": "true"/);
+  assert.ok(!/aria-live": "polite", "data-testid": "confirm-rv-delay"/.test(ui), 'the countdown is not a live region');
+  const api = f('admin/lib/api.js');
+  assert.match(api, /"preview_scope"/);
+  assert.match(f('admin/lib/fixed-text.js'), /"rv\.delay\.over"/);
+  const d = f('docs/DECISIONS.md');
+  for (const n of ['enumerates every own property', 'does not block approval', 'lib/natives.js', 'aria-disabled', 'EXCEPTIONS']) assert.ok(d.includes(n), n);
+  assert.match(f('admin/docs/DESIGN-LAYER.md'), /does not block the person from approving/);
+});

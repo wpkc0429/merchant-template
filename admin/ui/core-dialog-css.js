@@ -32,7 +32,8 @@ p, h2, h3, dl, dd, ul, figure, pre { margin: 0; }
 .btn--danger { background: {err}; border-color: {err}; color: {err-text}; }
 .btn--danger-ghost { color: {err}; border-color: {errline}; }
 .btn--sm { min-height: 36px; padding: 0 14px; font-size: 13px; }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.dlg-rv__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .btn.is-busy { opacity: .6; cursor: progress; }
 :focus-visible { outline: 2px solid {acc}; outline-offset: 2px; }
 .muted { color: {muted}; }

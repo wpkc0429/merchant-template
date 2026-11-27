@@ -6,7 +6,7 @@
 // In page code use __dq(selector) / __dqa(selector) / __active() instead of document.querySelector / querySelectorAll / activeElement.
 // Playwright locators (page.locator, getByRole, waitForSelector) pierce the open roots by themselves.
 export const SHADOW_HOOK_SCRIPT = "(() => { if (window.__shadowHook) return; window.__shadowHook = true; const roots = []; const orig = Element.prototype.attachShadow;"
-  + " Element.prototype.attachShadow = function (o) { const r = orig.call(this, { ...o, mode: 'open' }); roots.push(r); return r; }; window.__roots = roots;"
+  + " Element.prototype.attachShadow = function (o) { const r = orig.call(this, { ...o, mode: 'open' }); roots.push(r); return r; };"
   + " window.__dq = (q) => document.querySelector(q) || roots.map((r) => r.querySelector(q)).find(Boolean) || null;"
   + " window.__dqa = (q) => [...document.querySelectorAll(q), ...roots.flatMap((r) => [...r.querySelectorAll(q)])];"
   + " window.__active = () => { let a = document.activeElement; while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; return a; };"

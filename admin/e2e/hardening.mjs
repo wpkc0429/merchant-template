@@ -101,6 +101,7 @@ const server = createServer(async (req, res) => {
     if (m === "POST" && a === "/admin/auth/logout") { S.logoutCalls++; S.valid = ""; res.writeHead(204); res.end(); return; }
     if (m === "POST" && a === "/admin/auth/refresh") {
       S.refreshCount++;
+      if (S.refresh500) return json(res, 500, { error: { code: "boom", message: "RAW" } });
       if (S.refreshDenied) return json(res, 401, { error: { code: "unauthorized", message: "RAW expired" } });
       S.valid = "tok-" + ++S.n;
       return json(res, 200, { access_token: S.valid, ...(S.preview && !S.noScope ? { scope: "preview_ro" } : {}) });
@@ -234,7 +235,7 @@ const o = {
   exec: RegExp.prototype.exec, reflectApply: Reflect.apply, assign: Object.assign, keys: Object.keys, entries: Object.entries, fromEntries: Object.fromEntries,
   addEL: EventTarget.prototype.addEventListener, append: Node.prototype.appendChild, create: Document.prototype.createElement, attach: Element.prototype.attachShadow,
   setItem: Storage.prototype.setItem, getItem: Storage.prototype.getItem, dec: TextDecoder.prototype.decode, abuf: Blob.prototype.arrayBuffer, structuredClone: window.structuredClone,
-  queueMicrotask: window.queueMicrotask, setTimeout: window.setTimeout, objToString: Object.prototype.toString, errName: Error.prototype.name,
+  queueMicrotask: window.queueMicrotask, setTimeout: window.setTimeout, gcs: window.getComputedStyle, mm: window.matchMedia, open: window.open, raf: window.requestAnimationFrame, si: window.setInterval, ct: window.clearTimeout, pnow: performance.now, dcreate: document.createElement, dqs: document.querySelector, objToString: Object.prototype.toString, errName: Error.prototype.name,
 };
 const ArrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
 o.iterNext = ArrayIteratorPrototype.next;
@@ -283,15 +284,54 @@ T("TextDecoder.prototype.decode", () => { TextDecoder.prototype.decode = functio
 T("Blob.prototype.arrayBuffer", () => { Blob.prototype.arrayBuffer = function () { rec("abuf"); return o.abuf.call(this); }; }, () => Blob.prototype.arrayBuffer === o.abuf);
 T("structuredClone / queueMicrotask / setTimeout", () => { window.structuredClone = (v) => o.reflectApply(o.structuredClone, window, [v]); window.queueMicrotask = (f) => o.reflectApply(o.queueMicrotask, window, [f]); window.setTimeout = (...a) => o.reflectApply(o.setTimeout, window, a); }, () => window.structuredClone === o.structuredClone && window.queueMicrotask === o.queueMicrotask && window.setTimeout === o.setTimeout);
 T("Error.prototype.name = x", () => { Error.prototype.name = "Hacked"; }, () => Error.prototype.name === o.errName);
+T("adoptedStyleSheets setter on the shadow-root prototype (it would receive the core's closed root)", () => Object.defineProperty(ShadowRoot.prototype, "adoptedStyleSheets", { set(v) { rec("adopted:tok-"); }, get() { return []; }, configurable: true }), () => { const d = Object.getOwnPropertyDescriptor(ShadowRoot.prototype, "adoptedStyleSheets"); return d && d.configurable === false && !String(d.set).includes("rec("); });
+T("window.getComputedStyle = f", () => { window.getComputedStyle = (...a) => o.reflectApply(o.gcs, window, a); }, () => String(window.getComputedStyle).includes("[native code]"));
+T("window.matchMedia = f", () => { window.matchMedia = (...a) => o.reflectApply(o.mm, window, a); }, () => String(window.matchMedia).includes("[native code]"));
+T("window.open = f", () => { window.open = (...a) => o.reflectApply(o.open, window, a); }, () => String(window.open).includes("[native code]"));
+T("window.requestAnimationFrame / setInterval / clearTimeout = f", () => { window.requestAnimationFrame = (...a) => o.reflectApply(o.raf, window, a); window.setInterval = (...a) => o.reflectApply(o.si, window, a); window.clearTimeout = (...a) => o.reflectApply(o.ct, window, a); }, () => String(window.requestAnimationFrame).includes("[native code]") && String(window.setInterval).includes("[native code]") && String(window.clearTimeout).includes("[native code]"));
+T("performance.now = f (instance)", () => { performance.now = () => o.reflectApply(o.pnow, performance, []); }, () => String(performance.now).includes("[native code]"));
+T("defineProperty(performance, now)", () => Object.defineProperty(performance, "now", { value: () => o.reflectApply(o.pnow, performance, []) }), () => String(performance.now).includes("[native code]"));
+T("document.createElement = f (instance)", () => { document.createElement = (...a) => o.reflectApply(o.dcreate, document, a); }, () => String(document.createElement).includes("[native code]"));
+T("defineProperty(document, querySelector)", () => Object.defineProperty(document, "querySelector", { value: (...a) => o.reflectApply(o.dqs, document, a) }), () => String(document.querySelector).includes("[native code]"));
+T("window.performance replaced", () => { Object.defineProperty(window, "performance", { value: performance, configurable: true }); }, () => Object.getOwnPropertyDescriptor(window, "performance").configurable === false);
+T("window.performance = x (replaceable setter)", () => { window.performance = { now: () => 1e12 }; }, () => String(performance.now).includes("[native code]"));
+T("Notification / PerformanceObserver / FileList / DataTransfer statics and prototypes", () => { Notification.requestPermission = () => 1; PerformanceObserver.prototype.observe = () => 1; FileList.prototype.item = () => null; DataTransfer.prototype.setData = () => 1; }, () => String(Notification.requestPermission).includes("[native code]") && String(PerformanceObserver.prototype.observe).includes("[native code]") && String(FileList.prototype.item).includes("[native code]") && String(DataTransfer.prototype.setData).includes("[native code]"));
 T("new property on a frozen prototype (Array.prototype.sneaky)", () => { Array.prototype.sneaky = () => 1; }, () => !("sneaky" in []));
 T("Object.setPrototypeOf(Object.prototype, {})", () => Object.setPrototypeOf(Object.prototype, { evil: 1 }), () => !("evil" in {}));
 export default out;
+`;
+MODULES["/hostile/audit.js"] = `
+const ex = JSON.parse(window.__exceptions);
+const off = []; let audited = 0;
+const isCtor = (v) => typeof v === "function" && v.prototype !== null && typeof v.prototype === "object";
+for (const name of Object.getOwnPropertyNames(globalThis)) {
+  if (name.startsWith("__") || ex.includes(name)) continue;
+  const d = Object.getOwnPropertyDescriptor(globalThis, name);
+  if (!d) continue;
+  if ("value" in d) {
+    const v = d.value;
+    if (isCtor(v)) { audited++; if (!Object.isFrozen(v) || !Object.isFrozen(v.prototype)) off.push("class " + name); }
+    else if (v && typeof v === "object" && v !== globalThis) { audited++; if (!Object.isFrozen(v)) off.push("namespace " + name); }
+    if ((typeof v === "function" || (v && typeof v === "object" && v !== globalThis)) && (d.writable || d.configurable)) off.push("binding " + name);
+  }
+}
+for (const n of ["document", "performance", "navigator", "screen", "history", "crypto", "customElements"]) { try { const v = globalThis[n]; if (v && !Object.isFrozen(v)) off.push("instance " + n); audited++; } catch {} }
+export default { off, audited, names: ["Temporal", "FileList", "DataTransfer", "ReadableStreamDefaultReader", "PerformanceObserver", "CustomElementRegistry", "Notification"].filter((n) => typeof globalThis[n] === "function") };
+`;
+MODULES["/hostile/clock.js"] = `
+let n = 0;
+try { performance.now = () => 1e12; n++; } catch {}
+try { Object.defineProperty(performance, "now", { value: () => 1e12 }); n++; } catch {}
+try { window.getComputedStyle = () => ({ getPropertyValue: () => "", display: "none", width: "1px", zoom: "1", transform: "none", opacity: "1", visibility: "visible" }); n++; } catch {}
+try { window.matchMedia = () => ({ matches: true }); n++; } catch {}
+export default { shadowed: n, now: performance.now() };
 `;
 MODULES["/hostile/heic.js"] = `
 window.__heicEvil = 0;
 window.heic2any = async () => { window.__heicEvil++; return new Blob([new Uint8Array(10)], { type: "image/jpeg" }); };
 export default 1;
 `;
+import { EXCEPTIONS as EXC } from "../lib/lockdown.js";
 const authedCount = () => S.log.filter((x) => x.auth && x.auth !== "Bearer ").length;
 
 try {
@@ -361,6 +401,39 @@ try {
     const { ctx, cap } = await poisonRun();
     APP_MODE = { noLockdown: false, noSeal: false, evalCsp: false };
     check("control: with the freeze off the hooks run and the refreshed token IS captured by the module", cap.length > 5 && cap.some((c) => /tok-/.test(c)), `captured ${cap.length}: ${JSON.stringify(cap.slice(0, 6))}`);
+    await ctx.close();
+  }
+
+  console.log("every global constructor / namespace / binding is frozen (enumerated in the page, not from a list)");
+  {
+    const { ctx, pg } = await open("/design");
+    await settle(pg);
+    await pg.evaluate((e) => { window.__exceptions = e; }, JSON.stringify(EXC));
+    const a = await pg.evaluate(() => import("/hostile/audit.js").then((m) => JSON.parse(JSON.stringify(m.default))));
+    check(`the audit found ${a.audited} globals and every one of them is frozen / locked`, a.off.length === 0 && a.audited > 150, JSON.stringify(a.off.slice(0, 12)) + " audited=" + a.audited);
+    check("newer platform classes that a fixed list would miss are among them (" + a.names.join(", ") + ")", a.names.length >= 3);
+    await ctx.close();
+  }
+  console.log("a design module that shadows the clock and getComputedStyle cannot shorten the delay (control run: freeze off, so the shadowing SUCCEEDS)");
+  {
+    APP_MODE = { noLockdown: true, noSeal: false, evalCsp: false };
+    const { ctx, pg } = await open(`/design/${RID}`);
+    await pg.waitForSelector(T("dh-review"));
+    const r = await pg.evaluate(() => import("/hostile/clock.js").then((m) => JSON.parse(JSON.stringify(m.default))));
+    APP_MODE = { noLockdown: false, noSeal: false, evalCsp: false };
+    check("control: the shadowing succeeded (the freeze is off in this run)", r.shadowed >= 3 && r.now > 1e11, JSON.stringify(r));
+    await pg.locator(T("dh-review")).click();
+    await pg.waitForSelector("dialog[open] .dlg-rv");
+    await pg.locator(T("confirm-rv-ack")).click();
+    const yes = pg.locator(`dialog ${T("confirm-yes")}`);
+    const box = await yes.boundingBox();
+    await pg.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await sleep(100);
+    check("with performance.now / getComputedStyle / matchMedia shadowed, the core still uses its captured natives: the 1 s delay holds and a trusted early click sends nothing", S.approveCalls.length === 0 && (await yes.getAttribute("aria-disabled")) === "true");
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 5000 });
+    await yes.click();
+    await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
+    check("and after the delay the approval works (no display alarm from the shadowed getComputedStyle)", S.approveCalls.length === 1);
     await ctx.close();
   }
 
@@ -474,6 +547,7 @@ try {
     const pg = await ctx.newPage();
     await pg.goto(URL0 + "#/design", { waitUntil: "load" });
     await pg.waitForSelector(T("login-email"), { timeout: 15000 });
+    check("preview host: a refresh without the scope shows the 'not a preview host' notice (not 'expired')", /沒有設定成預覽主機/.test(await pg.locator(T("login-notice")).innerText().catch(() => "")) && !/已到期/.test(await pg.locator(T("login-notice")).innerText().catch(() => "")));
     check("preview host: a refresh WITHOUT scope preview_ro is dropped (no session, back at login, no shop request)", (await pg.locator(".shell").count()) === 0 && S.log.filter((x) => x.a.startsWith("/admin/shops")).length === 0);
     S.loginScope = "none";
     await pg.fill(T("login-email"), "owner@example.com"); await pg.fill(T("login-password"), "correct horse battery");
@@ -490,7 +564,7 @@ try {
     await pg.locator(T("dh-review")).click();
     await pg.waitForSelector("dialog[open] .dlg-rv");
     await pg.locator(T("confirm-rv-ack")).click();
-    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; });
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; });
     const meBefore = S.log.filter((x) => x.a === "/admin/me").length;
     await pg.locator(T("confirm-yes")).click();
     await pg.waitForSelector(T("confirm-rv-alert"), { state: "visible" });
@@ -501,6 +575,17 @@ try {
     await ctx.close();
   }
 
+  {
+    const { ctx, pg } = await open("/design", { preview: "version" });
+    await settle(pg);
+    S.refresh500 = true; S.valid = "tok-expired"; // the refresh FAILS (a server error): neither "expired" nor "not a preview host"
+    await pg.locator(T("dh-site-admin")).click();
+    await pg.waitForSelector(T("login-notice"), { timeout: 10000 });
+    const g = await pg.locator(T("login-notice")).innerText();
+    check("preview host: a refresh that FAILS (500) shows the generic notice, not the preview-expired or not-a-preview-host one", !/預覽/.test(g) && g.length > 0, g);
+    await ctx.close();
+  }
+
   // ═══ 6. APPROVE DELAY ═══
   console.log("approve delay (1 second)");
   {
@@ -508,6 +593,7 @@ try {
     await pg.waitForSelector(T("dh-review"));
     await pg.locator(T("dh-review")).click();
     await pg.waitForSelector("dialog[open] .dlg-rv");
+    await pg.evaluate(() => { window.__muts = 0; const h = __dq('[data-testid="confirm-rv-delay"]'); new MutationObserver((m) => { window.__muts += m.length; }).observe(h, { childList: true, characterData: true, subtree: true }); });
     const t0 = await pg.evaluate(() => performance.now());
     await pg.locator(T("confirm-rv-ack")).click();
     const yes = pg.locator(`dialog ${T("confirm-yes")}`);
@@ -519,10 +605,14 @@ try {
     await pg.mouse.click(box.x + box.width / 2, box.y + box.height / 2); // a real, trusted click on the disabled button
     await sleep(100);
     check("a trusted click before 1 s does nothing (no request)", S.approveCalls.length === 0 && (await pg.locator("dialog[open] .dlg-rv").count()) === 1);
-    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; }, null, { timeout: 4000 });
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 4000 });
     const late = (await pg.evaluate(() => performance.now())) - t0;
     check("the button became enabled no earlier than 1 s after the dialog appeared", late >= 900, `late=${late}`);
     check("the hint is gone once the button is usable", (await hint.innerText()).trim() === "");
+    const a11y = await pg.evaluate(() => { const h = __dq('[data-testid="confirm-rv-delay"]'), r = __dq('[data-testid="confirm-rv-ready"]'), b = __dq('dialog [data-testid="confirm-yes"]'); return { muts: window.__muts, hintLive: h.getAttribute("aria-live"), hintRole: h.getAttribute("role"), readyRole: r.getAttribute("role"), readyLive: r.getAttribute("aria-live"), ready: r.textContent, dis: b.disabled, aria: b.getAttribute("aria-disabled"), desc: b.getAttribute("aria-describedby") }; });
+    check("a11y: the countdown is NOT a live region and changed at most 3 times in about a second (not every 100 ms)", a11y.hintLive === null && a11y.hintRole === null && a11y.muts <= 3, JSON.stringify(a11y));
+    check("a11y: one polite announcement says the button is usable now", a11y.readyRole === "status" && a11y.readyLive === "polite" && /現在可以按下按鈕/.test(a11y.ready), JSON.stringify(a11y));
+    check("a11y: once usable the button is neither disabled nor aria-disabled, and it is described by the hints", a11y.dis === false && a11y.aria === "false" && /dlg-rv-delayhint/.test(a11y.desc), JSON.stringify(a11y));
     await yes.click();
     await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("after the delay a trusted click approves (one request)", S.approveCalls.length === 1);
@@ -539,11 +629,15 @@ try {
     const tabTo = async (id) => { for (let i = 0; i < 60; i++) { if ((await focusId()) === id) return true; await pg.keyboard.press("Tab"); } return false; };
     await tabTo("confirm-rv-ack");
     await pg.keyboard.press("Space");
+    // the approve button is only aria-disabled during the wait: reachable by Tab (assistive technology finds it and its hint) but it cannot act
     let reachedEarly = false;
     for (let i = 0; i < 12 && !reachedEarly; i++) { await pg.keyboard.press("Tab"); reachedEarly = (await focusId()) === "confirm-yes"; }
+    const early = reachedEarly ? await pg.evaluate(() => { const b = __dq('[data-testid="confirm-yes"]'); return { dis: b.disabled, aria: b.getAttribute("aria-disabled"), desc: b.getAttribute("aria-describedby") }; }) : null;
+    if (reachedEarly) await pg.keyboard.press("Enter");
+    await sleep(100);
     const spent = (await pg.evaluate(() => performance.now())) - t0;
-    check("keyboard: the approve button cannot be reached by Tab before 1 s (it is disabled), and nothing was sent", (!reachedEarly || spent >= 950) && S.approveCalls.length === 0, `reachedEarly=${reachedEarly} spent=${spent}`);
-    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; }, null, { timeout: 4000 });
+    check("keyboard: the waiting approve button is focusable (aria-disabled + described), and Enter on it sends nothing", (!reachedEarly ? spent >= 950 : early.dis === false && early.aria === "true" && /dlg-rv-delayhint/.test(early.desc)) && S.approveCalls.length === 0, JSON.stringify([reachedEarly, early, spent]));
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 4000 });
     const reached = await tabTo("confirm-yes");
     await pg.keyboard.press("Enter");
     await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
@@ -563,7 +657,7 @@ try {
     await sleep(80);
     check("reject: a trusted click before 1 s sends nothing", S.rejectCalls.length === 0);
     check("the back button is never delayed", await pg.locator(`dialog .dlg-rv__btns button`).first().isEnabled());
-    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled; }, null, { timeout: 4000 });
+    await pg.waitForFunction(() => { const b = __dq('[data-testid="confirm-yes"]'); return b && !b.disabled && b.getAttribute("aria-disabled") !== "true"; }, null, { timeout: 4000 });
     await yes.click();
     await pg.waitForFunction(() => !__dq("dialog[open]"), null, { timeout: 8000 });
     check("reject: after the delay it works (one request)", S.rejectCalls.length === 1);
@@ -639,8 +733,8 @@ try {
     await ctx.close();
   }
 
-  const real = problems.filter((p) => !/status of (401|403)/.test(p)); // the deliberate 401 / 403 answers of the fake API are logged by the browser
-  check("no console error, page error or CSP violation anywhere (except the deliberate 401 / 403 answers)", real.length === 0, JSON.stringify(real.slice(0, 6)));
+  const real = problems.filter((p) => !/status of (401|403|500)/.test(p)); // the deliberate 401 / 403 answers of the fake API are logged by the browser
+  check("no console error, page error or CSP violation anywhere (except the deliberate 401 / 403 / 500 answers)", real.length === 0, JSON.stringify(real.slice(0, 6)));
   console.log("NOTE (found, D18): the vendored HEIC decoder's worker evaluates a string (new Function), which the shipped CSP (script-src 'self') forbids, so the HEIC fallback cannot run under it today (Safari converts natively); this test serves its HEIC pages with 'unsafe-eval' only to prove the freeze does not break the decoder.");
   console.log("NOTE (documented limit, D18): a module in the same origin can still call the platform's cookie refresh itself; the seal removes the CORE's client and token, it is not isolation.");
 } catch (e) {
