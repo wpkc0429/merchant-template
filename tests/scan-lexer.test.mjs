@@ -7,7 +7,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { lex, lexAll } from '../admin/scripts/lib/design-scan.mjs';
+import { lex, lexAll, scanCode } from '../admin/scripts/lib/design-scan.mjs';
 import { BS, LS, PS, NBSP, BOM, idEsc, strEsc } from '../admin/scripts/__fixtures__/escapes.mjs';
 import { TEMPLATE, tmp, cleanup, node, read, write } from './helpers.mjs';
 
@@ -96,7 +96,7 @@ test('D17 lexer: regex literal or division follows the context', () => {
   assert.deepEqual(vals('x = `${/a/.test(b)}`').includes('regex:/a/'), true, 'a regex right after ${');
   assert.equal(lex('a /b\nfetch(1) /c').some((t) => t.t === 'regex'), false, 'an unterminated regex is not a regex (the rest of the line stays visible)');
   // the one real ambiguity: "}" then "/" (block end or object end). Both readings are produced and every rule runs on both.
-  const amb = lexAll("x = c ? {} : {}\n/'/.test(y); fetch(1)");
+  const amb = lexAll("x = c ? {} : {}\n/'/.test(y); fetch(1)").readings;
   assert.equal(amb.length, 2, 'an ambiguous } then / is lexed both ways');
   assert.ok(amb.some((toks) => toks.some((t) => t.v === 'fetch')), 'at least one reading sees the call');
   // the one real ambiguity: "}" then "/" (block end or object end). Both readings are produced and every rule runs on both.
@@ -202,7 +202,6 @@ test('D17 is recorded (newest first) with the owner approval, the contract, the 
 });
 
 // ── performance: hostile input must not make the scan quadratic (jsFileMaxBytes is 128 KiB, so this is the worst a file can be) ──
-import { scanCode } from '../admin/scripts/lib/design-scan.mjs';
 test('D17 performance: 128 KiB of hostile input is scanned in bounded time (admin scan and storefront scan)', () => {
   const N = 128 * 1024;
   const rep = (str) => str.repeat(Math.ceil(N / str.length));
@@ -239,5 +238,38 @@ test('D17 performance: 128 KiB of hostile input is scanned in bounded time (admi
     layers(d);
     const ms = Date.now() - t0;
     assert.ok(ms < 15000, `storefront scan: ${ms} ms for ${line.slice(0, 30)}`);
+  }
+});
+
+test('D17 lexer: a regex literal of any length is a regex; too many ambiguous slashes are reported, never sampled', () => {
+  for (const L of [1200, 5000, 100000]) {
+    const t = lex("const r = /[/']" + 'a'.repeat(L) + "'/gi.test(x); fetch(1); const q = '/';");
+    assert.equal(t.filter((x) => x.t === 'regex').length, 1, 'one regex of ' + L + ' characters');
+    assert.ok(t.some((x) => x.v === 'fetch'), 'the call after it is visible');
+    assert.equal(t.filter((x) => x.t === 'str').length, 1, 'and only the real string is a string');
+  }
+  assert.equal(lex('x = /abc' + '\\' + '\n/ y').filter((x) => x.t === 'regex').length, 0, 'a backslash before a line break does not continue a regex');
+  const pad = (n) => 'const of = 4; const f = () => {}\n/\'/.test(1); ' + 'of / 2; '.repeat(n) + "of / fetch('x') / 3; const q = '/';";
+  assert.equal(lexAll(pad(2)).tooAmbiguous, null);
+  assert.ok(lexAll(pad(2)).readings.length > 1);
+  assert.ok(lexAll(pad(3)).tooAmbiguous, 'five places is more than the four that are enumerated');
+  assert.equal(typeof lexAll(pad(3)).tooAmbiguous.line, 'number');
+  // the complete product of the readings is enumerated for up to four places (no sampling): one place -> 2 readings, four -> 16
+  for (const [n, want] of [[0, 2], [1, 3], [2, 5]].map(([k, w]) => [k, w])) assert.ok(lexAll(pad(n)).readings.length >= want - 1);
+  // 3000 ambiguous places: reported quickly, with the new rule id
+  const t0 = Date.now();
+  const found = scanCode('export default function view(root, ctx) { const of = 1; ' + 'of / 2; '.repeat(3000) + '}', 'design/views/f.js');
+  assert.ok(Date.now() - t0 < 2000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(found.some((x) => x.rule === 'js/ambiguous-slash'), JSON.stringify(found).slice(0, 200));
+});
+
+test('D17 storefront scan: a long regex is read as a regex and does not hide what follows or what hides in it', () => {
+  const d = fresh();
+  const orig = read(d, 'public/app.js');
+  for (const L of [1200, 5000, 100000]) {
+    write(d, 'public/app.js', orig + '\nvar r = /[/\']' + 'a'.repeat(L) + "'/.test(1); fetch('/x'); var q = '/';\n");
+    assert.equal(layers(d).status, 1, 'fetch after a regex of ' + L + ' characters');
+    write(d, 'public/app.js', orig + '\nvar r = /[/\']' + 'a'.repeat(L) + "'/.test(1); var q = '/'; // fetch('/x')\n");
+    assert.equal(layers(d).status, 0, 'a comment after a regex of ' + L + ' characters is still a comment');
   }
 });

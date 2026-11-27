@@ -80,7 +80,7 @@ const ASSIGN_OPS = new Set(["=", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>
 //    count lines); whitespace is whatever JavaScript's \s covers (NBSP, BOM, the Zs spaces);
 //  * a number token never swallows a following `.name` (1..constructor is num `1.`, `.`, id `constructor`);
 //  * `/` is a regex start or a division by context (paren and brace tracking). The one place where the context cannot be known
-//    (a `}` that may end a block or an object literal, then `/`) is lexed BOTH ways (lexAll) and every rule runs on both;
+//    (a `}` that may end a block or an object literal, an arrow body, `of` / `yield` / `await`, `++` after a line break, then `/`) is lexed in EVERY combination (lexAll); more than four such places in a file is reported (js/ambiguous-slash), never guessed;
 //  * compound assignments (`&&=`, `||=`, `??=`, ...) are single punctuators.
 // Malformed escapes never throw and never loop: they decode as leniently as possible (the code would be a SyntaxError when
 // loaded, so it cannot run). HTML-like comments (`<!--`, `-->`) are NOT comments here (a syntax error in a module), so their
@@ -164,7 +164,7 @@ const endsOperand = (t) => Boolean(t) && (t.t === "num" || t.t === "str" || t.t 
 /**
  * Minimal JS lexer: strings, templates (with nested expressions), comments, regex literals, numbers, identifiers, punctuators.
  * `mode` only matters where a `/` follows a `}` that could end a block or an object literal: "div" reads a division, "regex" a
- * regex. lexAll() runs both when the source has such a place (the returned array has .ambiguous set then).
+ * regex. lexAll() lexes every combination of such places (and reports a file with too many of them).
  */
 export function lex(src, mode = "div") {
   const toks = [];
@@ -176,8 +176,26 @@ export function lex(src, mode = "div") {
   const last = (back = 1) => toks[toks.length - back];
   const isDot = (tk) => Boolean(tk) && tk.t === "punct" && (tk.v === "." || tk.v === "?.");
   toks.ambiguous = false;
+  toks.siteLines = [];
+  // regexClose(p): the index of the "/" that closes a regex literal whose body starts at p, or -1 (no closer on this line). A regex body cannot
+  // span lines, a backslash before a line break ends it, "/" inside [ ] does not close it. One backward pass over the source (made on the first
+  // regex attempt) gives every later attempt O(1), whatever the length of the literal (no cap: a 100000-character regex is still a regex).
+  let afterClass = null, inClassTbl = null;
+  const regexClose = (p) => {
+    if (afterClass === null) {
+      afterClass = new Int32Array(n + 3).fill(-1); inClassTbl = new Int32Array(n + 3).fill(-1);
+      for (let q = n - 1; q >= 0; q--) {
+        const ch = src[q];
+        if (isLT(ch)) continue; // both stay -1
+        if (ch === "\\") { const nx = src[q + 1]; if (nx !== undefined && !isLT(nx)) { afterClass[q] = afterClass[q + 2]; inClassTbl[q] = inClassTbl[q + 2]; } continue; }
+        afterClass[q] = ch === "/" ? q : ch === "[" ? inClassTbl[q + 1] : afterClass[q + 1];
+        inClassTbl[q] = ch === "]" ? afterClass[q + 1] : inClassTbl[q + 1];
+      }
+    }
+    return p < n ? afterClass[p] : -1;
+  };
   let sites = 0; // ambiguous places met so far; `mode` decides each one (see lexAll)
-  const decide = () => { const i = sites++; toks.sites = sites; toks.ambiguous = true; return mode === "regex" ? true : Array.isArray(mode) ? Boolean(mode[i]) : false; };
+  const decide = () => { const i = sites++; toks.sites = sites; toks.ambiguous = true; toks.siteLines.push(line); return mode === "regex" ? true : Array.isArray(mode) ? Boolean(mode[i]) : false; };
 
   // is a `function` / `class` keyword after this token an EXPRESSION (so the body's "}" ends an operand)?
   const isExprStart = (tk) => {
@@ -313,14 +331,9 @@ export function lex(src, mode = "div") {
       if (c === "#") { push("id", "#"); i++; continue; }
     }
     if (c === "/" && regexAllowed()) {
-      let j = i + 1, inClass = false, closed = false;
-      while (j < n && j < i + 1000 && !isLT(src[j])) { // (longer than 1000 characters: not read as a regex, keeps the lexer linear)
-        if (src[j] === "\\") { j += 2; continue; }
-        if (src[j] === "[") inClass = true; else if (src[j] === "]") inClass = false; else if (src[j] === "/" && !inClass) { closed = true; break; }
-        j++;
-      }
-      if (closed) { // an unterminated regex is not a regex: "/" stays an operator so the rest of the line is not hidden
-        j++; while (j < n && ID_PART.test(src[j])) j++;
+      const close = regexClose(i + 1);
+      if (close >= 0) { // an unterminated regex is not a regex: "/" stays an operator so the rest of the line is not hidden
+        let j = close + 1; while (j < n && ID_PART.test(src[j])) j++;
         push("regex", src.slice(i, j)); i = j; continue;
       }
     }
@@ -332,25 +345,29 @@ export function lex(src, mode = "div") {
   return toks;
 }
 
+/** More ambiguous places than this in one reading is reported (js/ambiguous-slash) instead of guessed: 2^4 = 16 readings are enumerated in full. */
+export const MAX_AMBIGUOUS_SLASHES = 4;
 /**
- * lex() once, plus one more reading for every combination of the places where a `/` could be a regex or a division (a `}` that may
- * end a block or an object, an arrow body, `of` / `yield` / `await`, a `++` after a line break). Every rule must run on each result.
- * At most MAX_READINGS readings are made; beyond that the "all division" and "all regex" readings are added.
+ * lex() once for every combination of the readings of the places where a `/` could be a regex or a division (a `}` that may end a block or an
+ * object, an arrow body, `of` / `yield` / `await`, a `++` after a line break). Every rule must run on each result. SOUND: the set is the
+ * complete product (at most 31 readings, every decision vector of up to 4 places), never a sample; when any reading has more than
+ * MAX_AMBIGUOUS_SLASHES places the enumeration stops and `tooAmbiguous` carries the line of the fifth place: the caller reports it.
+ * Returns { readings, tooAmbiguous: { line } | null }.
  */
 export function lexAll(src) {
-  const MAX_READINGS = 24;
   const first = lex(src, []);
-  const out = [first], todo = [{ prefix: [], toks: first }];
+  const readings = [first];
+  const todo = [{ prefix: [], toks: first }];
   while (todo.length) {
     const { prefix, toks } = todo.shift();
+    if ((toks.sites || 0) > MAX_AMBIGUOUS_SLASHES) return { readings, tooAmbiguous: { line: toks.siteLines[MAX_AMBIGUOUS_SLASHES] } };
     for (let i = prefix.length; i < (toks.sites || 0); i++) {
-      if (out.length >= MAX_READINGS) { out.push(lex(src, "regex")); return out; }
       const next = prefix.concat(new Array(i - prefix.length).fill(false), [true]);
       const t = lex(src, next);
-      out.push(t); todo.push({ prefix: next, toks: t });
+      readings.push(t); todo.push({ prefix: next, toks: t });
     }
   }
-  return out;
+  return { readings, tooAmbiguous: null };
 }
 
 /**
@@ -419,7 +436,9 @@ export function scanCode(src, file, opts = {}) {
   // lexAll: usually one token list; two when a "}" followed by "/" could be read as a block end or an object end (see lex). The rules
   // run on each reading and the findings are merged, so neither reading can hide code from the other.
   const seen = new Set(), out = [];
-  for (const toks of lexAll(src)) {
+  const { readings, tooAmbiguous } = lexAll(src);
+  if (tooAmbiguous) out.push(v("js/ambiguous-slash", `more than ${MAX_AMBIGUOUS_SLASHES} places where a "/" could start a regex or divide (after the "}" of an arrow function or block, after of / yield / await, after ++ or -- on a new line): the scan cannot tell which, so it refuses the file. Add semicolons or parentheses so that each "/" is unambiguous`, file, tooAmbiguous.line));
+  for (const toks of readings) {
     for (const f of scanCodeTokens(toks, file, opts)) {
       const key = `${f.rule}|${f.line}|${f.msg}`;
       if (!seen.has(key)) { seen.add(key); out.push(f); }

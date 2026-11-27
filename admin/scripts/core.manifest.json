@@ -79,7 +79,7 @@
   "scripts/check-design.mjs": "1e8d245c1b773616bf16699cf7c633f4933cdb0b2ab5c9439b5f3f0ae754d851",
   "scripts/check-layers.mjs": "8ad3b19c9e38a4d313870547b4edc5bda4d9d63829ee36f84dfe689531bf2a28",
   "scripts/lib/ctx-surface.mjs": "6ad1270920b46016f6ea0c4393e9af101327ec102e37dd79dbc633a3862365ef",
-  "scripts/lib/design-scan.mjs": "78ab5a934f79c039522101a79d4d4a8e35faa174078da7070c35b3cc1faee6a7",
+  "scripts/lib/design-scan.mjs": "9159e585c3ddfac348522ced8eca972edce881ff02a0f0554beae894b4845086",
   "scripts/serve.mjs": "2cf8bcf214ec68c83282bc4fbd46423788904f7f62dbcdccbb268d2fe100f015",
   "styles.css": "3365b31ce94b9f2764653b6e19d7927c5839109d44a99605296f44a72b76140c",
   "ui/content-form.js": "57c4e14ab3c9b116935234e2e92f0e0a4dd36d693b9b3bfc592384578b423668",

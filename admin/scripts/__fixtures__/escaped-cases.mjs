@@ -244,6 +244,23 @@ const AMBIGUOUS = [
   ["nested ambiguity: of then arrow then block", `const of = 1; const f = () => {}\n/'/.test(1); of / fetch("x") / 3; const q = '/';`],
 ];
 for (const [how, body] of AMBIGUOUS) ESCAPED_CASES.push({ name: `D17 ambiguous slash: ${how}`, kind: "code", expect: FI, src: view(body) }, { name: `D17 ambiguous slash, escaped name: ${how}`, kind: "code", expect: FI, src: view(body.replaceAll(FETCH, idEsc(FETCH, "mid"))) });
+// ── review round 3: a file with more than MAX_AMBIGUOUS_SLASHES (4) ambiguous slash places is REPORTED (js/ambiguous-slash), never sampled;
+// up to 4 are enumerated in full (every mixed reading). The padded case is the one a sampled reading set missed from 23 places on. ──
+const padded = (N) => view("const of = 4; const f = () => {}\n/'/.test(1); " + "of / 2; ".repeat(N) + "of / fetch('x') / 3; const q = '/';");
+for (const N of [0, 1, 2]) ESCAPED_CASES.push({ name: "D17 ambiguous slashes: padded with " + N + " (every reading enumerated)", kind: "code", expect: FI, src: padded(N) });
+for (const N of [3, 4, 22, 23, 24, 100, 1000]) ESCAPED_CASES.push({ name: "D17 ambiguous slashes: padded with " + N + " is refused", kind: "code", expect: "js/ambiguous-slash", src: padded(N) });
+ESCAPED_CASES.push(
+  { name: "D17 mixed reading: arrow is a regex, of is a division", kind: "code", expect: FI, src: view("const of = 4; const f = () => {}\n/'/.test(1); of / fetch('x') / 3; const q = '/';") },
+  { name: "D17 mixed reading: arrow is a division, of is a regex", kind: "code", expect: FI, src: view("const f = () => {} / 'x'; for (const z of /'/.test(1)) { fetch('x'); const q = '/'; }") },
+  { name: "D17 mixed reading: yield regex then arrow division", kind: "code", expect: FI, src: view("function* g() { yield /'/.test(1); } const f = () => {} / 2 / fetch('x') / 3;") },
+  { name: "D17 mixed reading: block regex, then of division, then arrow regex", kind: "code", expect: FI, src: view("const of = 1; if (root) { root.a(); }\n/'/.test(1); of / 2 / fetch('x') / 3; const f = () => {}\n/'/.test(2); const q = '/';") },
+);
+// a regex literal of ANY length is a regex: its quotes are not strings (no length cap)
+for (const L of [1200, 5000, 100000]) {
+  ESCAPED_CASES.push({ name: "D17 long regex (" + L + " chars) with a quote, a slash in a class and code after it", kind: "code", expect: FI, src: view("const r = /[/']" + "a".repeat(L) + "'/.test(1); fetch('x'); const q = '/';") });
+  ESCAPED_CASES.push({ name: "D17 long regex (" + L + " chars) after a statement paren", kind: "code", expect: FI, src: view("if (root) /[/'\\]]" + "b".repeat(L) + "'/.test(1); fetch('x'); const q = '/';") });
+  ESCAPED_CASES.push({ name: "D17 valid: long regex (" + L + " chars) alone", kind: "code", expect: null, src: view("const r = /[/']" + "a".repeat(L) + "'/.test(root.a); return r;") });
+}
 // ctx may not be shadowed through any binding form
 for (const [how, body] of [
   ["catch parameter", `try { root.a(); } catch (ctx) { root.b(); }`], ["array pattern", `const [ctx] = root.a;`], ["object pattern", `const { ctx } = root.a;`], ["renaming pattern", `const { a: ctx } = root.a;`],

@@ -76,7 +76,7 @@ const designFiles = walk(PUB).filter((f) => f.endsWith('.js') && !isCommerce(f) 
 //    and octal escapes inside string and template literals (a '\x73hopcommerce:' IS 'shopcommerce:'); an escape that would decode to a quote,
 //    a backslash, a backtick, a `$` or a line terminator stays as written.
 // The contract (identifier names and property names by escape-decoded value, string / template values by cooked value) is the one of
-// admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line; nothing is
+// admin/scripts/lib/design-scan.mjs. Where a `/` could start a regex or divide, a regex is read only when it closes on the same line (any length); nothing is
 // blanked inside it, and its text still gets its Unicode escapes decoded (the text may really be code: `{} / \u0066etch('/x') / 2` is a division), so a
 // wrong guess can only keep a comment or decode an escape that was regex text (over-report), never hide code.
 function canonicalSource(src) {
@@ -102,6 +102,22 @@ function canonicalSource(src) {
       r += src[j]; j++;
     }
     return r;
+  };
+  // regexClose(p): the "/" that closes a regex body starting at p on this line, or -1. One backward pass (on the first attempt) makes every attempt O(1)
+  // whatever the literal's length (no cap); the same rules as the admin lexer: no line break in a regex, a backslash before one ends it, "/" in [ ] does not close.
+  let afterClass = null, inClassTbl = null;
+  const regexClose = (p) => {
+    if (afterClass === null) {
+      afterClass = new Int32Array(n + 3).fill(-1); inClassTbl = new Int32Array(n + 3).fill(-1);
+      for (let q = n - 1; q >= 0; q--) {
+        const ch = src[q];
+        if (LT(ch)) continue;
+        if (ch === '\\') { const nx = src[q + 1]; if (nx !== undefined && !LT(nx)) { afterClass[q] = afterClass[q + 2]; inClassTbl[q] = inClassTbl[q + 2]; } continue; }
+        afterClass[q] = ch === '/' ? q : ch === '[' ? inClassTbl[q + 1] : afterClass[q + 1];
+        inClassTbl[q] = ch === ']' ? afterClass[q + 1] : inClassTbl[q + 1];
+      }
+    }
+    return p < n ? afterClass[p] : -1;
   };
   const keepEsc = (s) => '"\'`\\$'.includes(s) || LT(s);
   const escape = () => { // inside a string or template, at a backslash
@@ -149,12 +165,9 @@ function canonicalSource(src) {
       regexOk = !afterDot && KW.has(w); word = afterDot ? '' : w; afterDot = false; continue;
     }
     if (c === '/' && regexOk) {
-      let j = i + 1, inClass = false, closed = false;
-      while (j < n && j < i + 1000 && !LT(src[j])) { // (a regex literal longer than 1000 characters is read as an operator: keeps the scan linear)
-        if (src[j] === '\\') { j += 2; continue; }
-        if (src[j] === '[') inClass = true; else if (src[j] === ']') inClass = false; else if (src[j] === '/' && !inClass) { closed = true; break; }
-        j++;
-      }
+      const close = regexClose(i + 1);
+      let j = close + 1;
+      const closed = close >= 0;
       if (closed) { j++; while (j < n && IDP.test(src[j])) j++; out.push(decodeRange(i, j)); i = j; regexOk = false; word = ''; afterDot = false; continue; }
     }
     if (c === '?' && src[i + 1] === '.' && !/[0-9]/.test(src[i + 2] || '')) { out.push('?.'); i += 2; regexOk = true; word = ''; afterDot = true; continue; }
