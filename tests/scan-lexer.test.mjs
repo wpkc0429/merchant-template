@@ -191,7 +191,7 @@ test('D17 is recorded (newest first) with the owner approval, the contract, the 
   const f = (p) => readFileSync(path.join(TEMPLATE, p), 'utf8').replace(/\r\n/g, '\n');
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[4], 'D17'); assert.equal(ids[3], 'D18'); assert.equal(ids[2], 'D19'); assert.equal(ids[1], 'D20'); assert.equal(ids[0], 'D21');
+  assert.equal(ids[5], 'D17'); assert.equal(ids[4], 'D18'); assert.equal(ids[3], 'D19'); assert.equal(ids[2], 'D20'); assert.equal(ids[1], 'D21');
   const start = lines.findIndex((l) => l.startsWith('### D17.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
