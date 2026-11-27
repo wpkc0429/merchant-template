@@ -244,6 +244,26 @@ const git = (root, ...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "
       ok("D19: a second import map with other text -> deploy/importmap", /deploy\/importmap.*exactly ONE/.test(rules()));
       setIdx(idx.replace("</head>", `<!-- ${inl("2+2")} --></head>`));
       ok("D19: an inline script inside an HTML comment is not a script (passes)", deployChecks(dir).length === 0, rules());
+      // D23: tokenizer gaps. A comment ends at --!> too (the old regex waited for --> and hid the script in between), and an unterminated <script> fails closed.
+      setIdx(idx.replace("</head>", '<!-- x --!><script>1</script><!-- y --></head>'));
+      ok("D23: a comment ended by --!> does not hide the inline script after it -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()), rules());
+      setIdx(idx.replace("</head>", '<!--- a --!><script>1</script></head>'));
+      ok("D23: --!> ends a comment even without a later --> -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()), rules());
+      setIdx(idx.replace("</head>", '<!---><script>1</script><!-- z --></head>'));
+      ok("D23: <!---> is an empty comment, the script after it is inline -> deploy/importmap", /deploy\/importmap.*other than the import map/.test(rules()), rules());
+      setIdx(idx.replace("</head>", '<!-- <script>1</script> --!></head>'));
+      ok("D23: a script inside a comment that ends with --!> is still hidden (no false positive)", deployChecks(dir).length === 0, rules());
+      const cut = idx.slice(0, idx.indexOf("</head>")); // nothing after the new element: no later </script> or > can close it
+      setIdx(cut + "<script>1+1");
+      ok("D23: an unterminated <script> (no </script> anywhere after it) -> deploy/importmap, fail closed", /deploy\/importmap.*never closed/.test(rules()), rules());
+      setIdx(cut + '<script type="importmap">{}');
+      ok("D23: an unterminated import map is refused and not counted as a second map", /deploy\/importmap.*never closed/.test(rules()) && !/exactly ONE.*found 2/.test(rules()), rules());
+      setIdx(cut + "<script defer");
+      ok("D23: a <script start tag that never reaches its > -> deploy/importmap, fail closed", /deploy\/importmap.*never closed/.test(rules()), rules());
+      setIdx(idx.replace("</head>", '<script>1+1</head>'));
+      ok("D23: a script closed only by a LATER </script> is what the browser runs too: refused as an ordinary inline script", /deploy\/importmap.*other than the import map/.test(rules()), rules());
+      setIdx(idx.replace("</head>", '<script>1</script x>'));
+      ok("D23: </script x> (an end tag with attributes) still ends the script: seen as an ordinary inline script", /deploy\/importmap.*other than the import map/.test(rules()) && !/never closed/.test(rules()), rules());
       setIdx(idx.replace("</head>", `<script src="extra.js"></script></head>`));
       ok("D19: an external script is not inline (the other guards police it)", !/deploy\/importmap/.test(rules()));
       setIdx(idx);

@@ -1,7 +1,7 @@
 // Simulates what .github/workflows/guards.yml runs on design branches, using a merchant repo built by new-merchant.mjs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { TEMPLATE, cleanup, node, git, read, write, makeMerchant } from './helpers.mjs';
 
@@ -34,6 +34,17 @@ test('workflow file: pure node, no installs, runs every guard, has the branch-pr
   for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, `action pinned by full commit SHA (not a tag or branch): ${u}`);
   assert.equal((code.match(/^\s*permissions\s*:/gm) || []).length, 1, 'exactly one permissions block (top level)');
   assert.match(code, /^permissions:\n  contents: read\n(?!  )/m, 'permissions are exactly contents: read');
+});
+
+// D23: the browser-tests job treats a missing tests/e2e/ci-browser.mjs as "merchant repo, nothing to do" and passes. In THIS (template) repo that would turn the
+// whole browser coverage off silently, so the template's own test asserts that the runner exists, is the file the workflow runs, and lists the suites D22 names.
+test('the browser-tests job cannot be switched off by deleting ci-browser.mjs without a failing template test (D23)', () => {
+  const y = readFileSync(path.join(TEMPLATE, '.github/workflows/guards.yml'), 'utf8');
+  assert.ok(existsSync(path.join(TEMPLATE, 'tests/e2e/ci-browser.mjs')), 'tests/e2e/ci-browser.mjs must exist in the template repo');
+  assert.ok(y.includes('-f tests/e2e/ci-browser.mjs'), 'the job detects the runner by this path');
+  assert.ok(y.includes('run: node tests/e2e/ci-browser.mjs'), 'and runs it');
+  const r = readFileSync(path.join(TEMPLATE, 'tests/e2e/ci-browser.mjs'), 'utf8');
+  for (const suite of ['preview-banner', 'd12-runtime', 'import-map', 'hardening', 'profile', 'design-history', 'design-review', 'content-storefront']) assert.ok(r.includes(suite), 'ci-browser.mjs runs ' + suite);
 });
 
 test('storefront design branch: design edits pass; locked, config, other-site and root edits fail', () => {

@@ -52,7 +52,7 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
 const ALLOW = /^\/(index\.html|app\.js|config\.js|config-loader\.js|styles\.css|(lib|ui|core|vendor)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+|(design|design-defaults)\/([a-z0-9_-]+\/)*[A-Za-z0-9._-]+\.(js|css|svg|png))$/;
 const json = (res, status, body) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(body)); };
 let S;
-const reset = (o = {}) => { S = { api: [], files: [], reports: [], marks: [], valid: "", n: 0, csp: REAL_CSP, indexMap: (t) => t, appJs: (t) => t, percentRule: true, decode: false, routes: null, hide: [], ...o }; };
+const reset = (o = {}) => { S = { api: [], files: [], reports: [], marks: [], valid: "", n: 0, csp: REAL_CSP, indexMap: (t) => t, appJs: (t) => t, percentRule: true, decode: false, routes: null, hide: [], target: null, ...o }; };
 reset();
 const MODULES = {}; // in-memory test-only modules (path -> source)
 const server = createServer(async (req, res) => {
@@ -81,6 +81,12 @@ const server = createServer(async (req, res) => {
   if (S.percentRule && /^[^?]*(%2f|%5c|%2e|\/\/)/i.test(req.url)) { res.writeHead(404); res.end("no"); note(404); return; }
   let path = p === "/" ? "/index.html" : p;
   if (S.decode) { try { path = posix.normalize(decodeURIComponent(path).replace(/\\/g, "/")); } catch { /* keep */ } } // what nginx does with $uri: decode, then resolve dot segments
+  // D23: the canary target answers in a way that proves nothing (a 200 that is not JavaScript, a redirect to a JavaScript file, a dropped connection)
+  if (path === "/lib/canary/target.js" && S.target) {
+    if (S.target === "html") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); res.end("<!doctype html><title>x</title>"); note(200); return; }
+    if (S.target === "redirect") { res.writeHead(302, { Location: "/lib/canary/allowed/ok.js", "Cache-Control": "no-store" }); res.end(); note(302); return; }
+    if (S.target === "reset") { note(0); req.socket.destroy(); return; }
+  }
   if (S.hide.includes(path)) { res.writeHead(404); res.end("no"); note(404); return; }
   if (path === "/design/views/zz-redirect.js") { res.writeHead(302, { Location: "/lib/orders.js" }); res.end(); note(302); return; }
   if (path === "/design/routes.js" && S.routes) { res.writeHead(200, { "Content-Type": TYPES[".js"], "Cache-Control": "no-store" }); res.end(`export default ${JSON.stringify(S.routes)};`); note(200); return; }
@@ -169,8 +175,8 @@ export default async function (root, ctx) {
 
 // ── one page load ──
 const problems = [];
-async function load({ csp, routes = { notFound: "views/zz-hostile.js" }, hash = "#/", then = "", init, indexMap, appJs, percentRule, decode, expectReport = false, wait = 1500, hide = [] }) {
-  reset({ hide, csp: csp ?? REAL_CSP, routes, ...(indexMap ? { indexMap } : {}), ...(appJs ? { appJs } : {}), ...(percentRule === undefined ? {} : { percentRule }), ...(decode ? { decode } : {}) });
+async function load({ csp, routes = { notFound: "views/zz-hostile.js" }, hash = "#/", then = "", init, indexMap, appJs, percentRule, decode, expectReport = false, wait = 1500, hide = [], target = null }) {
+  reset({ hide, target, csp: csp ?? REAL_CSP, routes, ...(indexMap ? { indexMap } : {}), ...(appJs ? { appJs } : {}), ...(percentRule === undefined ? {} : { percentRule }), ...(decode ? { decode } : {}) });
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 800 } });
   if (init) await ctx.addInitScript(init);
   const pg = await ctx.newPage();
@@ -271,6 +277,9 @@ const failClosed = async (name, opts, reason) => {
   await failClosed("(d2) the map element removed (a server that serves index.html without it)", { indexMap: (h) => h.replace(MAP_RE, "") }, "not-enforced");
   await failClosed("(d3) HTMLScriptElement.supports missing altogether (an old browser)", { init: "(() => { HTMLScriptElement.supports = undefined; })();" }, "unsupported");
   await failClosed("(f) the target is unreachable (404): a denied import proves nothing", { hide: ["/lib/canary/target.js"] }, "unverifiable");
+  await failClosed("(g) the target answers 200 but not as JavaScript (text/html): a denied import proves nothing", { target: "html" }, "unverifiable");
+  await failClosed("(h) the target answers with a redirect (to a JavaScript file): not verified, fail closed", { target: "redirect" }, "unverifiable");
+  await failClosed("(i) network error on the target (connection dropped): fail closed", { target: "reset" }, "unverifiable");
   const l2 = await failClosed("(e) the control file cannot be loaded (map text valid, /lib/canary/allowed/ok.js missing)", { hide: ["/lib/canary/allowed/ok.js"] }, "control").catch(() => null);
   void l2;
 }

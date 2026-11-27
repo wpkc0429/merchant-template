@@ -141,17 +141,30 @@ function tagAttrs(raw) {
   }
   return m;
 }
-/** The inline <script> elements of an HTML text (HTML comments removed first, including the empty comments <!--> and <!--->): [{ attrs: Map, text }]. External scripts (src attribute) are not inline. */
+/**
+ * The inline <script> elements of an HTML text: [{ attrs: Map, text, unterminated }]. HTML comments are removed first, the way the browser ends them (D23):
+ * <!--> and <!---> are empty comments, and a comment ends at --> or --!>. External scripts (src attribute) are not inline. A start tag with no closing ">"
+ * or with no </script after it is returned with unterminated: true (fail closed: indexHtmlProblems refuses it and it never counts as the import map).
+ */
 export function inlineScripts(html) {
-  const live = html.replace(/<!--(?:-?>|[\s\S]*?-->)/g, "");
+  const live = html.replace(/<!--(?:-?>|[\s\S]*?(?:-->|--!>))/g, "");
   const out = [];
-  for (const m of live.matchAll(/<script(?=[\s\/>])((?:"[^"]*"|'[^']*'|[^>"'])*)>([\s\S]*?)<\/script[\s\/]*>/gi)) {
-    const attrs = tagAttrs(m[1]);
-    if (!attrs.has("src")) out.push({ attrs, text: m[2] });
+  const startRe = /<script(?=[\s\/>])/gi;
+  let m;
+  while ((m = startRe.exec(live))) {
+    const open = m.index + 7;
+    const tag = /^((?:"[^"]*"|'[^']*'|[^>"'])*)>/.exec(live.slice(open));
+    if (!tag) { out.push({ attrs: new Map(), text: "", unterminated: true }); break; }
+    const bodyStart = open + tag[0].length;
+    const attrs = tagAttrs(tag[1]);
+    const end = /<\/script(?=[\s\/>])[^>]*>/i.exec(live.slice(bodyStart));
+    if (!end) { if (!attrs.has("src")) out.push({ attrs, text: live.slice(bodyStart), unterminated: true }); break; }
+    if (!attrs.has("src")) out.push({ attrs, text: live.slice(bodyStart, bodyStart + end.index), unterminated: false });
+    startRe.lastIndex = bodyStart + end.index + end[0].length;
   }
   return out;
 }
-const isImportMap = (s) => (s.attrs.get("type") ?? "").trim().toLowerCase() === "importmap";
+const isImportMap = (s) => !s.unterminated && (s.attrs.get("type") ?? "").trim().toLowerCase() === "importmap";
 /** The sha256 (base64) of the exact text of the import map in index.html, or null when there is not exactly one import map. */
 export function importMapHash(html) {
   const maps = inlineScripts(html).filter(isImportMap);
@@ -164,6 +177,7 @@ export function indexHtmlProblems(html) {
   const maps = inl.filter(isImportMap);
   if (maps.length !== 1) bad.push(`index.html must contain exactly ONE inline <script type="importmap"> (found ${maps.length})`);
   if (inl.length !== maps.length) bad.push(`index.html must contain no inline script other than the import map (found ${inl.length - maps.length})`);
+  if (inl.some((x) => x.unterminated)) bad.push("index.html has a <script> that is never closed (no closing > or no </script>): refused, fail closed");
   return bad;
 }
 const sameTokens = (a, b) => a.length === b.length && a.every((x) => b.includes(x)) && new Set(a).size === a.length;

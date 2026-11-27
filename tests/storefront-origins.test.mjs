@@ -393,12 +393,81 @@ test('storefront scan (D20): network APIs are refused as identifiers, aliases, c
   assert.equal(layers(d).status, 0, 'the untouched design layer passes');
 });
 
-test('storefront scan (D20): an undeclared bare open(...) is window.open (public/app.js declares a local "open", so it is checked in content.js); a local open is fine', () => {
+test('storefront scan (D20, D23): a bare open(...) is window.open unless the file declares a real FUNCTION open or the call is a method definition; a variable, parameter or arrow named open no longer exempts the file', () => {
   const d = scanMerchant();
   const orig = read(d, 'public/content.js');
   const run = (code) => { write(d, 'public/content.js', orig + '\n' + code + '\n'); const r = layers(d); write(d, 'public/content.js', orig); return r; };
-  for (const code of ["open('x');", "if (go) { open(\"https://evil.example.test\"); }", "open('a', '_blank');"]) { const r = run(code); assert.equal(r.status, 1, code + r.out); assert.match(r.out, /bare open/); }
-  for (const code of ["function open(x) { return x; } open(1);", "var drawer = { open() { return 1; } };", "const f = (open) => open();", "class M { open() { return 1; } }"]) { const r = run(code); assert.equal(r.status, 0, code + r.out); }
+  const bad = [
+    "open('x');", "if (go) { open(\"https://evil.example.test\"); }", "open('a', '_blank');",
+    // the old bypass: ANY declaration of a binding named open exempted the whole file
+    "const open = window['op' + 'en']; open('https://evil.example.test');",
+    "var open = pick(); open('https://evil.example.test');",
+    "let open; open = pick(); open('https://evil.example.test');",
+    "function wrap(open) { return open('https://evil.example.test'); }",
+    "const f = (open) => open('https://evil.example.test');",
+    "const { open } = api; open('https://evil.example.test');",
+    "var o = { open: 1 }; var open = o.x; open('https://evil.example.test');"
+  ];
+  for (const code of bad) { const r = run(code); assert.equal(r.status, 1, code + r.out); assert.match(r.out, /bare open|window\.open|destructuring|computed access/, code + r.out); }
+  for (const code of ["function open(x) { return x; } open(1);", "async function open(x) { return x; } open(1);", "var drawer = { open() { return 1; } };", "class M { open() { return 1; } static open() { return 2; } }", "var o = { async open() { return 1; }, get open2() { return 1; } };"]) { const r = run(code); assert.equal(r.status, 0, code + r.out); }
+});
+
+test('storefront scan (D23): destructuring or aliasing open / location / history out of window, globalThis, self, top or parent, and bracket access with the exact string, are refused', () => {
+  const d = scanMerchant();
+  const bad = [
+    "const { open } = window; open('https://evil.example.test');",
+    "var { open: o } = window;",
+    "let open2; ({ open: open2 } = globalThis);",
+    "const { open: o, ...rest } = self;",
+    "const { location } = window;",
+    "const { location: { href } } = window;",
+    "const { history } = top;",
+    "const { ['op' + 'en']: o } = window;",
+    "const { [k]: o } = window;",
+    "const { ...everything } = window;",
+    "const { open } = (window);",
+    "const o = window['op' + 'en'];",
+    "const o = window[\"open\"];",
+    "const o = self?.['open'];",
+    "const o = globalThis['locat' + 'ion'];",
+    "const h = top['history'];",
+    "const o = Reflect.get(window, 'open');",
+    "const l = window.location; l.href = 'https://evil.example.test';",
+    "const l = location; l.assign('https://evil.example.test');",
+    "var h = history;",
+    "var h = window.history;",
+    "var l = document.location;",
+    "const l = (window).location;"
+  ];
+  for (const code of bad) { const r = withApp(d, code); assert.equal(r.status, 1, code + '\n' + r.out); assert.match(r.out, /destructuring|aliasing|computed access|window\.open|bare open/, code + r.out); }
+  const good = [
+    "location.hash = '#/shop'; var h = location.hash; if (location.hash === '#/x') { h = 1; }",
+    "var u = window.location.href.replace(/x/, 'y'); var p = window.location.pathname;",
+    "history.replaceState(null, '', '#/x'); window.history.pushState(null, '', '#/y'); var n = history.length;",
+    "var { hash, search } = location; var { pathname } = window.location;",
+    "const { innerWidth, innerHeight } = window; const { scrollY } = self;",
+    "const { open } = menuState; var { location } = shop; const { history } = shop.data;",
+    "const { top, parent } = layout; const t2 = top;",
+    "var o = { open: 1, location: 2, history: 3 }; o.open = 4; var l = o.location; var hh = o['history'];",
+    "var state = { location: 'x' }; var loc = state.location; var hist = state.history;",
+    "var location2 = 1, history2 = 2, openState = 3; var r = history2;",
+    "function f(location) { var l = location; return l; } var history = []; var hh = history;",
+    "var w = window.innerWidth, hs = window.history.length > 1;"
+  ];
+  for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
+  assert.equal(layers(TEMPLATE).status, 0, 'the real template design files pass');
+});
+
+test('storefront scan (D23): an index.html HTML comment that ends with --!> or is the empty <!--> does not hide an inline script', () => {
+  const d = scanMerchant();
+  const idx = read(d, 'public/index.html');
+  const withBody = (extra) => { write(d, 'public/index.html', idx.replace('</body>', extra + '\n</body>')); const r = layers(d); write(d, 'public/index.html', idx); return r; };
+  assert.equal(layers(d).status, 0);
+  // a comment ended by --!> and a later --> : the browser runs the script, the old regex hid it
+  for (const extra of ['<!-- x --!><script>alert(1)</script><!-- y -->', '<!--> <script>alert(1)</script> -->', '<!---> <script>alert(1)</script> -->', '<!-- a --!> <script>alert(1)</script>', '<script>alert(1)']) {
+    const r = withBody(extra); assert.equal(r.status, 1, extra + r.out); assert.match(r.out, /inline <script>/, extra);
+  }
+  for (const extra of ['<!-- <script>alert(1)</script> -->', '<!-- <script>alert(1)</script> --!>', '<!-- plain -->']) { const r = withBody(extra); assert.equal(r.status, 0, extra + r.out); }
 });
 
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {
@@ -441,7 +510,6 @@ test('storefront scan (D20): copy text, comments, data keys and look-alike ident
     "class Menu { open() { this.shown = true; } static open() { return 1; } }",
     "function open(x) { return x; } open(1);",
     "const open = (x) => x; open(2);",
-    "function wrap(open) { return open(); }",
     "var el = {}; el.dataset.ping = '1'; el.style.ping = 'x'; var props = {}; props.ping = 2; state.ping = 3; options.ping = 4;",
     "var w = window.innerWidth; var h = window.innerHeight; var s = window.scrollY; var z = self === window;"
   ];
@@ -489,7 +557,7 @@ test('runtime: after the core scripts load, ShopCommerce has no _internal handle
 test('D20 is recorded (newest first) with the approvals, the mechanism, the scan additions, the analysis and the residual risks', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[1], 'D21'); assert.equal(ids[2], 'D20'); assert.equal(ids[3], 'D19');
+  assert.equal(ids[2], 'D21'); assert.equal(ids[3], 'D20'); assert.equal(ids[4], 'D19');
   const start = lines.findIndex((l) => l.startsWith('### D20.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
