@@ -7,11 +7,15 @@
 // created HERE and revoked when the image leaves the screen or the dialog closes; no URL is ever shown, logged or stored.
 // Only a real person approves: the approve / reject / request-changes buttons ignore events with isTrusted !== true, and the
 // acknowledgement checkbox must be ticked by a real click before the approve button is enabled. The button disables the instant it is pressed.
+// D18: the approve button (and the reject confirmation) also stays disabled for DELAY_MS after the dialog is shown, with a visible countdown; and the
+// service-claims region carries the SCAN REPORT (guard verdict, rule ids, checked sha, the full list of changed paths), labelled as not verified by the platform.
 import { h, showCoreDialog, button, textarea, toast } from "./kit.js";
 import { coreText as ct } from "../lib/fixed-text.js";
 import { safeOrigin } from "../lib/versionpreview.js";
 import { formatDateTime } from "./format.js";
 
+/** Irreversible confirmations of the review dialog become usable this long after the dialog (or the panel) appeared. */
+export const DELAY_MS = 1000;
 const pctOf = (ppm) => (ppm / 10000).toFixed(2).replace(/\.?0+$/, "") || "0";
 const narrow = () => { try { return window.matchMedia("(max-width: 640px)").matches; } catch { return false; } };
 
@@ -45,7 +49,7 @@ export function showReview(initial, handlers) {
     // A CLOSED shadow root with its own stylesheet (ui/kit.js showCoreDialog): the design layer's CSS cannot restyle, hide or rewrite anything in here.
     const { dialog, close, sane } = showCoreDialog({
       title: titleOf(), content: root, actions: [], wide: true,
-      onClose: () => { gen++; for (const id of [...urls.keys()]) revoke(id); handlers.dispose(); resolve(); },
+      onClose: () => { gen++; stopTimer(); for (const id of [...urls.keys()]) revoke(id); handlers.dispose(); resolve(); },
     });
     dialog.classList.add("dlg--review");
     dialog.setAttribute("aria-label", titleOf());
@@ -55,14 +59,32 @@ export function showReview(initial, handlers) {
     const lock = (on) => { for (const el of panel.querySelectorAll("button, input, textarea")) el.disabled = on; };
 
     // ── facts ──
+    function scanReport() {
+      const r = model.request;
+      const g = r.guard;
+      const kids = [h("h4", {}, ct("rv.scan.heading")), h("p", { "data-testid": "confirm-rv-guard" }, g ? (g.passed ? ct("rv.guard.pass") : ct("rv.guard.fail")) : ct("rv.guard.none"))];
+      if (g) {
+        kids.push(h("p", { "data-testid": "confirm-rv-scan-rules" }, g.ruleIds.length ? ct("rv.scan.rules", { ids: g.ruleIds.join(", ") }) : ct("rv.scan.noRules")));
+        if (g.violationCount) kids.push(h("p", {}, ct("rv.scan.violations", { n: g.violationCount })));
+        kids.push(h("p", { class: "mono", "data-testid": "confirm-rv-scan-sha" }, g.checkedSha ? ct("rv.scan.sha", { sha: g.checkedSha }) : ct("rv.scan.noSha")));
+        if (r.candidateSha) kids.push(h("p", { class: "mono", "data-testid": "confirm-rv-scan-candidate" }, ct("rv.scan.candidate", { sha: r.candidateSha })));
+        if (r.candidateSha && g.checkedSha !== r.candidateSha) kids.push(h("p", { class: "dlg__warning", "data-testid": "confirm-rv-scan-mismatch" }, ct("rv.scan.shaMismatch")));
+        if (g.guardVersion) kids.push(h("p", { class: "muted" }, ct("rv.scan.version", { v: g.guardVersion })));
+        if (g.checkedAt) kids.push(h("p", { class: "muted" }, ct("rv.scan.at", { time: formatDateTime(g.checkedAt) })));
+      }
+      kids.push(h("p", { class: "muted", "data-testid": "confirm-rv-scan-note" }, ct("rv.scan.unverified")));
+      const listed = r.diff.files.length;
+      const sum = ct("rv.files", { n: r.diff.filesChanged, add: r.diff.additions, del: r.diff.deletions });
+      kids.push(h("p", { "data-testid": "confirm-rv-scan-count" }, ct("rv.scan.count", { n: r.diff.filesChanged }) + (listed < r.diff.filesChanged ? " " + ct("rv.scan.listed", { m: listed }) : "")));
+      kids.push(listed
+        ? h("details", { class: "dlg-rv__files", "data-testid": "confirm-rv-files" }, h("summary", {}, ct("rv.scan.fileList", { m: listed })),
+          h("ul", {}, r.diff.files.map((f) => h("li", {}, h("span", { class: "mono" }, f.path), ` ${f.status} +${f.additions} -${f.deletions}`))))
+        : h("p", {}, sum));
+      return h("section", { class: "dlg-rv__scan", "data-testid": "confirm-rv-scan" }, kids);
+    }
+
     function facts() {
       const r = model.request;
-      const guardLine = r.guard ? (r.guard.passed ? ct("rv.guard.pass") : ct("rv.guard.fail")) : ct("rv.guard.none");
-      const sum = ct("rv.files", { n: r.diff.filesChanged, add: r.diff.additions, del: r.diff.deletions });
-      const files = r.diff.files.length
-        ? h("details", { class: "dlg-rv__files" }, h("summary", {}, sum),
-          h("ul", {}, r.diff.files.map((f) => h("li", {}, h("span", { class: "mono" }, f.path), ` ${f.status} +${f.additions} -${f.deletions}`))))
-        : h("p", {}, sum);
       const rec = [[ct("rv.status"), ct(`rv.status.${r.status}`)], [ct("rv.proposedBy"), r.proposedByName || "—"], [ct("rv.approvedBy"), r.approvedByName || "—"],
         [ct("rv.approvedAt"), r.approvedAt ? formatDateTime(r.approvedAt) : "—"]];
       return h("div", { class: "dlg-rv__facts" },
@@ -71,8 +93,7 @@ export function showReview(initial, handlers) {
           r.candidateSha ? ct("rv.version", { sha: r.candidateSha.slice(0, 7), n: r.diff.filesChanged }) : ct("rv.noSha")),
         h("h3", {}, ct("rv.claims")),
         h("p", { class: "dlg-rv__prompt", "data-testid": "confirm-rv-prompt" }, r.promptText || r.promptExcerpt || ct("rv.noPrompt")),
-        h("p", { "data-testid": "confirm-rv-guard" }, guardLine),
-        files,
+        scanReport(),
         h("h3", {}, ct("rv.record")),
         h("dl", { class: "dlg-rv__rec" }, rec.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])));
     }
@@ -187,7 +208,18 @@ export function showReview(initial, handlers) {
 
     // ── actions panel ──
     let ack = null, approveBtn = null, ackTrusted = false, clickTrusted = false; // ackTrusted: the box was ticked by a real (isTrusted) change event
-    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || busy || displayBad; };
+    // The 1-second delay (D18): armed whenever an irreversible confirmation appears; a visible hint counts it down.
+    let unlockAt = 0, timer = 0, hintEl = null, rejectBtn = null;
+    const waiting = () => performance.now() < unlockAt;
+    const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } };
+    const syncAck = () => { if (approveBtn) approveBtn.disabled = !(ack && ack.checked && ackTrusted) || waiting() || busy || displayBad; if (rejectBtn) rejectBtn.disabled = waiting() || busy; };
+    const refreshGate = () => {
+      const left = Math.max(0, unlockAt - performance.now());
+      if (hintEl) { hintEl.textContent = left > 0 ? ct("rv.delay", { s: Math.max(1, Math.ceil(left / 1000)) }) : ""; hintEl.hidden = left <= 0; }
+      if (!busy) syncAck();
+      if (left <= 0) stopTimer();
+    };
+    const armDelay = () => { unlockAt = performance.now() + DELAY_MS; stopTimer(); timer = setInterval(refreshGate, 100); refreshGate(); };
     async function run(fn) {
       if (busy) return;
       busy = true; lock(true); // disabled at once, before anything is awaited
@@ -197,7 +229,7 @@ export function showReview(initial, handlers) {
       if (r.kind === "done") { toast(r.message, "ok"); close(); return; }
       if (r.kind === "ok") { model = r.model; mode = "review"; say(""); render(); return; }
       say(r.message);
-      if (r.kind === "reload") { mode = "reload"; renderPanel(); } else { lock(false); syncAck(); }
+      if (r.kind === "reload") { mode = "reload"; renderPanel(); } else { lock(false); refreshGate(); }
     }
     let displayBad = false;
     // Every submitting button: a real click AND the dialog shown at its normal scale, fully on screen (a design cannot zoom or move it later).
@@ -211,16 +243,19 @@ export function showReview(initial, handlers) {
     const closeBtn = () => button(ct("rv.btn.close"), { onClick: () => { if (!busy) close(); }, "data-testid": "confirm-rv-close" });
 
     function renderPanel() {
-      ack = null; approveBtn = null; ackTrusted = false; clickTrusted = false;
+      ack = null; approveBtn = null; rejectBtn = null; hintEl = null; ackTrusted = false; clickTrusted = false;
       const kids = [];
+      const delayHint = () => { hintEl = h("p", { class: "muted", role: "status", "aria-live": "polite", "data-testid": "confirm-rv-delay" }); return hintEl; };
       if (mode === "reload") {
         kids.push(h("div", { class: "dlg__foot dlg-rv__btns" }, button(ct("rv.btn.reload"), { kind: "primary", "data-testid": "confirm-rv-reload", onClick: trusted(() => run(() => handlers.reload())) }), closeBtn()));
       } else if (mode === "reject") {
         const reason = textarea({ maxlength: 500, rows: 3, "aria-label": ct("rv.reject.label"), "data-testid": "confirm-rv-reason" });
         kids.push(h("p", {}, h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, model.reject.warning)),
           h("label", { class: "field" }, h("span", { class: "field__label" }, ct("rv.reject.label")), reason),
+          delayHint(),
           h("div", { class: "dlg__foot dlg-rv__btns" }, button(ct("rv.btn.back"), { onClick: () => { if (!busy) back(); } }),
-            button(model.reject.yes, { kind: "danger", "data-testid": "confirm-yes", onClick: trusted(() => run(() => handlers.reject({ reason: reason.value }))) })));
+            rejectBtn = button(model.reject.yes, { kind: "danger", disabled: true, "data-testid": "confirm-yes", onClick: trusted(() => { if (waiting() || busy) return; run(() => handlers.reject({ reason: reason.value })); }) })));
+        armDelay();
       } else if (mode === "changes") {
         const note = textarea({ maxlength: 500, rows: 3, "aria-label": ct("rv.changes.label"), "data-testid": "confirm-rv-note" });
         kids.push(h("p", { class: "muted" }, ct("rv.changes.hint")),
@@ -241,17 +276,19 @@ export function showReview(initial, handlers) {
             onclick: (ev) => { clickTrusted = ev.isTrusted === true; },
             onchange: (ev) => { if (ev.isTrusted === true && clickTrusted) ackTrusted = ack.checked; else ack.checked = ackTrusted; clickTrusted = false; syncAck(); } });
           approveBtn = button(model.approve.yes, { kind: "danger", disabled: true, "data-testid": "confirm-yes",
-            onClick: trusted(() => { if (busy || !ack.checked || !ackTrusted) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
+            onClick: trusted(() => { if (busy || waiting() || !ack.checked || !ackTrusted) return; run(() => handlers.approve({ acknowledged: ack.checked })); }) });
           if (model.approve.text) kids.push(h("p", { class: "dlg__msg" }, model.approve.text));
           kids.push(h("p", {}, h("span", { class: "dlg__warning", "data-testid": "confirm-warning" }, model.approve.warning)),
             h("label", { class: "check dlg-rv__ack" }, ack, h("span", {}, ct("rv.ack"))),
             h("p", { class: "muted", id: "dlg-rv-ackhint" }, ct("rv.ack.hint")),
+            delayHint(),
             h("div", { class: "dlg__foot dlg-rv__btns" }, ...side, approveBtn));
         } else {
           kids.push(h("p", { class: "notice", "data-testid": "confirm-rv-cannot" }, model.cannotReason), h("div", { class: "dlg__foot dlg-rv__btns" }, ...side));
         }
       }
       panel.replaceChildren(...kids);
+      if (approveBtn) armDelay(); else if (!rejectBtn) { stopTimer(); unlockAt = 0; }
     }
 
     function render() {

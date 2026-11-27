@@ -1,5 +1,7 @@
 // Session state: who is logged in, which shop, what they may do.
-import { api, publicApi, login as apiLogin, logout as apiLogout, restoreSession } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api, publicApi, login: apiLogin, logout: apiLogout } = takeApi(); // boot phase only (lib/api.js)
 import { setPermissions, clearPermissions } from "./perm.js";
 import { clearReviewBasis } from "./design-history.js";
 
@@ -49,8 +51,6 @@ export function clearSession() {
   session.branding = null;
   clearPermissions();
 }
-
-export { restoreSession };
 
 // ── Pre-login branding (data only; the ui layer applies it) ────────────
 /** {name, branding} for this admin host, or null if the host is not registered. */

@@ -444,6 +444,25 @@ The core owns every dialog, every confirmation and the fixed warnings. The scan 
 - **Stay inside your own subtree** (`js/dom-escape`): no `ownerDocument`, `getRootNode`, `parentNode`, `parentElement`, `closest`, `firstChild` / `lastChild` / `childNodes` / `first|lastElementChild`, siblings, `getElementById`, `relatedTarget`; `querySelector(All)` only on `root` or an element built in the same file; `ctx.ui.$` / `$$` need that element as the second argument (at runtime they refuse `document`, `body` and anything near a dialog, and never return a core node). `children` is allowed (it only walks down).
 - **`ctx` is the module's own argument** (`js/ctx-shadow`, `js/ctx-unknown`): do not shadow or re-assign it, do not index it (`ctx.ui["$"]`), spread it or enumerate it (`Object.values(ctx.ui)`).
 
+### Runtime hardening (decision D18, v0.5.0)
+
+Design modules are loaded with `import()` into the same page, origin and module graph as the core, so the core closes what it can **before the first design module loads** (the scan stays the first line of defence; this is the second). None of it changes what your views may do through `ctx`; it only removes what they never should have reached:
+
+- **The API client and the token are sealed.** `lib/api.js` exports only `ApiError`, `takeApi` and `sealApi`; `takeApi()` throws once the app has booted. There is no `tokens`, no `.access`, no `api()` / `apiRaw()` / `refreshTokens()` to import, and `ctx.session` never had a token. Importing a core module from a view is refused by the guard and gets you nothing at run time.
+- **Built-ins are frozen.** `Object.prototype`, `Function.prototype`, `Array.prototype`, `Promise` (and its statics), `JSON`, `Headers`, `Response`, `Request`, `URL`, `Blob`, the iterator prototypes, `Node` / `Element` / every HTML element prototype, `XMLHttpRequest`, `Storage` and the rest listed in `lib/lockdown.js`, plus `fetch`, `XMLHttpRequest`, `structuredClone`, `setTimeout` ... on `window`. Assigning to or redefining any of them throws in strict mode (ES modules always are) and does nothing in sloppy code. A view that patches a built-in will fail to load and the built-in view takes over, as for any broken design. `error.name = "X"` on your own error instances still works.
+- **Review and approval are core-owned and slower on purpose.** In the review dialog the approve button (and the reject confirmation) is enabled only after the box was ticked with a real click and **1 second** after the dialog appeared (a countdown is shown); the service's scan report (guard verdict, rule ids, checked sha, the full list of changed paths) is shown next to the approve button. You cannot change any of it.
+- **Not covered:** this is defence in depth, not isolation. A module in the admin origin can still read the DOM, call anything `ctx` gives it, and ask the platform for a session the way the page does (the cookie refresh). Browser extensions are out of scope.
+
+### Preview hosts: what the operator sets (decision D18)
+
+A preview host serves the same files with `ADMIN_PREVIEW_MODE=version|change` (plus `ADMIN_PREVIEW_TAG`, `ADMIN_PREVIEW_EXPIRES`; `deploy/preview-config.sh`) on its **own origin**, which the platform operator registers in the platform's `ADMIN_PREVIEW_ORIGINS` (exact `https://p-1.preview.example` or one wildcard label `https://*.preview.example`; never the normal admin origin, never a `Domain=` cookie over a parent domain). Sessions started from that origin are **read-only on the server**: the platform issues `scope: "preview_ro"` tokens (and the host-only cookie `__Secure-admin_preview_refresh`) that last at most 30 minutes in total, whatever you click. The template then does the following, and the design layer cannot change any of it:
+
+- the client read-only flags stay (every write action is refused before a request, `lib/api.js` refuses non-GET): user experience only, the platform is the boundary;
+- a login or refresh answer **without `scope: "preview_ro"`** is dropped at once ("this address is not registered as a preview domain"): a preview host never keeps a normal, writable session;
+- a 403 `preview_read_only` shows "this is a preview, please go back to the normal admin to edit" (it is not a missing permission and does not log the person out);
+- when the 30 minutes are over the next request lands on the login screen with "the preview login has expired (at most 30 minutes), please log in again";
+- tokens exist per origin in memory only, so nothing is shared between the preview and the normal admin: the person logs in on the preview host with their normal account.
+
 ### How the scan reads your code (decision D17, v0.5.0)
 
 The scan has its own small JavaScript lexer (`scripts/lib/design-scan.mjs`); it does not parse the language. Its contract, so that a banned name cannot be hidden by the way it is spelled:

@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { signIn } from "./lib/test-signin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MODE = process.env.DH_MODE || "";
@@ -55,7 +56,7 @@ const reset = () => { calls.length = 0; routes = []; };
 const logs = [];
 for (const k of ["log", "warn", "error", "info", "debug"]) { const o = console[k]; console[k] = (...a) => { logs.push(a.map(String).join(" ")); if (k === "error") o(...a); }; }
 
-const { tokens } = await imp("lib/api.js");
+const net = (await imp("lib/api.js")).takeApi();
 const { session } = await imp("lib/session.js");
 const { setPermissions } = await imp("lib/perm.js");
 const { loadDesign } = await imp("lib/design.js");
@@ -67,7 +68,7 @@ const dh = await imp("lib/design-history.js");
 const { ROUTES, NAV, DESIGN_HISTORY_ROUTES } = await imp("core/routes.js");
 const { ROUTE_IDS } = await imp("lib/design-schema.js");
 await loadDesign();
-tokens.set({ access_token: "secret-access-token-123" });
+await signIn(net, "secret-access-token-123");
 session.shopID = 7;
 
 const RID = "11111111-2222-4333-8444-555555555555";
@@ -211,7 +212,7 @@ if (PREVIEW) {
   ok("preview host: listDesignRequests still works", (await data.listDesignRequests({})).total === 1);
   reset(); on(`/requests/${RID}`, { body: detail() }); on("/events", { body: { events: [] } });
   ok("preview host: getDesignRequest still works", (await data.getDesignRequest(RID)).id === RID);
-  const { api } = await imp("lib/api.js");
+  const { api } = net;
   for (const m of ["POST", "PUT", "PATCH", "DELETE"]) { reset(); const e = await rejects(() => api(m, `/admin/shops/7/design/requests/${RID}/approve`, {})); ok(`preview host: ${m} to a design route still refused`, e && e.status === 403 && e.code === "read_only" && calls.length === 0); }
   for (const n of Object.keys(actions)) { reset(); const e = await rejects(() => actions[n]({}, {}, {})); ok(`preview host: action ${n} still read_only`, e instanceof ActionError && e.reason === "read_only" && calls.length === 0); }
 } else {

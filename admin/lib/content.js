@@ -7,7 +7,9 @@
 //   create  -> PUT with `If-None-Match: *`         key exists: 412
 //   neither -> 428 precondition_required           (a programming error here: we always send one)
 // Failures are thrown as ContentError with a `kind` the core turns into a localized ActionError.
-import { api, apiRaw, ApiError } from "./api.js";
+import { takeApi, ApiError } from "./api.js";
+
+const { api, apiRaw } = takeApi(); // boot phase only (lib/api.js)
 
 const base = (shopID) => `/admin/shops/${shopID}/content`;
 const docPath = (shopID, key) => `${base(shopID)}/documents/${encodeURIComponent(key)}`;

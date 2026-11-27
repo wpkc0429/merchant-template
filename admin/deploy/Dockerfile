@@ -27,6 +27,6 @@ COPY deploy/require-origins.sh /docker-entrypoint.d/05-require-origins.sh
 COPY deploy/resolver.envsh /docker-entrypoint.d/06-resolver.envsh
 COPY deploy/preview-config.sh /docker-entrypoint.d/07-preview-config.sh
 RUN chmod +x /docker-entrypoint.d/05-require-origins.sh /docker-entrypoint.d/07-preview-config.sh
-# Preview hosts (version preview / change preview): also set ADMIN_PREVIEW_MODE=version|change, ADMIN_PREVIEW_TAG, ADMIN_PREVIEW_EXPIRES (deploy/preview-config.sh);
+# Preview hosts (version preview / change preview): also set ADMIN_PREVIEW_MODE=version|change, ADMIN_PREVIEW_TAG, ADMIN_PREVIEW_EXPIRES (deploy/preview-config.sh); the preview host needs its OWN origin, registered by the platform operator in ADMIN_PREVIEW_ORIGINS (it then gets read-only preview_ro sessions, 30 minutes at most; admin/README.md);
 # the core is then read-only and shows its own banner. A preview is served with the same strict CSP, X-Robots-Tag noindex and no framing as production.
 EXPOSE 80

@@ -3,7 +3,9 @@
 //   GET  .../design/requests/{id}/screenshots   -> signed read URLs (5 minutes). They stay in the core: never handed to the design layer,
 //                                                  never logged, stored or put in a URL; the image is fetched here and shown as a blob.
 //   POST .../approve (If-Match + head_sha), .../reject, .../request-changes, .../cancel, .../revert
-import { apiRaw } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { apiRaw } = takeApi(); // boot phase only (lib/api.js)
 import { cleanText } from "./design-history.js";
 import { isId } from "./versionpreview.js";
 

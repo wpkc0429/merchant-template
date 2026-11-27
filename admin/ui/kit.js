@@ -435,6 +435,8 @@ export function fieldErrors(err) {
 export function errorMessage(err, over = {}) {
   if (err && err.isActionError) return err.message;
   if (!err || typeof err.status !== "number") return t("err.network");
+  if (err.status === 403 && err.code === "preview_read_only") return coreText("pv.readOnly"); // the platform refused a write on a preview host (D18): calm, never "no permission"
+  if (err.status === 403 && err.code === "preview_scope_missing") return coreText("pv.scopeMissing");
   if (over[err.status]) return over[err.status];
   switch (err.status) {
     case 401: return t("err.401");

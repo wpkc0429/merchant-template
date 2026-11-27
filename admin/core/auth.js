@@ -2,10 +2,13 @@
 // the one-time set-password / invitation link token) stay inside the core: the design layer never sees,
 // stores or sends them. Password rules are enforced here. `hooks` are the shell's transitions.
 import { login as sessionLogin, passwordSetup, invitations } from "../lib/session.js";
-import { refreshTokens } from "../lib/api.js";
+import { takeApi } from "../lib/api.js";
 import { t } from "../lib/design.js";
+import { coreText } from "../lib/fixed-text.js";
 import { errorMessage } from "../ui/kit.js";
 import { ActionError, invalid } from "./errors.js";
+
+const { refreshTokens } = takeApi(); // boot phase only (lib/api.js)
 
 export const MIN_PASSWORD = 12;
 
@@ -20,6 +23,7 @@ export function loginMessage(err) {
     const mins = err.retryAfter ? Math.max(1, Math.ceil(err.retryAfter / 60)) : 0;
     return mins ? t("auth.err.429Wait", { minutes: mins }) : t("auth.err.429");
   }
+  if (err && err.status === 403 && err.code === "preview_scope_missing") return coreText("pv.scopeMissing"); // a preview host the platform does not know (D18)
   if (err && err.status === 403) return t("auth.err.403");
   return errorMessage(err);
 }

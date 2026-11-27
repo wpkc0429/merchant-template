@@ -6,7 +6,9 @@
 // Everything the design layer receives is a plain camelCase object built by the normalize functions below: unknown keys are
 // dropped (a new platform field never leaks through), no shop id, no token, no ETag, no signed URL, no raw response.
 // All text fields are DATA: the screens must render them as text. This file builds no DOM and checks no permission (core/design-history.js does).
-import { api, apiRaw } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api, apiRaw } = takeApi(); // boot phase only (lib/api.js)
 import { isId, safeOrigin } from "./versionpreview.js";
 
 export { isId };

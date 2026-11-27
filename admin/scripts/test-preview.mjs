@@ -11,6 +11,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { signIn } from "./lib/test-signin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MODE = process.env.VP_MODE || "";
@@ -71,7 +72,8 @@ g.fetch = async (url, init = {}) => {
 const on = (method, match, reply) => routes.unshift({ method, match, ...reply });
 const reset = () => { calls.length = 0; routes = []; };
 
-const { tokens, ApiError } = await imp("lib/api.js");
+const { takeApi, ApiError } = await imp("lib/api.js");
+const net = takeApi();
 const { session } = await imp("lib/session.js");
 const { setPermissions } = await imp("lib/perm.js");
 const { loadDesign, t } = await imp("lib/design.js");
@@ -84,7 +86,7 @@ const { ActionError } = await imp("core/errors.js");
 const banner = await imp("ui/preview-banner.js");
 const defaults = (await imp("design-defaults/copy.js")).default;
 await loadDesign();
-tokens.set({ access_token: "test-token" });
+await signIn(net, "test-token");
 session.shopID = 7;
 const RID = "11111111-2222-4333-8444-555555555555";
 const PID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -236,7 +238,7 @@ if (!PREVIEW) {
   ok("read-only error also for someone without the permission", e0 && e0.reason === "read_only" && calls.length === 0);
   as("owner");
   // lib/api.js backstop
-  const { api } = await imp("lib/api.js");
+  const { api } = net;
   for (const m of ["POST", "PUT", "PATCH", "DELETE"]) {
     reset();
     const e = await rejects(() => api(m, "/admin/shops/7/products", {}));

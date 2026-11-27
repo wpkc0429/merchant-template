@@ -89,7 +89,7 @@ const server = createServer(async (req, res) => {
   if (p.startsWith("/api/v1/")) {
     const a = p.slice("/api/v1".length), m = req.method;
     if (m !== "GET" && a !== "/admin/auth/refresh") S.writes++;
-    if (m === "POST" && a === "/admin/auth/refresh") return json(res, 200, { access_token: "tok-" + Math.random().toString(36).slice(2) });
+    if (m === "POST" && a === "/admin/auth/refresh") return json(res, 200, { access_token: "tok-" + Math.random().toString(36).slice(2), ...(S.preview ? { scope: "preview_ro" } : {}) });
     if (a === "/admin/me") return json(res, 200, { id: S.role === "owner" ? 1 : S.role === "editor" ? 2 : 3, email: `${S.role}@example.com`, sids: [1], platform_permissions: [] });
     if (a === "/admin/shops/1/me") return json(res, 200, { permissions: PERMS[S.role] });
     if (a === "/admin/branding") return json(res, 200, { name: "Test Shop", branding: {} });

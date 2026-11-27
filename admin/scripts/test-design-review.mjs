@@ -11,6 +11,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { signIn } from "./lib/test-signin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MODE = process.env.DR_MODE || "";
@@ -57,7 +58,8 @@ const posts = () => calls.filter((c) => c.method === "POST");
 const logs = [];
 for (const k of ["log", "warn", "error", "info", "debug"]) { const o = console[k]; console[k] = (...a) => { logs.push(a.map(String).join(" ")); if (k === "error") o(...a); }; }
 
-const { tokens, ApiError } = await imp("lib/api.js");
+const { takeApi, ApiError } = await imp("lib/api.js");
+const net = takeApi();
 const { session, clearSession } = await imp("lib/session.js");
 const { setPermissions } = await imp("lib/perm.js");
 const { loadDesign } = await imp("lib/design.js");
@@ -69,7 +71,7 @@ const { validateCopy, WARNED_CONFIRM_IDS } = await imp("lib/design-schema.js");
 const dh = await imp("lib/design-history.js");
 const rvlib = await imp("lib/design-review.js");
 await loadDesign();
-tokens.set({ access_token: "secret-access-token-123" });
+await signIn(net, "secret-access-token-123");
 session.shopID = 7; session.shopName = "Test Shop";
 
 const RID = "11111111-2222-4333-8444-555555555555";

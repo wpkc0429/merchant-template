@@ -1,6 +1,8 @@
 // Sales reports. Period boundaries are the shop's local calendar days; the server decides which
 // orders count (see SalesReport in the OpenAPI document) and this layer never recomputes totals.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 import { taipeiDate, addDays, monthStart, daysBetween } from "./dates.js";
 
 const base = (shopID) => `/admin/shops/${shopID}`;

@@ -167,6 +167,16 @@ Phase B：訪客結帳造單、訂單列表（卡片、篩選、搜尋、分頁�
 4. 圖片上傳：bucket 的 CORS 要加入這個 origin（平台 `docs/media-r2-setup.md` 第 4 步），否則瀏覽器直傳會失敗。
 5. 靜態伺服器**必須**帶上面「必要的 CSP」（`deploy/nginx.conf.template` 已帶，不可移除；上線後用 `curl -sI https://admin.<shop-domain>/ | grep -i content-security-policy` 確認）。店面的 CSP 是 `../public/_headers`（Cloudflare 從 `public/` 讀取）。
 
+### 預覽主機（v0.5.0，決策 D18）
+
+預覽主機（AI 編輯服務部署「改版預覽／版本預覽」的地方）是同一包靜態檔，用**自己的 origin**（不可與一般後台同主機）。營運者要做的事：
+
+1. 預覽主機容器設 `ADMIN_PREVIEW_MODE=version|change`（可加 `ADMIN_PREVIEW_TAG`、`ADMIN_PREVIEW_EXPIRES`，見 `deploy/preview-config.sh`）；未設就**不是**預覽主機。
+2. 平台端（平台營運手冊第 12 節）設 `ADMIN_PREVIEW_ORIGINS`（精確 origin 或 `https://*.preview.<網域>`）並重啟 API；預覽 origin 不得與一般後台、店面 origin 重疊，也不要設 `Domain=` 涵蓋上層網域的 cookie。
+3. 預覽頁用預覽 origin 登入（同一個帳號）：平台回 `scope: "preview_ro"` 的唯讀工作階段（cookie `__Secure-admin_preview_refresh`，host-only），**最長 30 分鐘、換發不延長**。範本沒有任何權杖在預覽與一般 origin 之間共用。
+4. 範本端的行為（設計層無法改）：前端唯讀旗標只是使用者體驗，真正的邊界是平台；登入或換發的回應**沒有** `scope: "preview_ro"` 就立刻丟棄並說明「這個預覽網址沒有被平台登記為預覽網域」；平台回 403 `preview_read_only` 時顯示「這是預覽畫面，不能在這裡修改。想編輯請回到正常的後台。」（不登出、不探測 `/admin/me`）；30 分鐘到了，下一個請求會回到登入畫面並說明預覽登入已到期，請重新登入。
+5. 預覽主機同樣要帶嚴格 CSP；預覽 origin 若在 Cloudflare Access 之後，政策要與一般後台相同或更嚴（平台 repo 外、人工）。
+
 ## 授權
 
 vendor 的 heic2any 為 MIT（見 `vendor/heic2any.LICENSE.md`）。

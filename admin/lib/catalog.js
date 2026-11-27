@@ -8,7 +8,9 @@
 //     what the form was loaded with (stale), and builds the payload from the FRESH list so
 //     every existing SKU id is always present;
 //   * a final assertion throws if any fresh SKU id is missing from the payload.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 
 export const SIZES = ["S", "M", "L"];
 export const NEW_ARRIVALS_SLUG = "new-arrivals";

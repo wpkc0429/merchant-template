@@ -1,6 +1,8 @@
 // Orders, payments and shipments (data access + the state rules the UI mirrors).
 // The API is the authority for every rule below; these helpers only decide what to OFFER.
-import { api } from "./api.js";
+import { takeApi } from "./api.js";
+
+const { api } = takeApi(); // boot phase only: sealed before the design layer loads (lib/api.js)
 import { taipeiDate } from "./dates.js";
 
 const base = (shopID) => `/admin/shops/${shopID}`;

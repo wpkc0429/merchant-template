@@ -17,7 +17,7 @@ import { validate, hasRemovals, reportLines, hydrate, mapServerDetails } from ".
 import { mediaConfig, mediaEnabled, uploadContentImage as libUploadContentImage } from "../lib/upload.js";
 import { t } from "../lib/design.js";
 import { need } from "./guard.js";
-import { ActionError, invalid, blocked, denied } from "./errors.js";
+import { ActionError, invalid, blocked, denied, previewDenied } from "./errors.js";
 
 const S = () => session.shopID;
 const CANCELLED = Object.freeze({ cancelled: true });
@@ -40,7 +40,7 @@ export function toActionError(e, schemaNode) {
       const fields = mapServerDetails(e.details, schemaNode);
       return invalid(Object.keys(fields).length ? fields : { "": t("err.422") });
     }
-    case "forbidden": return denied();
+    case "forbidden": return e.code === "preview_read_only" ? previewDenied() : denied();
     case "not_found": return new ActionError("state", t("err.404"), { reason: "gone", status: 404 });
     case "conflict": return new ActionError("state", e.code === "removals_require_confirmation" ? t("cf.err.removals") : t("cf.err.conflict"), { reason: "conflict" });
     case "rate_limited": return new ActionError("limit", t("err.429"), { reason: "rate_limited", status: 429 });

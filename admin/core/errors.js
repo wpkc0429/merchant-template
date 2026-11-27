@@ -1,6 +1,7 @@
 // Errors raised by the core's action functions (permission, state rules, validation, declined confirmations).
 // `message` is already localized (copy lookup happens where the error is raised).
 import { t } from "../lib/design.js";
+import { coreText } from "../lib/fixed-text.js";
 
 export class ActionError extends Error {
   /**
@@ -19,5 +20,7 @@ export class ActionError extends Error {
 }
 
 export const denied = () => new ActionError("permission", t("err.403"), { reason: "permission" });
+/** The platform refused a write on a PREVIEW host (403 preview_read_only, D18): a calm, fixed message, never "no permission". */
+export const previewDenied = () => new ActionError("state", coreText("pv.readOnly"), { reason: "preview_read_only", status: 403 });
 export const invalid = (fields, message) => new ActionError("invalid", message || Object.values(fields)[0] || t("err.422"), { fields });
 export const blocked = (reason, message) => new ActionError("state", message, { reason });

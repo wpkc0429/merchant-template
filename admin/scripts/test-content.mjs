@@ -10,6 +10,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { signIn } from "./lib/test-signin.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const g = globalThis;
@@ -42,7 +43,7 @@ const reset = () => { calls.length = 0; routes = []; };
 const puts = () => calls.filter((c) => c.method === "PUT" && /\/content\/schema/.test(c.url));
 
 // ── load the real modules ──
-const { tokens } = await imp("lib/api.js");
+const net = (await imp("lib/api.js")).takeApi();
 const { session } = await imp("lib/session.js");
 const { setPermissions } = await imp("lib/perm.js");
 const { loadDesign } = await imp("lib/design.js");
@@ -58,7 +59,7 @@ const origWarn = console.warn;
 console.warn = () => {};
 await loadDesign();
 console.warn = origWarn;
-tokens.set({ access_token: "test-token" });
+await signIn(net, "test-token");
 session.shopID = 1;
 
 const asked = [];
