@@ -139,7 +139,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pw"
           cd "$RUNNER_TEMP/pw"
           npm init -y >/dev/null
-          npm install --save-exact --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
+          npm install --save-exact --ignore-scripts --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
           echo "PLAYWRIGHT_DIR=$RUNNER_TEMP/pw" >> "$GITHUB_ENV"
 
       - name: Cache the Chromium download

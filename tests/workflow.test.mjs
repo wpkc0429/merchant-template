@@ -23,10 +23,17 @@ test('workflow file: pure node, no installs, runs every guard, has the branch-pr
   assert.doesNotMatch(y, /yarn|pnpm|pip install|npm ci/);
   assert.match(y, /PLAYWRIGHT_VERSION: \d+\.\d+\.\d+\n/, 'Playwright is pinned to an exact version');
   assert.equal((y.slice(at).match(/npm install/g) || []).length, 1, 'one install in the browser job');
-  assert.match(y.slice(at), /npm install --save-exact [^\n]*"playwright@\$PLAYWRIGHT_VERSION"/);
+  assert.match(y.slice(at), /npm install --save-exact --ignore-scripts [^\n]*"playwright@\$PLAYWRIGHT_VERSION"/);
   assert.match(y, /REQUIRE_BROWSER_TESTS: '1'/);
-  assert.doesNotMatch(y, /^\s*pull_request_target\s*:|\$\{\{\s*secrets\./m, 'no secrets, no pull_request_target');
-  assert.doesNotMatch(y, /uses: [^\n]*@(v\d+|main|master)\b/, 'third-party actions are pinned by full commit SHA');
+  const code = y.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n'); // comments may mention the words below
+  assert.doesNotMatch(code, /pull_request_target/i, 'no pull_request_target (quoted or not)');
+  assert.doesNotMatch(code, /\$\{\{\s*secrets\./, 'no secrets');
+  assert.doesNotMatch(code.slice(0, code.indexOf('\n  browser-tests:')), /\bnpx\b/, 'the guard jobs run no npx');
+  const uses = [...code.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)].map((m) => m[1]);
+  assert.ok(uses.length >= 5, 'the workflow uses actions');
+  for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, `action pinned by full commit SHA (not a tag or branch): ${u}`);
+  assert.equal((code.match(/^\s*permissions\s*:/gm) || []).length, 1, 'exactly one permissions block (top level)');
+  assert.match(code, /^permissions:\n  contents: read\n(?!  )/m, 'permissions are exactly contents: read');
 });
 
 test('storefront design branch: design edits pass; locked, config, other-site and root edits fail', () => {
