@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { skipOrFail } from "./lib/require-browser.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const HOST = "admin.example.test";
@@ -22,10 +23,10 @@ function loadPlaywright() {
   return null;
 }
 const pw = loadPlaywright();
-if (!pw) { console.log("SKIP d12-runtime browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
+if (!pw) { skipOrFail("d12-runtime browser test: Playwright not found (set PLAYWRIGHT_DIR)"); }
 let browser;
 try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
-  console.log(`SKIP d12-runtime browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
+  skipOrFail(`d12-runtime browser test: Chromium could not start (${String(e.message).split("\n")[0]})`);
 }
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };

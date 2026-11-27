@@ -14,6 +14,7 @@ import { createRequire } from "node:module";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { skipOrFail } from "./lib/require-browser.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SHOTS = process.env.BANNER_SHOTS || resolve(ADMIN, "e2e/out/banner");
@@ -27,10 +28,10 @@ function loadPlaywright() {
   return null;
 }
 const pw = loadPlaywright();
-if (!pw) { console.log("SKIP preview-banner browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
+if (!pw) { skipOrFail("preview-banner browser test: Playwright not found (set PLAYWRIGHT_DIR)"); }
 let browser;
 try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
-  console.log(`SKIP preview-banner browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
+  skipOrFail(`preview-banner browser test: Chromium could not start (${String(e.message).split("\n")[0]})`);
 }
 mkdirSync(SHOTS, { recursive: true });
 

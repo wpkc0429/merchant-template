@@ -6,6 +6,20 @@ first. Newest first. This file is part of the locked core (it is synced to merch
 
 ## 2026-11-28, decided by the owner
 
+### D22. The real-browser suites that need only this repository run in CI and can no longer be skipped silently; the suites that need the ecommerce stack stay local
+
+Decided by the owner (CI only: no guard rule, `ctx`, `lockedPaths` entry or manifest procedure changed; no design-layer action). Before this, the Playwright suites printed `SKIP ... Playwright not found` and exited 0 when Playwright or Chromium was missing, and GitHub Actions had neither, so the whole browser coverage was skipped there without anyone noticing.
+
+**How a suite skips, and the flag.** Each standalone suite looked for Playwright in `$PLAYWRIGHT_DIR` (a folder with `node_modules/playwright`) and skipped when it, or Chromium, was missing. They now call `skipOrFail()` of `admin/e2e/lib/require-browser.mjs`: with `REQUIRE_BROWSER_TESTS=1` the same condition is a FAILURE (exit 1); without the flag nothing changes for a developer (still a clean SKIP). The template has no npm dependencies and still has none: CI installs Playwright in a separate folder outside the repository.
+
+**The CI job `browser-tests`** (`.github/workflows/guards.yml`; permissions `contents: read`; no secrets; no `pull_request_target`; third-party actions pinned by full commit SHA) installs the exact pinned `playwright@1.65.1` (`npm install --save-exact`) in `$RUNNER_TEMP`, caches the Chromium download (`~/.cache/ms-playwright`, keyed by the Playwright version) and runs `node tests/e2e/ci-browser.mjs` with `REQUIRE_BROWSER_TESTS=1`. That runner executes each suite as its own process and fails when a suite exits non-zero, prints a SKIP line, or executes zero checks, and asserts that the total number of executed (non-skipped) checks is above zero; the job summary lists the count per suite. Screenshots and traces (`admin/e2e/out`, the suites' `*_SHOTS` folders and `E2E_OUT`) are uploaded as an artifact only when the job fails.
+
+**Runs in CI (stub or fake API plus static servers, nothing private):** `admin/e2e/preview-banner.mjs`, `admin/e2e/d12-runtime.mjs`, `admin/e2e/import-map.mjs`, `admin/e2e/hardening.mjs`, `admin/e2e/profile.mjs`, `admin/e2e/design-history.mjs`, `admin/e2e/design-review.mjs` and `tests/e2e/content-storefront.mjs` (a fake platform API; it now also honours `$PLAYWRIGHT_DIR`). The `tests/*.test.mjs` wrappers of the same scripts keep running in the `template-tests` job, where they may still skip: the `browser-tests` job is the one that cannot.
+
+**Still local only (need the throwaway ecommerce stack built from the private platform repo: Postgres, Redis, MinIO, the Go API, `$PLATFORM_DIR/.env` for the super admin):** `admin/e2e/run.mjs` (the full admin suite) together with the files it imports or runs (`setup.mjs`, `data.mjs`, `content.mjs`, `design.mjs`, `smoke.mjs`, `parity.mjs`; they use `lib.mjs`, which loads Playwright from the platform checkout), and `tests/e2e/storefront.mjs` and `tests/e2e/content-stack.mjs` (with `stack-up.sh`, `prepare.mjs`, `serve-storefront.mjs`). Their procedure is unchanged (admin README, "Testing"). No secret and no checkout of the private repository is added to the workflow.
+
+**Locally,** `REQUIRE_BROWSER_TESTS=1 PLAYWRIGHT_DIR=<folder> node tests/e2e/ci-browser.mjs` reproduces the CI run.
+
 ### D21. Personal profile: each admin user sets their own display name, shown to teammates in the design history (core-owned page, no new `ctx` function)
 
 Approved by the owner on 2026-11-27 ("all as recommended"), as a follow-up of the design history (D13 to D15) and its platform change (`docs/design-history.md` in the platform repo: `GET /api/v1/admin/me` returns `display_name`, `PATCH /api/v1/admin/me {display_name}` sets or clears it). Without a name the history shows the platform's neutral fallbacks ("Team member" for a member of the shop, "Platform admin" for anyone else), never an email address or a phone number. **No new `ctx` function and no design-layer API**: `lib/public-api.json`, the `ctx` manifest and `ROUTE_IDS` are unchanged, and no guard rule or CSP rule changed.
