@@ -15,6 +15,7 @@ import { deflateSync } from "node:zlib";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { skipOrFail } from "./lib/require-browser.mjs";
 import { SCRIPT_SRC } from "./lib/csp.mjs";
 import { canaryNoise } from "./lib/expected-noise.mjs";
 
@@ -29,10 +30,10 @@ function loadPlaywright() {
   return null;
 }
 const pw = loadPlaywright();
-if (!pw) { console.log("SKIP design-history browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
+if (!pw) { skipOrFail("design-history browser test: Playwright not found (set PLAYWRIGHT_DIR)"); }
 let browser;
 try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
-  console.log(`SKIP design-history browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
+  skipOrFail(`design-history browser test: Chromium could not start (${String(e.message).split("\n")[0]})`);
 }
 mkdirSync(SHOTS, { recursive: true });
 

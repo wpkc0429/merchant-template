@@ -20,7 +20,7 @@ const API = `http://127.0.0.1:${API_PORT}`, SITE = `http://localhost:${SITE_PORT
 const OUT = process.env.E2E_OUT || resolve(tmpdir(), 'merchant-template-content-shots');
 const ECOM = process.env.PLATFORM_DIR || resolve(import.meta.dirname, '../../../ecommerce');
 mkdirSync(OUT, { recursive: true });
-const { chromium } = createRequire(resolve(ECOM, 'e2e/package.json'))('playwright');
+const { chromium } = createRequire(resolve(process.env.PLAYWRIGHT_DIR || resolve(ECOM, 'e2e'), 'package.json'))('playwright'); // $PLAYWRIGHT_DIR (CI) or the platform checkout's e2e folder
 
 let failures = 0;
 const check = (name, cond, extra = '') => { if (cond) console.log(`  ok  ${name}`); else { failures++; console.error(`  FAIL ${name} ${extra}`); } return Boolean(cond); };

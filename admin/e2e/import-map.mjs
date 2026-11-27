@@ -20,6 +20,7 @@ import { join, resolve } from "node:path";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hookBrowser } from "./lib/shadow-hook.mjs";
+import { skipOrFail } from "./lib/require-browser.mjs";
 
 const ADMIN = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const HOST = "admin.example.test";
@@ -30,10 +31,10 @@ function loadPlaywright() {
   return null;
 }
 const pw = loadPlaywright();
-if (!pw) { console.log("SKIP import-map browser test: Playwright not found (set PLAYWRIGHT_DIR)"); process.exit(0); }
+if (!pw) { skipOrFail("import-map browser test: Playwright not found (set PLAYWRIGHT_DIR)"); }
 let browser;
 try { browser = hookBrowser(await pw.chromium.launch({ args: [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] })); } catch (e) {
-  console.log(`SKIP import-map browser test: Chromium could not start (${String(e.message).split("\n")[0]})`); process.exit(0);
+  skipOrFail(`import-map browser test: Chromium could not start (${String(e.message).split("\n")[0]})`);
 }
 
 // ── the real CSP of the nginx template (server level), variables filled with test values ──

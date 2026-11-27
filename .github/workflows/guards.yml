@@ -26,11 +26,11 @@ jobs:
   guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
 
@@ -97,10 +97,10 @@ jobs:
   template-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
       - name: Run the template tests (skipped in merchant repos)
@@ -112,3 +112,60 @@ jobs:
           else
             echo "no tests/run.mjs: merchant repo, nothing to do"
           fi
+
+  # Real-browser suites (Playwright + Chromium) that need ONLY this repository: stub / fake platform API + static servers (decision D22).
+  # REQUIRE_BROWSER_TESTS=1 turns a missing browser into a failure (no silent skip) and tests/e2e/ci-browser.mjs asserts that
+  # executed checks > 0. The suites that need the ecommerce stack (private repo) are NOT run here and no secret is used.
+  browser-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_VERSION: 1.65.1
+      REQUIRE_BROWSER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+      - name: Template repo only (tests/ does not exist in merchant repos; the job then does nothing)
+        id: present
+        run: |
+          if [ -f tests/e2e/ci-browser.mjs ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; else echo "no tests/e2e/ci-browser.mjs: merchant repo, nothing to do"; fi
+
+      - name: Install the pinned Playwright outside the repository (the template has no npm dependencies)
+        if: steps.present.outputs.yes == 'true'
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/pw"
+          cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --save-exact --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
+          echo "PLAYWRIGHT_DIR=$RUNNER_TEMP/pw" >> "$GITHUB_ENV"
+
+      - name: Cache the Chromium download
+        if: steps.present.outputs.yes == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+      - name: Install Chromium and its system libraries
+        if: steps.present.outputs.yes == 'true'
+        run: |
+          cd "$PLAYWRIGHT_DIR"
+          npx playwright install --with-deps chromium
+
+      - name: Run the real-browser suites (a skip or zero executed checks fails the job)
+        if: steps.present.outputs.yes == 'true'
+        env:
+          E2E_OUT: ${{ github.workspace }}/admin/e2e/out/content-storefront
+        run: node tests/e2e/ci-browser.mjs
+
+      - name: Upload screenshots (failure only)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-test-screenshots
+          path: admin/e2e/out/
+          if-no-files-found: ignore
+          retention-days: 7
