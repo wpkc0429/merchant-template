@@ -20,6 +20,7 @@ export const SUITES = [
   ['admin/e2e/design-history.mjs', 77],
   ['admin/e2e/design-review.mjs', 148],
   ['tests/e2e/content-storefront.mjs', 25],
+  ['tests/e2e/html-scan-differential.mjs', 1],   // D24: the index.html tokenizer against the real browser (prints one ok line; a mismatch exits non-zero)
 ];
 
 if (process.env.REQUIRE_BROWSER_TESTS !== '1') { console.error('ci-browser: REQUIRE_BROWSER_TESTS=1 must be set (a CI run may not skip)'); process.exit(1); }

@@ -11,7 +11,9 @@ const { isCanary404, canaryNoise, CANARY_DENY_PATH, isHttpFailure } = await impo
 const O = 'http://admin.example.test:1234';
 const msg = (type, text, url) => ({ type: () => type, text: () => text, location: () => ({ url }) });
 const L404 = 'Failed to load resource: the server responded with a status of 404 (Not Found)';
-const fakePage = () => { const h = {}; return { on: (e, f) => { h[e] = f; }, fire: (e) => h[e]() }; };
+const MAIN = { main: true };
+const navReq = (over = {}) => ({ isNavigationRequest: () => true, frame: () => MAIN, redirectedFrom: () => null, ...over });
+const fakePage = () => { const h = {}; return { on: (e, f) => { h[e] = f; }, mainFrame: () => MAIN, load: () => h.load && h.load(), nav: (r = navReq()) => h.request(r) }; };
 
 test('only the canary target URL, status 404, type error is the expected noise', () => {
   assert.equal(CANARY_DENY_PATH, '/deny/lib/canary/target.js');
@@ -26,14 +28,46 @@ test('only the canary target URL, status 404, type error is the expected noise',
   assert.ok(!isCanary404('error', L404, ''));
 });
 
-test('canaryNoise allows ONE per load and restarts on load; other /deny/ hits are never swallowed', () => {
+test('canaryNoise allows ONE per main-frame document load; other /deny/ hits are never swallowed', () => {
   const p = fakePage(), ign = canaryNoise(p);
-  assert.equal(ign(msg('error', L404, O + '/deny/lib/canary/target.js')), true);
-  assert.equal(ign(msg('error', L404, O + '/deny/lib/canary/target.js')), false, 'a second one in the same load is a failure');
+  const c = () => msg('error', L404, O + '/deny/lib/canary/target.js');
+  p.nav();
+  assert.equal(ign(c()), true);
+  assert.equal(ign(c()), false, 'a second one in the same load is a failure');
   assert.equal(ign(msg('error', L404, O + '/deny/lib/design.js')), false);
   assert.equal(ign(msg('error', L404, O + '/deny/anything')), false);
-  p.fire('load');
-  assert.equal(ign(msg('error', L404, O + '/deny/lib/canary/target.js')), true, 'a new document load may log it once again');
+  p.nav();
+  assert.equal(ign(c()), true, 'a new document load may log it once again');
+  assert.equal(ign(c()), false);
+  const q = fakePage(), ign2 = canaryNoise(q);
+  assert.equal(ign2(c()), true, 'a page that was already loaded gets one allowance');
+  assert.equal(ign2(c()), false);
+});
+
+test('canaryNoise does not depend on the order of the load event and the canary message (the race found in bouquet-next)', () => {
+  const c = () => msg('error', L404, O + '/deny/lib/canary/target.js');
+  // the old implementation restarted its allowance on "load": document 1 loads, ITS canary 404 is logged after that load event, document 2's canary 404 is
+  // logged before document 2's load event: the old code counted the second one as an error.
+  const oldImpl = () => { let seen = false; return { onLoad: () => { seen = false; }, ign: (m) => { if (seen) return false; seen = true; return true; } }; };
+  const o = oldImpl();
+  o.onLoad(); assert.equal(o.ign(c()), true); /* doc 2 */ assert.equal(o.ign(c()), false, 'the old logic fails in this order (this is the bug)');
+  const p = fakePage(), ign = canaryNoise(p);
+  p.nav(); p.load(); assert.equal(ign(c()), true);         // document 1: load event first, canary after it
+  p.nav(); assert.equal(ign(c()), true, 'document 2: the canary before its load event is still its one allowed message'); p.load();
+  assert.equal(ign(c()), false, 'but a second one for document 2 is an error');
+  // a late canary message of the previous document, delivered after the next navigation request started, does not make the next one an error
+  const r = fakePage(), ign3 = canaryNoise(r);
+  r.nav(); r.nav(); assert.equal(ign3(c()), true); assert.equal(ign3(c()), true); assert.equal(ign3(c()), false);
+});
+
+test('canaryNoise counts only navigations of the main frame that are not redirect hops', () => {
+  const c = () => msg('error', L404, O + '/deny/lib/canary/target.js');
+  const p = fakePage(), ign = canaryNoise(p);
+  p.nav(); assert.equal(ign(c()), true);
+  p.nav(navReq({ frame: () => ({ child: true }) }));
+  p.nav(navReq({ isNavigationRequest: () => false }));
+  p.nav(navReq({ redirectedFrom: () => ({}) }));
+  assert.equal(ign(c()), false, 'a sub-frame, a sub-resource or a redirect hop does not allow another canary message');
 });
 
 test('the suites that fail on console errors use the shared helper (no private /deny/ allowance left)', () => {

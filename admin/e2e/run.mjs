@@ -616,9 +616,22 @@ check("clear filters restores the full list", (await T(page, "order-from").input
 await T(page, "order-search").fill(B.name);
 await page.waitForFunction((n) => { const c = [...document.querySelectorAll('[data-testid="order-card"]')]; return c.length === 1 && c[0].innerText.includes(n); }, B.name);
 check("search by recipient name", true);
+// D24: the API matches q against the recipient name, the phone (ILIKE %q%) AND the order id, newest first. On a fresh database the ids are small numbers that
+// also occur inside the phone numbers of other orders, so the order with that number can sit on a LATER page (q=2 on a 29-order database: 29 matches, order 2 last).
+// That, not a slow query, made this step time out. So: wait for the answer to THIS query, then look through the pages for the order.
+const answered = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/orders") && new URL(r.url()).searchParams.get("q") === String(ids.C));
 await T(page, "order-search").fill(String(ids.C));
-await page.waitForFunction((id) => { const c = [...document.querySelectorAll('[data-testid="order-card"]')]; return c.some((e) => e.dataset.orderId === String(id)); }, ids.C);
-check("search by order number", true);
+await answered;
+let foundByNumber = false;
+for (let n = 0; n < 30 && !foundByNumber; n++) {
+  await page.waitForFunction(() => !document.querySelector(".state--loading") && document.querySelector('[data-testid="order-card"]'));
+  foundByNumber = (await page.locator(`[data-testid="order-card"][data-order-id="${ids.C}"]`).count()) > 0;
+  if (foundByNumber || !(await T(page, "page-next").isEnabled().catch(() => false))) break;
+  const now = await T(page, "page-now").innerText();
+  await T(page, "page-next").click();
+  await page.waitForFunction((was) => document.querySelector('[data-testid="page-now"]')?.textContent !== was && !document.querySelector(".state--loading"), now);
+}
+check("search by order number (the order is found, on page 1 or a later page)", foundByNumber);
 await T(page, "order-search").fill(D.phone.slice(-7));
 await page.waitForFunction((id) => { const c = [...document.querySelectorAll('[data-testid="order-card"]')]; return c.length >= 1 && c.some((e) => e.dataset.orderId === String(id)); }, ids.D);
 check("search by phone number", true);

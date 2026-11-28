@@ -120,6 +120,8 @@ echo 'window.ADMIN_CONFIG.apiBase = location.origin;' > config.local.js
 
 內容畫面（`e2e/content.mjs`，由 `run.mjs` 在設計層之前執行，也可單獨跑 `node e2e/content.mjs`；需要 `config.local.js` 的 `siteOrigin`，`serve.mjs` 會把 `../public/content.schema.json` 以同源的 `/content.schema.json` 提供）：用確認對話框註冊範本的內容 schema（先 dry run、取消不註冊、固定警告）、編輯與前端驗證、儲存（以伺服器回應重建表單）、發佈（公開 `/shop/content` 立即回新內容）、清單項目新增／排序／刪除、兩個分頁同時儲存的 412 提示與重新載入、版本歷史與還原（只放回草稿、公開內容不變）、預覽分頁、editor（可編輯、無發佈／刪除／schema）與 staff（無入口、進不去）的權限，以及 390／1280 的版面與溢出檢查。
 
+首頁統計卡片的順序（D24）：`node e2e/home-order.mjs`（需要拋棄式堆疊）把首頁四張卡片的請求依 24 種完成順序延遲，確認卡片永遠是 今日配送、未出貨、低庫存、商品數。`run.mjs` 的「依訂單編號搜尋」會逐頁找（新資料庫的小編號也出現在其他訂單的電話裡，該訂單可能在第 2 頁）；主控台的 canary 404 改依主框架的導覽請求計數，不再依 `load` 事件（D24）。
+
 另外有：`node e2e/parity.mjs capture <dir>`（390px 與 1280px 逐頁截圖，新舊各跑一次再 `compare`，確認畫面逐像素一致）、`node scripts/test-guard.mjs`（守門員測試）。**要用 http://localhost:3001 開**（MinIO 的 CORS 只登記這個 origin，圖片直傳才會成功）；全新資料庫的第一次執行，套件會自己先建一筆已付款訂單。
 
 套件涵蓋（Phase A）：登入／登出／錯誤密碼／鎖定、cookie 與 body 兩種 refresh、設定密碼與邀請連結、店員看不到商品、商品完整生命週期（含真實 HEIC 樣本、上限、重排、本季新品、下架、過期表單保護、英文副標搜尋）、分類與排序、運送方式。

@@ -44,11 +44,10 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
+import { scanHtml } from './lib/html-scan.mjs';
 import { validateConfig, renderForRoot, parseConfigText, CONFIG_FILE, OUT_FILE } from './render-headers.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-// HTML comments the way the browser ends them (D23): <!--> and <!---> are empty comments, and a comment ends at --> OR --!> (the tokenizer's "comment end bang" state)
-const HTML_COMMENT = /<!--(?:-?>|[\s\S]*?(?:-->|--!>))/g;
 const PUB = path.join(ROOT, 'public');
 const MANIFEST = path.join(ROOT, 'scripts', 'commerce.manifest.json');
 const TEMPLATE_JSON = path.join(ROOT, 'template.json');
@@ -324,8 +323,10 @@ function checkCsp(headersText, indexHtml, tpl = true) {
       else if ((dirs.get('form-action') || []).some((v) => /^\*$|^https?:$|^data:$/i.test(v))) errors.push('CSP form-action must list explicit hosts (no wildcard or bare scheme)');
     }
   }
-  const html = String(indexHtml || '').replace(HTML_COMMENT, '');
-  const inline = /<script(?![^>]*\bsrc\s*=)[^>]*>/i.test(html) || /\son[a-z]+\s*=\s*["']/i.test(html);
+  // D24: a real HTML tokenizer (scripts/lib/html-scan.mjs), not a comment regex: <!-- inside <style>, <title>, <textarea>, <noscript> or a <script src> is not a comment
+  const scan = scanHtml(String(indexHtml || ''));
+  const inline = scan.scripts.some((s) => !s.attrs.has('src')) || /\son[a-z]+\s*=\s*["']/i.test(scan.live);
+  if (scan.ambiguous.length) (tpl ? errors : warnings).push(`public/index.html contains <${[...new Set(scan.ambiguous)].join('>, <')}>: how a browser tokenizes the text after it is not modelled by the scan, so it cannot be certain that no script is hidden there; move it out of index.html (an error in the template, a warning in a merchant repo)`);
   if (inline) (tpl ? errors : warnings).push('public/index.html has an inline <script> or an on*= handler: the strict CSP in public/_headers blocks it. Use an external file (see commerce/local-config.js); a merchant repo made from v0.1.0 must replace its inline localhost-override script with <script src="commerce/local-config.js"></script>');
   return { errors, warnings };
 }
@@ -377,7 +378,7 @@ function checkCsp(headersText, indexHtml, tpl = true) {
 {
   const ip = path.join(PUB, 'index.html');
   if (existsSync(ip)) {
-    const srcs = [...readFileSync(ip, 'utf8').replace(HTML_COMMENT, '').matchAll(/<script[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)].map((m) => m[1]);
+    const srcs = scanHtml(readFileSync(ip, 'utf8')).scripts.filter((s) => s.attrs.get('src')).map((s) => s.attrs.get('src'));
     const order = ['commerce/api.js', 'commerce/cart.js', 'commerce/content-allowlist.js', 'commerce/content.js', 'commerce/checkout.js', 'content.js', 'app.js'];
     let last = -1;
     for (const s of order) {
@@ -465,10 +466,10 @@ const NET_NAMES = 'fetch|sendBeacon|WebSocket|EventSource|XMLHttpRequest';
 const GLOBAL_OBJECTS = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames']);
 const NET_RECEIVERS = new Set([...GLOBAL_OBJECTS, 'navigator']);
 const GLOBAL_RE = 'window|globalThis|self|top|parent|frames';
-function joinStringConcats(text) { // 'a' + 'b' -> 'ab' (repeated; each pass shortens the text, so it ends)
+function joinStringConcats(text) { // 'a' + 'b' -> 'ab' + padding (repeated; each pass removes a +, so it ends; the length is kept, D24)
   const re = new RegExp(String.raw`(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\1\s*\+\s*(["'\x60])((?:[^"'\x60\\\r\n]|\\.)*)\3`, 'g');
   for (let k = 0; k < 64; k++) {
-    const next = text.replace(re, (m, q, a, q2, b) => q + a + b + q);
+    const next = text.replace(re, (m, q, a, q2, b) => (q + a + b + q).padEnd(m.length, ' '));   // same length: positions stay valid for declaredNames (D24)
     if (next === text) break;
     text = next;
   }
@@ -498,21 +499,144 @@ function valueText(s, from, call) {
   const m = /[;\r\n]/.exec(s.slice(from, from + 400));
   return s.slice(from, m ? from + m.index : from + 400);
 }
-// Names the file itself declares (variables, destructured names, functions, classes, parameters, catch bindings, arrow parameters): a local
-// "parent", "top" or "self" is not the browser global (for "open" only a function declaration counts, D23). Conservative: any declaration anywhere in the file exempts the name in the whole file.
+// Names the file itself declares, WITH their scope (D24; before, any declaration anywhere exempted the name in the whole file): a local "parent", "top" or
+// "self" is not the browser global, but only where the binding is visible. Returns isDeclared(name, position). Scopes (on the masked text, brackets matched):
+// a top-level declaration covers the file; let / const / class / function declarations cover the enclosing block; var covers the enclosing function body;
+// a for-head declaration covers the loop; parameters (function, method, arrow) and a catch binding cover the function / catch body only (an arrow with an
+// expression body: to the end of the expression). Binding names come from a pattern parser (a destructured KEY, a default value or a call argument is not a binding).
+const CONTROL_WORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await', 'return', 'typeof', 'else', 'do', 'function', 'yield', 'void', 'delete', 'new', 'throw', 'case', 'extends', 'in', 'of', 'instanceof']);
 function declaredNames(masked) {
-  const names = new Set();
-  const add = (s) => { for (const m of String(s).matchAll(/[\w$]+/g)) names.add(m[0]); };
-  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const|function\*?|class)\s+([\w$]+)/g)) names.add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s*[{\[]([^}\]]*)[}\]]/g)) add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])(?:var|let|const)\s+[\w$]+\s*=[^;\n]*?,\s*([\w$]+)\s*=(?!=)/g)) names.add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])function\*?\s*[\w$]*\s*\(([^)]*)\)/g)) add(m[1]);
-  for (const m of masked.matchAll(/\(([^()]*)\)\s*=>/g)) add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])([\w$]+)\s*=>/g)) names.add(m[1]);
-  for (const m of masked.matchAll(/(?<![\w$.])catch\s*\(\s*([\w$]+)/g)) names.add(m[1]);
-  // method parameters (D23: not the head of an if / for / while / switch / with block, whose condition would otherwise "declare" every name written in it)
-  for (const m of masked.matchAll(/(?<![\w$.])(?!(?:if|for|while|switch|catch|with|return|typeof|else|do|function|await|yield|void|delete|new|throw|case)(?![\w$]))(?:async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\(([^()]*)\)\s*\{/g)) add(m[1]);
-  return names;
+  const len = masked.length;
+  const closeOf = new Map(), openOf = new Map(), groups = [];
+  { const st = []; for (let i = 0; i < len; i++) { const c = masked[i]; if (c === '{' || c === '(' || c === '[') st.push(i); else if (c === '}' || c === ')' || c === ']') { const o = st.pop(); if (o !== undefined && '{(['.indexOf(masked[o]) === '})]'.indexOf(c)) { closeOf.set(o, i); openOf.set(i, o); groups.push([o, i]); } } } }
+  const containers = (pos) => groups.filter(([o, c]) => o < pos && pos < c).sort((a, b) => b[0] - a[0]);   // innermost first
+  const wordBefore = (i) => { const m = /([\w$]+)\s*$/.exec(masked.slice(Math.max(0, i - 40), i)); return m ? m[1] : ''; };
+  const isFunctionBody = (o) => {
+    if (masked[o] !== '{') return false;
+    const start = Math.max(0, o - 400), before = masked.slice(start, o).trimEnd();
+    if (before.endsWith('=>')) return true;
+    if (!before.endsWith(')')) return false;
+    const po = openOf.get(start + before.length - 1);
+    return po !== undefined && !CONTROL_WORDS.has(wordBefore(po));
+  };
+  const out = []; // { name, from, to }
+  const whole = [0, len];
+  const stmtEnd = (from) => { // the end of the statement or block starting at `from`
+    let k = from; while (k < len && /\s/.test(masked[k])) k++;
+    if (masked[k] === '{' && closeOf.has(k)) return closeOf.get(k) + 1;
+    for (let d = 0; k < len; k++) { const c = masked[k]; if (c === '{' || c === '(' || c === '[') d++; else if (c === '}' || c === ')' || c === ']') { if (d === 0) return k; d--; } else if (d === 0 && (c === ';' || c === '\n')) return k; }
+    return len;
+  };
+  const exprEnd = (from) => { // end of an arrow function expression body
+    for (let k = from, d = 0; k < len; k++) { const c = masked[k]; if (c === '{' || c === '(' || c === '[') d++; else if (c === '}' || c === ')' || c === ']') { if (d === 0) return k; d--; } else if (d === 0 && (c === ';' || c === ',' || c === '\n')) return k; }
+    return len;
+  };
+  const add = (names, [from, to]) => { for (const name of names) out.push({ name, from, to }); };
+  // skip an optional "= default" and the comma after it, up to `limit`
+  function skipDefault(i, limit) {
+    let k = i; while (k < limit && /\s/.test(masked[k])) k++;
+    if (masked[k] === '=' && masked[k + 1] !== '=') { for (let d = 0, j = k + 1; ; j++) { if (j >= limit) return limit; const c = masked[j]; if (c === '{' || c === '(' || c === '[') d++; else if (c === '}' || c === ')' || c === ']') d--; else if (c === ',' && d === 0) return j + 1; } }
+    return masked[k] === ',' ? k + 1 : k;
+  }
+  // a binding pattern at position i: returns { names, end }
+  function pattern(i) {
+    const names = [];
+    while (/\s/.test(masked[i] || '')) i++;
+    const c = masked[i];
+    if (c === '{' || c === '[') {
+      const close = closeOf.get(i); if (close === undefined) return { names, end: i + 1 };
+      let k = i + 1;
+      while (k < close) {
+        while (k < close && /[\s,]/.test(masked[k])) k++;
+        if (k >= close) break;
+        if (masked.startsWith('...', k)) { const r = pattern(k + 3); names.push(...r.names); k = skipDefault(r.end, close); continue; }
+        if (c === '{') {
+          let keyEnd;
+          if (masked[k] === '[' && closeOf.has(k)) keyEnd = closeOf.get(k) + 1; else { const m = /^[\w$]+/.exec(masked.slice(k, close)); keyEnd = k + (m ? m[0].length : 1); }
+          let j = keyEnd; while (j < close && /\s/.test(masked[j])) j++;
+          if (masked[j] === ':') { const r = pattern(j + 1); names.push(...r.names); k = skipDefault(r.end, close); }
+          else { const nm = masked.slice(k, keyEnd); if (/^[\w$]+$/.test(nm)) names.push(nm); k = skipDefault(j, close); }
+        } else { const r = pattern(k); names.push(...r.names); k = skipDefault(Math.max(r.end, k + 1), close); }
+      }
+      return { names, end: close + 1 };
+    }
+    const m = /^[\w$]+/.exec(masked.slice(i, i + 80));
+    return m ? { names: [m[0]], end: i + m[0].length } : { names, end: i + 1 };
+  }
+  // a parameter list "(a, { b }, ...c)" whose "(" is at po
+  const params = (po) => {
+    const close = closeOf.get(po); if (close === undefined) return [];
+    const names = []; let k = po + 1;
+    while (k < close) { while (k < close && /[\s,]/.test(masked[k])) k++; if (k >= close) break; if (masked.startsWith('...', k)) k += 3; const r = pattern(k); names.push(...r.names); k = skipDefault(Math.max(r.end, k + 1), close); }
+    return names;
+  };
+  const bodyAfter = (close) => { const bo = /^\s*\{/.exec(masked.slice(close + 1, close + 40)); if (!bo) return -1; const open = close + bo[0].length; return closeOf.has(open) ? closeOf.get(open) : -1; };
+  // 1. var / let / const (every declarator, destructuring included)
+  for (const m of masked.matchAll(/(?<![\w$.])(var|let|const)\s+(?=[\w${\[])/g)) {
+    const cs = containers(m.index);
+    const funcBody = cs.find(([o]) => isFunctionBody(o));
+    const inner = cs.find(([o]) => masked[o] === '{');
+    let scope = m[1] === 'var' ? (funcBody ? [funcBody[0], funcBody[1]] : whole) : (inner ? [inner[0], inner[1]] : whole);
+    const first = cs[0];
+    if (m[1] !== 'var' && first && masked[first[0]] === '(' && /(?:^|[^\w$.])for\s*(?:await\s*)?$/.test(masked.slice(Math.max(0, first[0] - 20), first[0]))) scope = [first[0], stmtEnd(first[1] + 1)];
+    let k = m.index + m[0].length;
+    for (;;) {
+      const r = pattern(k); add(r.names, scope);
+      // skip the initializer up to the next top-level comma (another declarator) or the end of the declaration
+      let j = r.end, d = 0, next = -1;
+      for (; j < len; j++) {
+        const c = masked[j];
+        if (c === '{' || c === '(' || c === '[') d++;
+        else if (c === '}' || c === ')' || c === ']') { if (d === 0) break; d--; }
+        else if (d === 0 && c === ';') break;
+        else if (d === 0 && c === ',') { next = j + 1; break; }
+        else if (d === 0 && c === '\n' && !/[,=+\-*/&|?:(\[{]\s*$/.test(masked.slice(Math.max(0, j - 3), j)) && !/^\s*[,=+\-*/&|?:.]/.test(masked.slice(j + 1, j + 40))) break;
+        else if (d === 0 && c === ' ' && /^ (?:of|in) /.test(masked.slice(j, j + 5))) break;
+      }
+      if (next < 0) break;
+      k = next;
+    }
+  }
+  // 2. function / class declarations and names, then the parameters of every function form
+  for (const m of masked.matchAll(/(?<![\w$.])(function|class)\b\s*\*?\s*([\w$]*)/g)) {
+    const name = m[2] === 'extends' ? '' : m[2];
+    const prev = masked.slice(0, m.index).trimEnd();
+    if (name) {
+      const stmtStart = prev === '' || /[;{}]$/.test(prev) || /(?:^|[^\w$.])(?:async|export|default)$/.test(prev) || /\n\s*$/.test(masked.slice(Math.max(0, m.index - 6), m.index));
+      if (stmtStart) { const inner = containers(m.index).find(([o]) => masked[o] === '{'); add([name], inner ? [inner[0], inner[1]] : whole); }
+      else if (m[1] === 'function') { // a named function expression: the name is visible inside it only
+        const po = masked.indexOf('(', m.index + m[0].length); const end = po >= 0 && closeOf.has(po) ? bodyAfter(closeOf.get(po)) : -1;
+        if (end >= 0) add([name], [po, end]);
+      }
+    }
+    if (m[1] === 'function') {
+      const po = masked.indexOf('(', m.index + m[0].length - name.length);
+      if (po >= 0 && closeOf.has(po)) { const end = bodyAfter(closeOf.get(po)); if (end >= 0) add(params(po), [po, end]); }
+    }
+  }
+  // 3. method definitions: name(params) { ... }  (not a control statement head, not "extends mix(x) {", not a property call)
+  for (const m of masked.matchAll(/(?<![\w$.])((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)([\w$]+)\s*\(/g)) {
+    if (CONTROL_WORDS.has(m[2])) continue;
+    const po = m.index + m[0].length - 1, close = closeOf.get(po); if (close === undefined) continue;
+    const end = bodyAfter(close); if (end < 0) continue;
+    if (/(?:^|[^\w$.])(?:extends|new)\s*$/.test(masked.slice(Math.max(0, m.index - 12), m.index))) continue;
+    add(params(po), [po, end]);
+  }
+  // 4. catch bindings
+  for (const m of masked.matchAll(/(?<![\w$.])catch\s*\(/g)) {
+    const po = m.index + m[0].length - 1, close = closeOf.get(po); if (close === undefined) continue;
+    add(params(po), [po, stmtEnd(close + 1)]);
+  }
+  // 5. arrow functions: (a, b) => body / a => body
+  for (const m of masked.matchAll(/=>/g)) {
+    let k = m.index; while (k > 0 && /\s/.test(masked[k - 1])) k--;
+    let names, from;
+    if (masked[k - 1] === ')' && openOf.has(k - 1)) { from = openOf.get(k - 1); names = params(from); }
+    else { const w = /([\w$]+)$/.exec(masked.slice(Math.max(0, k - 60), k)); if (!w) continue; names = [w[1]]; from = k - w[1].length; }
+    let b = m.index + 2; while (b < len && /\s/.test(masked[b])) b++;
+    add(names, [from, masked[b] === '{' && closeOf.has(b) ? closeOf.get(b) : exprEnd(b)]);
+  }
+  return (name, pos) => out.some((d) => d.name === name && d.from <= pos && pos <= d.to);
 }
 function storefrontNetworkFindings(source) {
   const found = [];
@@ -521,7 +645,7 @@ function storefrontNetworkFindings(source) {
   const plain = canonicalSource(source);
   const idRe = new RegExp(String.raw`(?<![\w$])(` + NET_NAMES + String.raw`)(?![\w$])`, 'g');
   const why = 'network access; every request goes through ShopCommerce';
-  const declared = declaredNames(masked);
+  const declared = declaredNames(masked);   // (name, position) => is the name declared where it is used (D24: scoped)
   for (const m of masked.matchAll(idRe)) {
     const idx = m.index, end = idx + m[0].length, name = m[1];
     const before = masked.slice(Math.max(0, idx - 80), idx);
@@ -563,7 +687,7 @@ function storefrontNetworkFindings(source) {
   for (const [re, label] of rules) { const m = re.exec(masked); if (m) found.push([m.index, label]); }
   // aliasing a global object (const w = window): refused unless the name on the right is declared in this file (a local "parent", "top" or "self")
   const aliasRe = new RegExp('(?<![\\w$.])[\\w$]+\\s*=(?!=)\\s*\\(?\\s*(' + GLOBAL_RE + ')\\s*\\)?\\s*(?:[;,)\\r\\n]|$)', 'gm');
-  for (const m of masked.matchAll(aliasRe)) if (!declared.has(m[1])) { found.push([m.index, 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']); break; }
+  for (const m of masked.matchAll(aliasRe)) if (!declared(m[1], m.index + m[0].lastIndexOf(m[1]))) { found.push([m.index, 'aliasing a global object (const w = window): the alias hides every later use from a lexical scan']); break; }
   // a bare open(...) call is window.open, unless this file declares a genuine FUNCTION named open (function open() {...}) or the call is a method
   // definition ({ open() { ... } }). D23: a variable, parameter, destructured or arrow-valued binding named open no longer exempts the file
   // (const open = window['op' + 'en'] used to).
@@ -581,7 +705,7 @@ function storefrontNetworkFindings(source) {
   const patternRe = new RegExp(String.raw`(?<![\w$.])(?:${KEYS})(?![\w$])|["'\x60](?:${KEYS})["'\x60]|\[|\.\.\.`);
   const destructRe = new RegExp(String.raw`\}\s*=(?!=)\s*\(?\s*(${GLOBAL_RE})\s*\)?\s*(?:[;,)\r\n]|$)`, 'g');
   for (const m of joinedStr.matchAll(destructRe)) {
-    if (declared.has(m[1])) continue;
+    if (declared(m[1], m.index + m[0].lastIndexOf(m[1]))) continue;
     let d = 0, k = m.index;
     for (; k >= 0 && m.index - k < 2000; k--) { const c = joinedStr[k]; if (c === '}') d++; else if (c === '{') { d--; if (d === 0) break; } }
     const pattern = k >= 0 && d === 0 ? joinedStr.slice(k, m.index + 1) : '';
@@ -589,7 +713,7 @@ function storefrontNetworkFindings(source) {
   }
   const aliasKeyRe = new RegExp(String.raw`(?<![\w$.])[\w$]+\s*=(?!=)\s*\(?\s*(?:(?:${GLOBAL_RE}|document)\s*\)?\s*(?:\?\.|\.)\s*)?(location|history)\s*\)?\s*(?:[;,)\r\n]|$)`, 'gm');
   for (const m of masked.matchAll(aliasKeyRe)) {
-    if (declared.has(m[1]) && !/(?:window|globalThis|self|top|parent|frames|document)\s*\)?\s*(?:\?\.|\.)/.test(m[0])) continue;
+    if (declared(m[1], m.index + m[0].lastIndexOf(m[1])) && !/(?:window|globalThis|self|top|parent|frames|document)\s*\)?\s*(?:\?\.|\.)/.test(m[0])) continue;
     found.push([m.index, `aliasing ${m[1]} (const l = window.${m[1]}): the alias hides every later use from a lexical scan`]); break;
   }
   const brRe = new RegExp(String.raw`(?<![\w$.])(?:${GLOBAL_RE})\s*\)?\s*(?:\?\.)?\s*\[\s*(["'\x60])(?:${KEYS})\1\s*\]|(?<![\w$.])Reflect\s*\.\s*get\s*\(\s*(?:${GLOBAL_RE})\s*,\s*(["'\x60])(?:${KEYS})\2`, 'g');

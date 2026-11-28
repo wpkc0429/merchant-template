@@ -471,6 +471,91 @@ test('storefront scan (D23): an index.html HTML comment that ends with --!> or i
   for (const extra of ['<!-- <script>alert(1)</script> -->', '<!-- <script>alert(1)</script> --!>', '<!-- plain -->']) { const r = withBody(extra); assert.equal(r.status, 0, extra + r.out); assert.doesNotMatch(r.out, /inline <script>/, extra); }
 });
 
+test('storefront scan (D24): a local top / self / parent / location / history exempts only where it is in scope; a parameter, a call argument or a destructured key in another place no longer exempts the file (D23 residual a)', () => {
+  const d = scanMerchant();
+  const bad = [
+    // the documented D23 residual (a): a parameter elsewhere in the file used to exempt the name everywhere
+    "function g(top) { return top; } const { open: o } = top; o('https://evil.example.test');",
+    "function g(self) { return self; } var { location: l } = self;",
+    "function g(location) { return location; } var l = location; l.assign('https://evil.example.test');",
+    "function g(history) { return history; } var h = history;",
+    "function g(parent) { return parent; } var p = parent;",
+    "function g(a) { return a; } g(self); g(parent); g(location); g(history); const { open: o } = self;",
+    "function g(top) { return top; } g(top); const { open: o } = top;",
+    // a name that only appears in a default value, a destructured key or a call is not a declaration
+    "function g(a = top) { return a; } const { open: o } = top;",
+    "const { top: t } = layout; const { open: o } = top;",
+    "const { x = self } = layout; const { open: o } = self;",
+    "function g({ a: top2 }) { return top2; } g(top); const { open: o } = top;",
+    // another function, a sibling, a nested block, a loop and a catch block do not reach the use
+    "function a(top) { return top; } function b() { const { open: o } = top; return o; }",
+    "const f1 = (self) => self; const { open: o } = self;",
+    "const f2 = (parent) => { return parent; }; var p = parent;",
+    "const f3 = location => location.hash; var l = location;",
+    "var obj = { m(top) { return top; } }; const { open: o } = top;",
+    "class K { m(self) { return self; } } const { open: o } = self;",
+    "{ const top = 1; } const { open: o } = top;",
+    "if (x) { let parent = 1; } var p = parent;",
+    "function f() { var self = 1; return self; } var { location: l } = self;",
+    "for (const top of items) { use(top); } const { open: o } = top;",
+    "for (let parent = 0; parent < 2; parent++) { use(parent); } var p = parent;",
+    "try { run(); } catch (parent) { log(parent); } var p = parent;",
+    "const run = function top(a) { return a; }; const { open: o } = top;",
+    // extends mix(top) { is not a method definition with a parameter named top
+    "class A extends mix(top) { } const { open: o } = top;"
+  ];
+  for (const code of bad) { const r = withApp(d, code); assert.equal(r.status, 1, code + '\n' + r.out); assert.match(r.out, /destructuring|aliasing|computed access|window\.open|bare open/, code + r.out); }
+  const good = [
+    "function g(top) { const { open: o } = top; return o; }",
+    "function g(self) { var { location: l } = self; var s = self; return [l, s]; }",
+    "const f = (parent) => { const p = parent; return p; }; const f2 = (parent) => parent;",
+    "const f = (self, top) => { const s = self; const t = top; return [s, t]; };",
+    "const f = top => { const t = top; return t; };",
+    "function g({ top, parent }) { const t = top, p = parent; return [t, p]; }",
+    "function g(a, { x: self }, ...[top]) { const s = self; const t = top; return [s, t, a]; }",
+    "function g(top) { return function inner() { const t = top; return t; }; }",
+    "var o = { m(self) { const s = self; return s; } }; class K { m(parent) { const p = parent; return p; } static s(top) { const t = top; return t; } }",
+    "for (const parent of items) { const p = parent; use(p); }",
+    "for (let top = 0; top < 2; top++) { const t = top; use(t); }",
+    "try { run(); } catch (parent) { const p = parent; log(p); }",
+    "function f() { if (x) { var self = 1; } const s = self; return s; }",
+    "const top = layout.top; const t = top; function later() { const t2 = top; return t2; }",
+    "var parent = document.body, self = 1; const p = parent; const s = self;",
+    "function f(location) { var l = location; return l; } var history = []; var hh = history;"
+  ];
+  for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
+});
+
+test('storefront scan (D24): mutation tests - widening the declaration scopes again makes the D23 residual (a) cases pass', () => {
+  const d = scanMerchant();
+  const file = 'scripts/check-layers.mjs';
+  const orig = read(d, file);
+  const residual = [
+    "function g(top) { return top; } const { open: o } = top; o('https://evil.example.test');",
+    "function g(location) { return location; } var l = location; l.assign('https://evil.example.test');",
+    "const f1 = (self) => self; const { open: o } = self;",
+    "{ const top = 1; } const { open: o } = top;",
+    "for (const top of items) { use(top); } const { open: o } = top;",
+    "try { run(); } catch (parent) { log(parent); } var p = parent;",
+    "var obj = { m(top) { return top; } }; const { open: o } = top;"
+  ];
+  const mutations = [
+    ['whole file again', 'out.some((d) => d.name === name && d.from <= pos && pos <= d.to)', 'out.some((d) => d.name === name)', residual],
+    ['method parameters visible everywhere', 'add(params(po), [po, end]);\n  }\n  // 4.', 'add(params(po), whole);\n  }\n  // 4.', ["var obj = { m(top) { return top; } }; const { open: o } = top;"]],
+    ['catch binding visible everywhere', 'add(params(po), [po, stmtEnd(close + 1)]);', 'add(params(po), whole);', ["try { run(); } catch (parent) { log(parent); } var p = parent;"]],
+    ['let / const visible in the whole file', ": (inner ? [inner[0], inner[1]] : whole);\n    const first", ': whole;\n    const first', ["{ const top = 1; } const { open: o } = top;"]],
+    ['for head declarations visible in the whole file', "scope = [first[0], stmtEnd(first[1] + 1)];\n    let k", 'scope = whole;\n    let k', ["for (const top of items) { use(top); } const { open: o } = top;"]]
+  ].filter((m) => m[3].length);
+  try {
+    for (const [name, from, to, cases] of mutations) {
+      assert.ok(orig.includes(from), name + ': mutation anchor present');
+      write(d, file, orig.replace(from, to));
+      for (const code of cases) { const r = withApp(d, code); assert.equal(r.status, 0, `${name}: the mutated guard must let this through, proving the test needs the rule: ${code}\n${r.out}`); }
+    }
+  } finally { write(d, file, orig); }
+  for (const code of residual) assert.equal(withApp(d, code).status, 1, 'restored guard refuses ' + code);
+});
+
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {
   const d = scanMerchant();
   const good = [
@@ -557,7 +642,7 @@ test('runtime: after the core scripts load, ShopCommerce has no _internal handle
 test('D20 is recorded (newest first) with the approvals, the mechanism, the scan additions, the analysis and the residual risks', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[2], 'D21'); assert.equal(ids[3], 'D20'); assert.equal(ids[4], 'D19');
+  assert.equal(ids[3], 'D21'); assert.equal(ids[4], 'D20'); assert.equal(ids[5], 'D19');
   const start = lines.findIndex((l) => l.startsWith('### D20.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');

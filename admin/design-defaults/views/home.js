@@ -15,6 +15,12 @@ export default async function home(root, ctx) {
   }
   const stat = (label, value, sub, href, testid) => h("a", { class: "stat stat--link", href, "data-testid": testid },
     h("div", { class: "stat__label" }, label), h("div", { class: "stat__value" }, value), h("div", { class: "stat__sub" }, sub));
+  // The cards come from separate requests that finish in any order. Each card has a FIXED slot and is inserted before the first card with a later
+  // slot, so the row reads the same (today, unshipped, low stock, products, shipping) however the requests complete; a request that fails leaves no card.
+  const place = (slot, node) => {
+    node.dataset.slot = String(slot);
+    stats.insertBefore(node, [...stats.children].find((c) => Number(c.dataset.slot) > slot) || null);
+  };
 
   const stats = h("div", { class: "stats", "data-testid": "home-stats" });
   const today = h("div", {});
@@ -35,7 +41,7 @@ export default async function home(root, ctx) {
   const jobs = [];
   if (can("order.view")) {
     jobs.push(data.deliveriesOn().then((list) => {
-      stats.prepend(stat(t("home.stat.today.label"), format.number(list.length), t("home.stat.today.sub"), "#/deliveries", "stat-today"));
+      place(0, stat(t("home.stat.today.label"), format.number(list.length), t("home.stat.today.sub"), "#/deliveries", "stat-today"));
       today.append(card(h("div", { class: "card__head" }, h("h2", {}, t("home.deliveries.title")), h("a", { href: "#/deliveries" }, t("home.deliveries.all"))),
         list.length
           ? h("div", { class: "ocards", "data-testid": "home-deliveries" }, sortDeliveries(ctx, list).slice(0, SHOWN).map((o) => orderCard(ctx, o)))
@@ -43,22 +49,22 @@ export default async function home(root, ctx) {
         list.length > SHOWN ? h("a", { href: "#/deliveries" }, t("home.deliveries.more", { n: list.length - SHOWN })) : ""));
     }));
     jobs.push(data.unshippedPaidCount().then((n) => {
-      stats.append(stat(t("home.stat.unshipped.label"), format.number(n), t("home.stat.unshipped.sub"), "#/orders", "stat-unshipped"));
+      place(1, stat(t("home.stat.unshipped.label"), format.number(n), t("home.stat.unshipped.sub"), "#/orders", "stat-unshipped"));
     }));
   }
   if (can("product.view")) {
     jobs.push(data.lowStockSkus().then((list) => {
-      stats.append(stat(t("home.stat.lowstock.label"), format.number(list.length), t("home.stat.lowstock.sub", { n: ctx.enums.LOW_STOCK_THRESHOLD }), "#/products", "stat-lowstock"));
+      place(2, stat(t("home.stat.lowstock.label"), format.number(list.length), t("home.stat.lowstock.sub", { n: ctx.enums.LOW_STOCK_THRESHOLD }), "#/products", "stat-lowstock"));
       if (!list.length) return;
       stock.append(card(h("div", { class: "card__head" }, h("h2", {}, t("home.lowstock.title"))),
         h("div", { class: "lines", "data-testid": "home-lowstock" }, list.slice(0, 8).map((s) => h("a", { class: "line", href: `#/products/${s.productID}`, "data-testid": "lowstock-row" },
           h("div", { class: "line__main" }, h("strong", {}, s.title), h("span", { class: "muted" }, `${s.size ? t("home.lowstock.size", { size: s.size }) : ""}${s.sku}`)),
           h("div", { class: "line__total" }, s.stock === 0 ? t("home.lowstock.soldOut") : t("home.lowstock.left", { n: s.stock })))))));
     }));
-    jobs.push(data.productCount(1).then((n) => stats.append(stat(t("home.stat.products.label"), format.number(n), t("home.stat.products.sub"), "#/products", "stat-products"))));
+    jobs.push(data.productCount(1).then((n) => place(3, stat(t("home.stat.products.label"), format.number(n), t("home.stat.products.sub"), "#/products", "stat-products"))));
   }
   if (can("shipping_method.view") && !can("product.view")) {
-    jobs.push(data.listShippingMethods().then((list) => stats.append(stat(t("home.stat.ship.label"), format.number(list.length), t("home.stat.ship.sub", { n: list.filter((m) => m.is_active).length }), "#/shipping-methods", "stat-ship"))));
+    jobs.push(data.listShippingMethods().then((list) => place(4, stat(t("home.stat.ship.label"), format.number(list.length), t("home.stat.ship.sub", { n: list.filter((m) => m.is_active).length }), "#/shipping-methods", "stat-ship"))));
   }
   await Promise.allSettled(jobs);
 }

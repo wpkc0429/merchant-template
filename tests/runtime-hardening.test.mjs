@@ -13,7 +13,7 @@ const js = (dir) => readdirSync(path.join(TEMPLATE, 'admin', dir)).filter((x) =>
 test('D18 is recorded (newest first) with the owner approval, the five items, the residual risks and what is postponed', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[2], 'D21'); assert.equal(ids[3], 'D20'); assert.equal(ids[4], 'D19'); assert.equal(ids[5], 'D18'); assert.equal(ids[6], 'D17');
+  assert.equal(ids[3], 'D21'); assert.equal(ids[4], 'D20'); assert.equal(ids[5], 'D19'); assert.equal(ids[6], 'D18'); assert.equal(ids[7], 'D17');
   const start = lines.findIndex((l) => l.startsWith('### D18.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
@@ -23,7 +23,7 @@ test('D18 is recorded (newest first) with the owner approval, the five items, th
   assert.match(body.trim(), /\.$/);
   const cl = f('docs/CORE-CHANGELOG.md');
   assert.match(cl, /decision D18/);
-  assert.doesNotMatch(cl, /UNRELEASED/);
+  assert.doesNotMatch(cl.replace(/^## v0\.5\.1 \(UNRELEASED[^\n]*\n/m, ''), /UNRELEASED/); // D24: only the open v0.5.1 section may say so
   assert.equal(JSON.parse(f('template.json')).version, '0.5.0', 'template.json carries the release version');
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /Runtime hardening \(decision D18/);
   assert.match(f('admin/docs/DESIGN-LAYER.md'), /Preview hosts: what the operator sets/);
