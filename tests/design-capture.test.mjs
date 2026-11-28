@@ -309,3 +309,9 @@ test('scrubber: longest secret first, C1 and bidi controls removed', () => {
   const out = s('t xxabyy-TOKENTOKEN \u009b[31m ‮ x');
   assert.ok(!out.includes('TOKEN') && !/[\u009b‮]/.test(out), out);
 });
+
+test('media origin: sandbox minio on loopback is fenced in without being on the allowlist; remote or main-stack ports are refused', () => {
+  assert.equal(dc.sandboxMediaOrigin('http://127.0.0.1:19000'), 'http://127.0.0.1:19000');
+  refuses(() => dc.sandboxMediaOrigin('https://cdn.real.com'), /loopback/);
+  refuses(() => dc.sandboxMediaOrigin('http://127.0.0.1:8080'), /main-stack/);
+});
