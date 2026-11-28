@@ -624,6 +624,9 @@ function declaredNames(masked) {
       if (po >= 0 && closeOf.has(po)) { const end = bodyAfter(closeOf.get(po)); if (end >= 0) add(params(po), [po, end]); }
     }
   }
+  // a class heritage (`class A extends` newline `a` newline `[k](top) {` / `new (top) {` / `mix(top) {`) is an expression, not a member list: nothing after `extends`
+  // up to the next `{ } ;` can be a method definition (D26 review)
+  const inHeritage = (idx) => /(?<![\w$.])extends(?![\w$])/.test(masked.slice(Math.max(0, idx - 400), idx).split(/[{};]/).pop());
   // 3. method definitions: name(params) { ... }  (not a control statement head, not "extends mix(x) {", not a property call)
   for (const m of masked.matchAll(/(?<![\w$.])((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)([\w$]+)\s*\(/g)) {
     if (CONTROL_WORDS.has(m[2])) continue;
@@ -632,6 +635,7 @@ function declaredNames(masked) {
     if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;   // `foo(top)\n{` is a call and a block, not a method (D24 review M2)
     const before = masked.slice(0, m.index).trimEnd();
     const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
+    if (inHeritage(m.index)) continue;
     if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;   // not at the start of a class member / object member (e.g. `extends mix(top) {`, `new X(a) {`)
     add(params(po), [po, end]);
   }
@@ -643,6 +647,7 @@ function declaredNames(masked) {
     const po = bc + pm[0].length, close = closeOf.get(po); if (close === undefined) continue;
     const end = bodyAfter(close); if (end < 0) continue;
     if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;
+    if (inHeritage(m.index)) continue;
     const before = masked.slice(0, m.index).trimEnd();
     const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
     if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;
