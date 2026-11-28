@@ -98,7 +98,7 @@ function canonicalSource(src, mask = 0) {
   const lastSig = () => { for (let q = out.length - 1; q >= 0; q--) { const k = out[q].search(/\S\s*$/); if (k >= 0) return out[q][k]; } return ''; };
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
-  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
+  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof', 'extends']);
   const STMT = new Set(['if', 'while', 'for', 'with']);
   const IDP = /[\p{ID_Continue}$\u200c\u200d]/u;
   let i = 0, regexOk = true, word = '', afterDot = false;
@@ -508,8 +508,10 @@ function valueText(s, from, call) {
 // expression body: to the end of the expression). Binding names come from a pattern parser (a destructured KEY, a default value or a call argument is not a binding).
 // the words whose parenthesis is followed by a block that is NOT a function body (D24 review M1: everything else with `) {` is a function: `function () {`, `x.delete(a) {`...)
 const BLOCK_HEADS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await']);
-// words that cannot be a method name (a statement head or an operator)
-const CONTROL_WORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await', 'return', 'typeof', 'else', 'do', 'function', 'yield', 'void', 'delete', 'new', 'throw', 'case', 'extends', 'in', 'of', 'instanceof']);
+// words that cannot start a method definition because `word (...) {` on one line is something else: the block heads, an anonymous `function (...) {` (its
+// parameters are taken from the `function` itself, step 2) and `extends (...) {` after a class name. D26: every OTHER word is a legal method name
+// (`delete(top) {}`, `new(self) {}`, `return(a) {}` ...) and `word (...) {` with such a word in front is a syntax error anywhere else, so it is a method.
+const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends']);
 function declaredNames(masked) {
   const len = masked.length;
   const closeOf = new Map(), openOf = new Map(), groups = [];
@@ -622,6 +624,39 @@ function declaredNames(masked) {
       if (po >= 0 && closeOf.has(po)) { const end = bodyAfter(closeOf.get(po)); if (end >= 0) add(params(po), [po, end]); }
     }
   }
+  // a class heritage (`class A extends` newline `a` newline `[k](top) {` / `new (top) {` / `mix(top) {`) is an expression, not a member list (D26 review).
+  // Walk BACKWARDS from the member over the same nesting level: balanced groups are jumped, a function body ('...) {...}' or '=> {...}'), '{' (the container's own
+  // opener), ';' and ',' end the walk (a member), the word 'extends' means heritage. Anything the walk cannot resolve (an unmatched closer, more than 6000 characters)
+  // counts as heritage: fail closed.
+  // a ')' at position c closes the parameter list of a MEMBER (a name or a computed key in front of the parenthesis), not of a function expression
+  // (`function (a) {}`, `function f(a) {}`, `function* (a) {}`, `async function (a) {}`, `new function () {}`), which may sit inside a heritage
+  const methodHead = (c) => {
+    const po = openOf.get(c); if (po === undefined) return false;
+    const before = masked.slice(Math.max(0, po - 400), po).trimEnd();
+    if (before.endsWith(']')) return true;
+    const w = /([\w$]+)$/.exec(before); if (!w) return false;
+    if (w[1] === 'function') return false;
+    return !/(?<![\w$.])function\s*\*?\s*$/.test(before.slice(0, before.length - w[1].length));
+  };
+  const inHeritage = (idx) => {
+    let k = idx - 1;
+    for (let steps = 0; k >= 0; steps++) {
+      if (steps > 6000) return true;
+      const c = masked[k];
+      if (/\s/.test(c)) { k--; continue; }
+      if (c === ')' || c === ']') { const o = openOf.get(k); if (o === undefined) return true; k = o - 1; continue; }
+      if (c === '}') {
+        const o = openOf.get(k); if (o === undefined) return true;
+        let q = o - 1; while (q >= 0 && /\s/.test(masked[q])) q--;
+        if (masked[q] === ')' && methodHead(q)) return false;   // the body of the previous member
+        k = o - 1; continue;
+      }
+      if (c === '{' || c === ';' || c === ',') return false;
+      if (/[\w$]/.test(c)) { let j = k; while (j >= 0 && /[\w$]/.test(masked[j])) j--; if (masked.slice(j + 1, k + 1) === 'extends' && !/[.]/.test(masked[j] || '')) return true; k = j; continue; }
+      k--;
+    }
+    return false;
+  };
   // 3. method definitions: name(params) { ... }  (not a control statement head, not "extends mix(x) {", not a property call)
   for (const m of masked.matchAll(/(?<![\w$.])((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)([\w$]+)\s*\(/g)) {
     if (CONTROL_WORDS.has(m[2])) continue;
@@ -630,7 +665,22 @@ function declaredNames(masked) {
     if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;   // `foo(top)\n{` is a call and a block, not a method (D24 review M2)
     const before = masked.slice(0, m.index).trimEnd();
     const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
+    if (inHeritage(m.index)) continue;
     if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;   // not at the start of a class member / object member (e.g. `extends mix(top) {`, `new X(a) {`)
+    add(params(po), [po, end]);
+  }
+  // 3b. computed-key methods (D26): [expr](params) { ... }, also after static / async / get / set / *. The key expression is NOT inside the parameter scope
+  // (a use of top in the key still counts); same definition context and same-line `{` as step 3, so a call followed by a block on the next line, or `x = [f](top) {`, stays a call.
+  for (const m of masked.matchAll(/((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)\[/g)) {
+    const bo = m.index + m[0].length - 1, bc = closeOf.get(bo); if (bc === undefined) continue;
+    const pm = /^\s*\(/.exec(masked.slice(bc + 1, bc + 40)); if (!pm) continue;
+    const po = bc + pm[0].length, close = closeOf.get(po); if (close === undefined) continue;
+    const end = bodyAfter(close); if (end < 0) continue;
+    if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;
+    if (inHeritage(m.index)) continue;
+    const before = masked.slice(0, m.index).trimEnd();
+    const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
+    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;
     add(params(po), [po, end]);
   }
   // 4. catch bindings
