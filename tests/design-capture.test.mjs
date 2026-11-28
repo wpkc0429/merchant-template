@@ -303,3 +303,9 @@ test('upload: hostile error code and key echoed by the server never reach the me
     });
   } finally { await b.close(); }
 });
+
+test('scrubber: longest secret first, C1 and bidi controls removed', () => {
+  const s = dc.makeScrubber(new Set()); s.add('ab'); s.add('xxabyy-TOKENTOKEN');
+  const out = s('t xxabyy-TOKENTOKEN \u009b[31m ‮ x');
+  assert.ok(!out.includes('TOKEN') && !/[\u009b‮]/.test(out), out);
+});
