@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -17,7 +17,6 @@ const ENV = {
 };
 const allow = () => dc.buildAllowlist({ env: ENV, process_env: {} });
 const refuses = (fn, re) => assert.throws(fn, (e) => e instanceof dc.Refusal && e.exitCode === 2 && (!re || re.test(e.message)));
-const noop = { log: () => {}, scrub: null };
 const scrubber = () => dc.makeScrubber(new Set());
 
 test('origins: canonical form, no path / query / credentials', () => {
@@ -209,7 +208,7 @@ test('upload refuses without a dsk_ key, on a tampered file, and over plain http
   await assert.rejects(up(dir, 'http://127.0.0.1:1'), (e) => e.exitCode === 2);
   await withKey(async () => {
     await assert.rejects(up(dir, 'http://platform.example.com'), /https/);
-    writeFileSync(join(dir, 'after-owner-390-view-0.png'), Buffer.from('tampered'));
+    writeFileSync(join(dir, 'after-owner-390-view-0.png'), png(99));
     await assert.rejects(up(dir, 'http://127.0.0.1:1'), /sha256/);
   });
   if (old !== undefined) process.env.DESIGN_SERVICE_KEY = old;
@@ -239,5 +238,68 @@ test('CLI: a non-sandbox origin or a real login exits 2 before anything starts a
   assert.ok(!existsSync(join(outDir, 'manifest.json')));
   const views = run(['views', '--site', 'storefront']);
   assert.equal(views.status, 0); assert.match(views.stdout, /storefront anon 390 home/);
-  void noop;
+});
+
+test('scrubber: short, URL-encoded and JSON-escaped secrets, tokens and control characters', () => {
+  const secrets = new Set(); const s = dc.makeScrubber(secrets);
+  s.add('pw'); s.add('abc!defg"h'); s.add('tok-ENV-123456789');
+  const out = s('a pw b abc!defg\\"h c abc!defg%22h d tok-ENV-123456789 e [31mred');
+  for (const bad of ['pw', 'defg', 'tok-ENV']) assert.ok(!out.includes(bad), bad + ' leaked: ' + out);
+  assert.ok(!/[ -]/.test(out));
+  assert.ok(s('x'.repeat(10000)).length < 4100);
+});
+
+test('allowlist: a main-stack port is refused even when it is explicitly listed', () => {
+  const list = dc.buildAllowlist({ env: { design_sandbox_origins: ['http://127.0.0.1:8080'] } });
+  refuses(() => dc.assertSandboxOrigin('x', 'http://127.0.0.1:8080', list), /main-stack/);
+});
+
+test('upload hardening: symlink, non-PNG, bad origin, duplicate and bad caps are refused before any request', async () => {
+  const b = await fakePlatform((n, res) => { res.statusCode = 201; res.end('{}'); });
+  try {
+    await withKey(async () => {
+      // symlink in place of a shot
+      const d1 = captureDir(1); const f = join(d1, 'after-owner-390-view-0.png'); const bytes = readFileSync(f); const other = join(d1, 'real.bin');
+      writeFileSync(other, bytes); rmSync(f);
+      let linked = true; try { symlinkSync(other, f); } catch { linked = false; }
+      if (linked) await assert.rejects(up(d1, b.api), /not a regular file/);
+      // not a PNG
+      const d2 = captureDir(1); writeFileSync(join(d2, 'after-owner-390-view-0.png'), Buffer.from('x'.repeat(40)));
+      await assert.rejects(up(d2, b.api), /not a PNG/);
+      // manifest origin malformed / with a path
+      const d3 = captureDir(1); const m3 = JSON.parse(readFileSync(join(d3, 'manifest.json'), 'utf8')); m3.origin = 'http://127.0.0.1:13001/evil?x=1';
+      writeFileSync(join(d3, 'manifest.json'), JSON.stringify(m3)); await assert.rejects(up(d3, b.api), /origin/);
+      // traversal and duplicate entries
+      const d4 = captureDir(1); const m4 = JSON.parse(readFileSync(join(d4, 'manifest.json'), 'utf8'));
+      m4.shots[0].file = '../after-owner-390-view-0.png'; writeFileSync(join(d4, 'manifest.json'), JSON.stringify(m4)); await assert.rejects(up(d4, b.api), /does not match/);
+      const d5 = captureDir(1); const m5 = JSON.parse(readFileSync(join(d5, 'manifest.json'), 'utf8')); m5.shots.push(m5.shots[0]);
+      writeFileSync(join(d5, 'manifest.json'), JSON.stringify(m5)); await assert.rejects(up(d5, b.api), /duplicate/);
+      // caps
+      for (const v of ['abc', '0', '-1', '99999']) await assert.rejects(dc.runUpload({ dir: captureDir(1), api: b.api, shop: '7', request: REQ, 'slot-cap': v }, { log: () => {}, scrub: scrubber() }), /integer from 1/);
+    });
+    assert.equal(b.seen.length, 0);
+  } finally { await b.close(); }
+});
+
+test('upload: a redirect is not followed (the PNG and headers never reach another origin) and Retry-After is capped', async () => {
+  const target = await fakePlatform((n, res) => { res.statusCode = 201; res.end('{}'); });
+  const b = await fakePlatform((n, res) => { res.statusCode = 307; res.setHeader('Location', target.api + '/x'); res.end(); });
+  const c = await fakePlatform((n, res) => { if (n === 1) { res.statusCode = 429; res.setHeader('Retry-After', '1000000'); res.end('{}'); } else { res.statusCode = 201; res.end('{}'); } });
+  try {
+    await withKey(async () => {
+      await assert.rejects(up(captureDir(1), b.api), (e) => e.exitCode === 4);
+      assert.equal(target.seen.length, 0);
+      const sleeps = []; await up(captureDir(1), c.api, { sleep: async (ms) => { sleeps.push(ms); } });
+      assert.deepEqual(sleeps, [60000]);
+    });
+  } finally { await b.close(); await target.close(); await c.close(); }
+});
+
+test('upload: hostile error code and key echoed by the server never reach the message unscrubbed', async () => {
+  const b = await fakePlatform((n, res) => { res.statusCode = 409; res.end(JSON.stringify({ error: { code: '[31m' + KEY } })); });
+  try {
+    await withKey(async () => {
+      await assert.rejects(up(captureDir(1), b.api), (e) => !e.message.includes(KEY) && !//.test(e.message));
+    });
+  } finally { await b.close(); }
 });
