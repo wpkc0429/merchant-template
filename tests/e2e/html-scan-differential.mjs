@@ -55,7 +55,7 @@ const hand = [
   "<script><!---->R(1)</script>", "<script><!--->R(1)</script>", "<script><!-->R(1)</script>", "<script><!--- ->R(1)</script>",
   "<script>R(1)</script ><script>R(2)</script/><script>R(3)</script x=y>", "<script>R(1)</scriptx><script>R(2)</script>",
   "<script>R(1)</script", "<script>R(1)", "<script", "<script src=x", "<script src=x>", "<script src=\"x\"></script>R(1)", "<script/src=x></script>",
-  "<script type=importmap>{}</script><script>R(1)</script>", "<script\ttype=importmap>{}</script>", "<script type='importmap'>{}</script >",
+  "<script type=importmap>{}</script><script>R(1)</script>", "<script src=a src>R(1)</script>", "<script src src=a>R(1)</script>", "<script type=a type=importmap>R(1)</script>", "<script TYPE=importmap type=b>R(1)</script>", "<script src=a SRC=b>R(1)</script>", "<script\ttype=importmap>{}</script>", "<script type='importmap'>{}</script >",
   "<script data-a='>'>R(1)</script>", "<script a=\">\" b='>'>R(1)</script>", "<script a=b>c>R(1)</script>",
   // raw text and RCDATA end tags
   "<style>R(1)</style x><script>R(2)</script>", "<style>a</style/><script>R(1)</script>", "<style>a</styles><script>R(1)</script></style>",
@@ -103,7 +103,7 @@ async function inBrowser(cases) {
       const ran = [];
       d.open(); w.R = (k) => ran.push(k); d.write(html); d.close();
       const scripts = [];
-      const walk = (root) => { for (const s of root.querySelectorAll("script")) scripts.push({ src: s.hasAttribute("src"), text: s.textContent }); for (const t of root.querySelectorAll("template")) walk(t.content); };
+      const walk = (root) => { for (const s of root.querySelectorAll("script")) scripts.push({ src: s.hasAttribute("src"), text: s.textContent, srcv: s.getAttribute("src"), type: s.getAttribute("type") }); for (const t of root.querySelectorAll("template")) walk(t.content); };
       walk(d);
       let comments = 0;
       // Chromium makes a ProcessingInstruction (type 7) of <?x>
@@ -127,8 +127,8 @@ for (let at = 0; at < corpus.length; at += BATCH) {
       const r = scan(html);
       if (r.ambiguous.length) { ambig++; continue; }
       checked++;
-      const mine = r.scripts.filter((s) => !s.eofInTag).map((s) => ({ src: s.attrs.has("src"), text: s.text }));
-      const theirs = b.scripts.map((s) => ({ src: s.src, text: s.text }));
+      const mine = r.scripts.filter((s) => !s.eofInTag).map((s) => ({ src: s.attrs.has("src"), text: s.text, srcv: s.attrs.has("src") ? s.attrs.get("src") : null, type: s.attrs.has("type") ? s.attrs.get("type") : null }));
+      const theirs = b.scripts.map((s) => ({ src: s.src, text: s.text, srcv: s.srcv, type: s.type }));
       if (JSON.stringify(mine) !== JSON.stringify(theirs)) { fail(`${label}: script elements differ`, html, `scanner: ${JSON.stringify(mine)}\n       browser: ${JSON.stringify(theirs)}`); continue; }
       const nComments = r.tokens.filter((t) => t.type === "comment").length;
       if (nComments !== b.comments) { fail(`${label}: comment count differs`, html, `scanner ${nComments}, browser ${b.comments}`); continue; }

@@ -127,3 +127,24 @@ test('html-scan: mutation tests - removing a tokenizer feature makes the D23 byp
     assert.notEqual(bad, good, name + ': the mutated tokenizer must give a different (wrong) answer');
   }
 });
+
+test('html-scan: a duplicate attribute keeps the FIRST value (HTML standard; the browser differential covers it too) and a tokenizer that keeps the last one is caught', async () => {
+  const s = scanHtml('<script src=a src>x</script><script src src=b>y</script><script type=importmap type=x>z</script><script TYPE=a type=b></script>').scripts;
+  assert.deepEqual(s.map((x) => [x.attrs.get('src') ?? null, x.attrs.get('type') ?? null]), [['a', null], ['', null], [null, 'importmap'], [null, 'a']]);
+  const src = tpl('scripts/lib/html-scan.mjs');
+  const mutated = src.replace('if (!tag.attrs.has(attr.name)) tag.attrs.set(attr.name, attr.value);', 'tag.attrs.set(attr.name, attr.value);');
+  assert.notEqual(mutated, src);
+  const m = await import('data:text/javascript;base64,' + Buffer.from(mutated).toString('base64'));
+  assert.notEqual(m.scanHtml('<script src=a src>x</script>').scripts[0].attrs.get('src'), 'a', 'the mutated tokenizer keeps the last value');
+  assert.equal(scanHtml('<script src=a src>x</script>').scripts[0].attrs.get('src'), 'a');
+  // a character reference is not decoded: the scan compares the written text, so `type="&#105;mportmap"` is NOT the import map (it is an extra inline script: refused)
+  assert.match(indexHtmlProblems(tpl('admin/index.html').replace('type="importmap"', 'type="&#105;mportmap"')).join('|'), /ONE inline|no inline script other/);
+});
+
+test('check-layers (storefront, review L2): an event handler attribute is found by attribute name, also unquoted or after a slash', () => {
+  const d = makeMerchant().dir;
+  const idx = read(d, 'public/index.html');
+  const withBody = (extra) => { write(d, 'public/index.html', idx.replace('</body>', extra + '\n</body>')); const r = node(['scripts/check-layers.mjs', '--check'], d); write(d, 'public/index.html', idx); return r; };
+  for (const extra of ['<img src=x onerror=alert(1)>', '<img/onerror="x">', '<body onload=a()>', '<a href=# onclick=x()>y</a>']) assert.match(withBody(extra).out, /inline <script>|on\*=/, extra);
+  assert.doesNotMatch(withBody('<p data-x="onclick=a">ok</p><!-- <img onerror=x> -->').out, /on\*=/);
+});

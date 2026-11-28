@@ -325,7 +325,9 @@ function checkCsp(headersText, indexHtml, tpl = true) {
   }
   // D24: a real HTML tokenizer (scripts/lib/html-scan.mjs), not a comment regex: <!-- inside <style>, <title>, <textarea>, <noscript> or a <script src> is not a comment
   const scan = scanHtml(String(indexHtml || ''));
-  const inline = scan.scripts.some((s) => !s.attrs.has('src')) || /\son[a-z]+\s*=\s*["']/i.test(scan.live);
+  // D24 review L2: an event handler attribute is found by the tokenizer's attribute NAMES (unquoted `<img src=x onerror=alert(1)>`, `<img/onerror=x>`), the old text test stays as well
+  const handler = scan.tokens.some((k) => k.type === 'start' && [...k.attrs.keys()].some((n) => /^on[a-z]+$/.test(n)));
+  const inline = scan.scripts.some((s) => !s.attrs.has('src')) || handler || /\son[a-z]+\s*=\s*["']/i.test(scan.live);
   if (scan.ambiguous.length) (tpl ? errors : warnings).push(`public/index.html contains <${[...new Set(scan.ambiguous)].join('>, <')}>: how a browser tokenizes the text after it is not modelled by the scan, so it cannot be certain that no script is hidden there; move it out of index.html (an error in the template, a warning in a merchant repo)`);
   if (inline) (tpl ? errors : warnings).push('public/index.html has an inline <script> or an on*= handler: the strict CSP in public/_headers blocks it. Use an external file (see commerce/local-config.js); a merchant repo made from v0.1.0 must replace its inline localhost-override script with <script src="commerce/local-config.js"></script>');
   return { errors, warnings };
@@ -504,6 +506,9 @@ function valueText(s, from, call) {
 // a top-level declaration covers the file; let / const / class / function declarations cover the enclosing block; var covers the enclosing function body;
 // a for-head declaration covers the loop; parameters (function, method, arrow) and a catch binding cover the function / catch body only (an arrow with an
 // expression body: to the end of the expression). Binding names come from a pattern parser (a destructured KEY, a default value or a call argument is not a binding).
+// the words whose parenthesis is followed by a block that is NOT a function body (D24 review M1: everything else with `) {` is a function: `function () {`, `x.delete(a) {`...)
+const BLOCK_HEADS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await']);
+// words that cannot be a method name (a statement head or an operator)
 const CONTROL_WORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await', 'return', 'typeof', 'else', 'do', 'function', 'yield', 'void', 'delete', 'new', 'throw', 'case', 'extends', 'in', 'of', 'instanceof']);
 function declaredNames(masked) {
   const len = masked.length;
@@ -517,7 +522,7 @@ function declaredNames(masked) {
     if (before.endsWith('=>')) return true;
     if (!before.endsWith(')')) return false;
     const po = openOf.get(start + before.length - 1);
-    return po !== undefined && !CONTROL_WORDS.has(wordBefore(po));
+    return po !== undefined && !BLOCK_HEADS.has(wordBefore(po));
   };
   const out = []; // { name, from, to }
   const whole = [0, len];
@@ -531,7 +536,10 @@ function declaredNames(masked) {
     for (let k = from, d = 0; k < len; k++) { const c = masked[k]; if (c === '{' || c === '(' || c === '[') d++; else if (c === '}' || c === ')' || c === ']') { if (d === 0) return k; d--; } else if (d === 0 && (c === ';' || c === ',' || c === '\n')) return k; }
     return len;
   };
-  const add = (names, [from, to]) => { for (const name of names) out.push({ name, from, to }); };
+  // D24 review L1: in a classic script a top-level `var` / `function` of top, location, window ... does not replace the browser's own binding (top and location are
+  // unforgeable, and `var self;` leaves the real one), so it exempts nothing; a top-level let / const / class does shadow (or the script throws and never runs).
+  const GLOBAL_NAMES = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames', 'location', 'history', 'document']);
+  const add = (names, [from, to], hoisted = false) => { for (const name of names) if (!(hoisted && from === 0 && to === len && GLOBAL_NAMES.has(name))) out.push({ name, from, to }); };
   // skip an optional "= default" and the comma after it, up to `limit`
   function skipDefault(i, limit) {
     let k = i; while (k < limit && /\s/.test(masked[k])) k++;
@@ -581,7 +589,7 @@ function declaredNames(masked) {
     if (m[1] !== 'var' && first && masked[first[0]] === '(' && /(?:^|[^\w$.])for\s*(?:await\s*)?$/.test(masked.slice(Math.max(0, first[0] - 20), first[0]))) scope = [first[0], stmtEnd(first[1] + 1)];
     let k = m.index + m[0].length;
     for (;;) {
-      const r = pattern(k); add(r.names, scope);
+      const r = pattern(k); add(r.names, scope, m[1] === 'var');
       // skip the initializer up to the next top-level comma (another declarator) or the end of the declaration
       let j = r.end, d = 0, next = -1;
       for (; j < len; j++) {
@@ -603,7 +611,7 @@ function declaredNames(masked) {
     const prev = masked.slice(0, m.index).trimEnd();
     if (name) {
       const stmtStart = prev === '' || /[;{}]$/.test(prev) || /(?:^|[^\w$.])(?:async|export|default)$/.test(prev) || /\n\s*$/.test(masked.slice(Math.max(0, m.index - 6), m.index));
-      if (stmtStart) { const inner = containers(m.index).find(([o]) => masked[o] === '{'); add([name], inner ? [inner[0], inner[1]] : whole); }
+      if (stmtStart) { const inner = containers(m.index).find(([o]) => masked[o] === '{'); add([name], inner ? [inner[0], inner[1]] : whole, m[1] === 'function'); }
       else if (m[1] === 'function') { // a named function expression: the name is visible inside it only
         const po = masked.indexOf('(', m.index + m[0].length); const end = po >= 0 && closeOf.has(po) ? bodyAfter(closeOf.get(po)) : -1;
         if (end >= 0) add([name], [po, end]);
@@ -619,7 +627,10 @@ function declaredNames(masked) {
     if (CONTROL_WORDS.has(m[2])) continue;
     const po = m.index + m[0].length - 1, close = closeOf.get(po); if (close === undefined) continue;
     const end = bodyAfter(close); if (end < 0) continue;
-    if (/(?:^|[^\w$.])(?:extends|new)\s*$/.test(masked.slice(Math.max(0, m.index - 12), m.index))) continue;
+    if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;   // `foo(top)\n{` is a call and a block, not a method (D24 review M2)
+    const before = masked.slice(0, m.index).trimEnd();
+    const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
+    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;   // not at the start of a class member / object member (e.g. `extends mix(top) {`, `new X(a) {`)
     add(params(po), [po, end]);
   }
   // 4. catch bindings
