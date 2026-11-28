@@ -6,6 +6,17 @@ first. Newest first. This file is part of the locked core (it is synced to merch
 
 ## 2026-11-28, decided by the owner
 
+### D25. The design-history screenshot capture tool `scripts/design-capture.mjs` is locked core, sandbox-only, synthetic logins only
+
+Decided by the owner (approved as "following the recommendation", including the `lockedPaths` entry). Task T6 of the design history.
+
+* `scripts/design-capture.mjs` is **locked core** (listed in `template.json` `lockedPaths`; edits are human-reviewed core changes, D4). It is in neither hash manifest, so no `--update` was needed.
+* **Sandbox-only origin allowlist.** It talks only to origins on the allowlist built from the output of `make sandbox-env` (`design_sandbox_origins`, `allowed_api_origins`) plus `DESIGN_CAPTURE_ALLOWED_ORIGINS`. No allowlist means refuse; an origin not on it means exit 2 with nothing started; the owner's main-stack ports are never a target; the browser itself is fenced, so a request to any other origin is aborted.
+* **Synthetic logins only.** Only `@example.com` logins are accepted; the owner's real credentials are never read and there is no flag to pass them.
+* **The `dsk_` service key comes only from the environment** (`DESIGN_SERVICE_KEY`), never from argv, and is never printed; every message goes through a scrubber that removes known secret values.
+* **No `ctx` addition, no guard rule change, no manifest change, no CSP change, no `ShopCommerce` function.** The change touches only `scripts/design-capture.mjs`, `tests/design-capture.test.mjs`, `template.json` (one `lockedPaths` line), `docs/CORE-CHANGELOG.md` (v0.5.1, "Design-layer action: none") and this file. `admin/e2e/parity.mjs` is untouched. Playwright is borrowed, not a dependency.
+* The v0.5.1 release is a separate decision; nothing is tagged here.
+
 ### D24. Follow-ups of D23: a real HTML tokenizer for the index.html scans, scoped declarations in the storefront network scan, and the three e2e flakes (stat-card order, order-number search, canary 404)
 
 Decided by the owner (items 1 and 2 are guard rule changes: independent review required under D10; the exact list is at the end). No new `ctx` function, `ShopCommerce` function, route or CSP change; the only design-layer action is item 3a.
