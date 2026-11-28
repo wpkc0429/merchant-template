@@ -508,8 +508,10 @@ function valueText(s, from, call) {
 // expression body: to the end of the expression). Binding names come from a pattern parser (a destructured KEY, a default value or a call argument is not a binding).
 // the words whose parenthesis is followed by a block that is NOT a function body (D24 review M1: everything else with `) {` is a function: `function () {`, `x.delete(a) {`...)
 const BLOCK_HEADS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await']);
-// words that cannot be a method name (a statement head or an operator)
-const CONTROL_WORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'with', 'await', 'return', 'typeof', 'else', 'do', 'function', 'yield', 'void', 'delete', 'new', 'throw', 'case', 'extends', 'in', 'of', 'instanceof']);
+// words that cannot start a method definition because `word (...) {` on one line is something else: the block heads, an anonymous `function (...) {` (its
+// parameters are taken from the `function` itself, step 2) and `extends (...) {` after a class name. D26: every OTHER word is a legal method name
+// (`delete(top) {}`, `new(self) {}`, `return(a) {}` ...) and `word (...) {` with such a word in front is a syntax error anywhere else, so it is a method.
+const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends']);
 function declaredNames(masked) {
   const len = masked.length;
   const closeOf = new Map(), openOf = new Map(), groups = [];
@@ -631,6 +633,19 @@ function declaredNames(masked) {
     const before = masked.slice(0, m.index).trimEnd();
     const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
     if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;   // not at the start of a class member / object member (e.g. `extends mix(top) {`, `new X(a) {`)
+    add(params(po), [po, end]);
+  }
+  // 3b. computed-key methods (D26): [expr](params) { ... }, also after static / async / get / set / *. The key expression is NOT inside the parameter scope
+  // (a use of top in the key still counts); same definition context and same-line `{` as step 3, so a call followed by a block on the next line, or `x = [f](top) {`, stays a call.
+  for (const m of masked.matchAll(/((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)\[/g)) {
+    const bo = m.index + m[0].length - 1, bc = closeOf.get(bo); if (bc === undefined) continue;
+    const pm = /^\s*\(/.exec(masked.slice(bc + 1, bc + 40)); if (!pm) continue;
+    const po = bc + pm[0].length, close = closeOf.get(po); if (close === undefined) continue;
+    const end = bodyAfter(close); if (end < 0) continue;
+    if (/^[ \t]*\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;
+    const before = masked.slice(0, m.index).trimEnd();
+    const newlineBefore = /\n\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));
+    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;
     add(params(po), [po, end]);
   }
   // 4. catch bindings

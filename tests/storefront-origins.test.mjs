@@ -565,7 +565,7 @@ test('storefront scan (D24): mutation tests - widening the declaration scopes ag
     ['a call followed by a block is a method again', "if (/^[ \\t]*\\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;", '', ["foo(top)\n{ const { open: o } = top; }", "use(self)\n{ var l = self; }"]],
     ['top-level var exempts the file again', 'hoisted && from === 0 && to === len && GLOBAL_NAMES.has(name)', 'false', ["var top = 1; const { open: o } = top;", "var parent; var p = parent;"]],
     ['whole file again', 'out.some((d) => d.name === name && d.from <= pos && pos <= d.to)', 'out.some((d) => d.name === name)', residual],
-    ['method parameters visible everywhere', 'add(params(po), [po, end]);\n  }\n  // 4.', 'add(params(po), whole);\n  }\n  // 4.', ["var obj = { m(top) { return top; } }; const { open: o } = top;"]],
+    ['method parameters visible everywhere', 'add(params(po), [po, end]);\n  }\n  // 3b.', 'add(params(po), whole);\n  }\n  // 3b.', ["var obj = { m(top) { return top; } }; const { open: o } = top;"]],
     ['catch binding visible everywhere', 'add(params(po), [po, stmtEnd(close + 1)]);', 'add(params(po), whole);', ["try { run(); } catch (parent) { log(parent); } var p = parent;"]],
     ['let / const visible in the whole file', ": (inner ? [inner[0], inner[1]] : whole);\n    const first", ': whole;\n    const first', ["{ const top = 1; } const { open: o } = top;"]],
     ['for head declarations visible in the whole file', "scope = [first[0], stmtEnd(first[1] + 1)];\n    let k", 'scope = whole;\n    let k', ["for (const top of items) { use(top); } const { open: o } = top;"]]
@@ -578,6 +578,88 @@ test('storefront scan (D24): mutation tests - widening the declaration scopes ag
     }
   } finally { write(d, file, orig); }
   for (const code of [...residual, "(function () { var top = 1; return top; })(); const { open: o } = top;", "foo(top)\n{ const { open: o } = top; }", "var top = 1; const { open: o } = top;"]) assert.equal(withApp(d, code).status, 1, 'restored guard refuses ' + code);
+});
+
+test('storefront scan (D26): methods named like a keyword and computed-key methods declare their parameters (false positives gone); every neighbour that is not a method stays refused', () => {
+  const d = scanMerchant();
+  const good = [
+    "class K { delete(top) { const { open: o } = top; return o; } }",
+    "var o = { delete(top) { const t = top; return t; } };",
+    "var o = { new(self) { const s = self; return s; }, return(parent) { const p = parent; return p; }, typeof(history) { var h = history; return h; } };",
+    "class K { static delete(location) { var l = location; return l; } async void(top) { const t = top; return t; } get in(self) { var s = self; return s; } }",
+    "class K { [Symbol.iterator](top) { const { open: o } = top; return o; } }",
+    "var o = { ['a' + 'b'](self) { var s = self; return s; } };",
+    "class K { static async [k](parent) { const p = parent; return p; } *[Symbol.iterator](top) { const t = top; yield t; } get [k2](self) { return self; } }",
+    "var o = { [k](top, { a: self }) { const t = top, s = self; return [t, s]; } };",
+    "var o = { [k]\n(top) { const t = top; return t; } };",
+    "class K {\n  [a](top) { const t = top; return t; }\n  [b](self) { const s = self; return s; }\n}"
+  ];
+  for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
+  const bad = [
+    // a use of the name outside the method is still the global
+    "var o = { delete(top) { return top; } }; const { open: o2 } = top;",
+    "class K { new(self) { return self; } } var { location: l } = self;",
+    "var o = { [k](top) { return top; } }; const { open: o2 } = top;",
+    "class K { static [k](self) { return self; } } var { location: l } = self;",
+    "var o = { [k](top) { return top; } }; var o2 = { [k](x) { const { open: q } = top; } };",
+    // delete is an operator here, not a method: no parameter, no declaration
+    "function f() { delete top.x; } const { open: o } = top;",
+    "function f() { delete (top).x; } const { open: o } = top;",
+    "function f(a) { return delete (top); } const { open: o } = top;",
+    "function f() { delete (top)\n{ const { open: o } = top; } }",
+    "function f() { if (a) delete (self)\n{ var l = self; } }",
+    "foo(top)\n{ const { open: o } = top; }",
+    // control heads and an extends clause are not methods
+    "class A\nextends (top) { m() { const { open: o } = top; } }",
+    "if (x) { if (top) { const { open: o } = top; } }",
+    "for (var i = 0; i < 1; i++) { while (self) { var l = self; } }",
+    // computed access is an expression, a call or an index, not a method definition
+    "const a = [f](top); const { open: o } = top;",
+    "x = a[k](top)\n{ const { open: o } = top; }",
+    "x = [f](top) { const { open: o } = top; }",
+    "var r = o[k](top); const { open: q } = top;",
+    // the key expression is evaluated outside the method: a global read there is still a global read
+    "var o = { [({ open: q } = top, 'k')](top) { return top; } };",
+    "var o = { [window.open](x) { } };",
+    "var o = { [fetch](x) { } };",
+    "var o = { ['fe' + 'tch'](x) { } };",
+    "var o = { [(w = window)](x) { } };",
+    "var o = { [k](top) { const { open: q } = window; } };",
+    "var o = { [k](x) { var h = history; return h; } };",
+    "var o = { [k](top) { return top; } }; function g() { var l = location; return l; }"
+  ];
+  for (const code of bad) { const r = withApp(d, code); assert.equal(r.status, 1, code + '\n' + r.out); }
+});
+
+test('storefront scan (D26): mutation tests - the old keyword list and no computed-key rule flag the good cases again; widening the new rules lets the refused cases through', () => {
+  const d = scanMerchant();
+  const file = 'scripts/check-layers.mjs';
+  const orig = read(d, file);
+  const kw = ["class K { delete(top) { const { open: o } = top; return o; } }", "var o = { new(self) { const s = self; return s; } };"];
+  const computed = ["class K { [Symbol.iterator](top) { const { open: o } = top; return o; } }", "var o = { ['a' + 'b'](self) { var s = self; return s; } };"];
+  const looser = [
+    ['a keyword is a method again', "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends']);", "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends', 'delete', 'new', 'return', 'typeof', 'void', 'in', 'of']);", kw],
+    ['no computed-key rule', "for (const m of masked.matchAll(/((?:async\\s+|static\\s+|get\\s+|set\\s+|\\*\\s*)*)\\[/g)) {", 'for (const m of []) {', computed]
+  ];
+  const stricter = [
+    ['computed key without a definition context', "const before = masked.slice(0, m.index).trimEnd();\n    const newlineBefore = /\\n\\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));\n    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;\n    add(params(po), [po, end]);\n  }\n  // 4.", "add(params(po), [po, end]);\n  }\n  // 4.", ['const a = [f](top) { const { open: o } = top; };']],
+    ['computed key without the same-line brace', "if (/^[ \\t]*\\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;\n    const before = masked.slice(0, m.index).trimEnd();\n    const newlineBefore = /\\n\\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));\n    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;\n    add(params(po), [po, end]);\n  }\n  // 4.", "const before = masked.slice(0, m.index).trimEnd();\n    const newlineBefore = /\\n\\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));\n    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;\n    add(params(po), [po, end]);\n  }\n  // 4.", ['x = a[k](top)\n{ const { open: o } = top; }']],
+    ['extends is a method again', "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends']);", "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function']);", ['class A\nextends (top) { m() { const { open: o } = top; } }']],
+    ['computed key parameters visible everywhere', "add(params(po), [po, end]);\n  }\n  // 4.", "add(params(po), whole);\n  }\n  // 4.", ['var o = { [k](top) { return top; } }; const { open: o2 } = top;']]
+  ];
+  try {
+    for (const [name, from, to, cases] of looser) {
+      const swapped = orig.replace(from, to); assert.notEqual(swapped, orig, name + ': mutation anchor present');
+      write(d, file, swapped);
+      for (const code of cases) { const r = withApp(d, code); assert.equal(r.status, 1, name + ': the old guard flags this (the false positive), so the test needs the fix: ' + code); }
+    }
+    for (const [name, from, to, cases] of stricter) {
+      assert.ok(orig.includes(from), name + ': mutation anchor present');
+      write(d, file, orig.replace(from, to));
+      for (const code of cases) { const r = withApp(d, code); assert.equal(r.status, 0, name + ': the widened guard lets this through, so the refusal test needs the rule: ' + code + '\n' + r.out); }
+    }
+  } finally { write(d, file, orig); }
+  for (const code of [...kw, ...computed]) assert.equal(withApp(d, code).status, 0, 'restored guard allows ' + code);
 });
 
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {
@@ -666,7 +748,7 @@ test('runtime: after the core scripts load, ShopCommerce has no _internal handle
 test('D20 is recorded (newest first) with the approvals, the mechanism, the scan additions, the analysis and the residual risks', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[3], 'D21'); assert.equal(ids[4], 'D20'); assert.equal(ids[5], 'D19');
+  assert.equal(ids[4], 'D21'); assert.equal(ids[5], 'D20'); assert.equal(ids[6], 'D19');
   const start = lines.findIndex((l) => l.startsWith('### D20.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');
