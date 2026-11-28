@@ -624,9 +624,29 @@ function declaredNames(masked) {
       if (po >= 0 && closeOf.has(po)) { const end = bodyAfter(closeOf.get(po)); if (end >= 0) add(params(po), [po, end]); }
     }
   }
-  // a class heritage (`class A extends` newline `a` newline `[k](top) {` / `new (top) {` / `mix(top) {`) is an expression, not a member list: nothing after `extends`
-  // up to the next `{ } ;` can be a method definition (D26 review)
-  const inHeritage = (idx) => /(?<![\w$.])extends(?![\w$])/.test(masked.slice(Math.max(0, idx - 400), idx).split(/[{};]/).pop());
+  // a class heritage (`class A extends` newline `a` newline `[k](top) {` / `new (top) {` / `mix(top) {`) is an expression, not a member list (D26 review).
+  // Walk BACKWARDS from the member over the same nesting level: balanced groups are jumped, a function body ('...) {...}' or '=> {...}'), '{' (the container's own
+  // opener), ';' and ',' end the walk (a member), the word 'extends' means heritage. Anything the walk cannot resolve (an unmatched closer, more than 6000 characters)
+  // counts as heritage: fail closed.
+  const inHeritage = (idx) => {
+    let k = idx - 1;
+    for (let steps = 0; k >= 0; steps++) {
+      if (steps > 6000) return true;
+      const c = masked[k];
+      if (/\s/.test(c)) { k--; continue; }
+      if (c === ')' || c === ']') { const o = openOf.get(k); if (o === undefined) return true; k = o - 1; continue; }
+      if (c === '}') {
+        const o = openOf.get(k); if (o === undefined) return true;
+        const pre = masked.slice(Math.max(0, o - 400), o).trimEnd();
+        if (pre.endsWith(')') || pre.endsWith('=>')) return false;
+        k = o - 1; continue;
+      }
+      if (c === '{' || c === ';' || c === ',') return false;
+      if (/[\w$]/.test(c)) { let j = k; while (j >= 0 && /[\w$]/.test(masked[j])) j--; if (masked.slice(j + 1, k + 1) === 'extends' && !/[.]/.test(masked[j] || '')) return true; k = j; continue; }
+      k--;
+    }
+    return false;
+  };
   // 3. method definitions: name(params) { ... }  (not a control statement head, not "extends mix(x) {", not a property call)
   for (const m of masked.matchAll(/(?<![\w$.])((?:async\s+|static\s+|get\s+|set\s+|\*\s*)*)([\w$]+)\s*\(/g)) {
     if (CONTROL_WORDS.has(m[2])) continue;

@@ -593,7 +593,7 @@ test('storefront scan (D26): methods named like a keyword and computed-key metho
     "var o = { [k](top, { a: self }) { const t = top, s = self; return [t, s]; } };",
     "var o = { [k]\n(top) { const t = top; return t; } };",
     "class A extends B { [k](top) { const { open: o } = top; return o; } delete(top) { const t = top; return t; } }",
-    "class A extends B {\n  x = 1\n  [k](top) { const { open: o } = top; return o; }\n}",
+    "class A extends B {\n  x = 1;\n  [k](top) { const { open: o } = top; return o; }\n}",
     "class K {\n  [a](top) { const t = top; return t; }\n  [b](self) { const s = self; return s; }\n}"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
@@ -626,6 +626,19 @@ test('storefront scan (D26): methods named like a keyword and computed-key metho
     "class A extends f\n[k](self) { m() { var l = self; } }",
     "class A extends\nnew (top) { m() { const { open: o } = top; } }",
     "class A extends\nmix(top) { m() { const { open: o } = top; } }",
+    "class A extends {}.constructor\n[k](top) { x = top; }",
+    "class A extends ({a:1}).a\n[k](top) { x = top; }",
+    "class A extends (class { x = 1; })\n[k](top) { x = top; }",
+    "class A extends B.c(()=>{})\n[k](top) { x = top; }",
+    "class A extends B.c(function(){}) \n[k](top) { x = top; }",
+    "class A extends B['x']({})\n[k](top) { x = top; }",
+    "class A extends mix({a:1})\n[k](top) { x = top; }",
+    "class A extends (x?{}:B)\n[k](top) { x = top; }",
+    "class A extends (a,\n{}.x)\n[k](self) { x = self; }",
+    "var C = class extends (class { x = 1; })\n[k](top) { x = top; }",
+    "class A extends a /*xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/\n[k](top) { x = top; }",
+    "class O { f = class extends a\n[k](top) { x = top; } }",
+    "function w() { class A extends a\n[k](top) { x = top; } }",
     "var r = o[k](top); const { open: q } = top;",
     // the key expression is evaluated outside the method: a global read there is still a global read
     "var o = { [({ open: q } = top, 'k')](top) { return top; } };",
@@ -654,7 +667,7 @@ test('storefront scan (D26): mutation tests - the old keyword list and no comput
     ['computed key without a definition context', "const before = masked.slice(0, m.index).trimEnd();\n    const newlineBefore = /\\n\\s*$/.test(masked.slice(Math.max(0, m.index - 40), m.index));\n    if (before !== '' && !newlineBefore && !/[{},;]$/.test(before)) continue;\n    add(params(po), [po, end]);\n  }\n  // 4.", "add(params(po), [po, end]);\n  }\n  // 4.", ['const a = [f](top) { const { open: o } = top; };']],
     ['computed key without the same-line brace', "if (/^[ \\t]*\\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;\n    if (inHeritage(m.index)) continue;\n", "if (inHeritage(m.index)) continue;\n", ['run();\n[k](top)\n{ const { open: o } = top; }']],
     ['extends is a method again', "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function', 'extends']);", "const CONTROL_WORDS = new Set([...BLOCK_HEADS, 'function']);", ['class A\nextends (top) { m() { const { open: o } = top; } }']],
-    ['a class heritage may hold a member', "const inHeritage = (idx) => /(?<![\\w$.])extends", "const inHeritage = (idx) => false && /(?<![\\w$.])extends", ["class A extends a\n[k](top) { m() { const { open: o } = top; } }", "class A extends\nnew (top) { m() { const { open: o } = top; } }", "class A extends\nmix(top) { m() { const { open: o } = top; } }"]],
+    ['a class heritage may hold a member', 'const inHeritage = (idx) => {', 'const inHeritage = (idx) => false; const inHeritageOff = (idx) => {', ["class A extends a\n[k](top) { m() { const { open: o } = top; } }", "class A extends\nnew (top) { m() { const { open: o } = top; } }", "class A extends\nmix(top) { m() { const { open: o } = top; } }", "class A extends {}.constructor\n[k](top) { x = top; }", "class A extends (class { x = 1; })\n[k](top) { x = top; }", "class O { f = class extends a\n[k](top) { x = top; } }"]],
     ['computed key parameters visible everywhere', "add(params(po), [po, end]);\n  }\n  // 4.", "add(params(po), whole);\n  }\n  // 4.", ['var o = { [k](top) { return top; } }; const { open: o2 } = top;']]
   ];
   try {
