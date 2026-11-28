@@ -79,13 +79,13 @@ export function assertSandboxOrigin(label, raw, allowlist) {
 
 // ---------------------------------------------------------------- secrets
 export function makeScrubber(secrets) {
-  const values = () => [...secrets].filter((s) => typeof s === 'string' && s.length >= 2);
+  const values = () => [...secrets].filter((s) => typeof s === 'string' && s.length >= 2).sort((a, b) => b.length - a.length);
   const scrub = (text) => {
     let t = String(text);
     for (const s of values()) t = t.split(s).join('***');
     t = t.replace(/dsk_[A-Za-z0-9_-]{8,}/g, 'dsk_***').replace(/X-Amz-Signature=[0-9a-f]+/gi, 'X-Amz-Signature=***').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g, 'Bearer ***');
     // untrusted text (page text, server codes) must not carry control characters or unbounded length into the terminal
-    t = t.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '?');
+    t = t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, '?');
     return t.length > 4000 ? t.slice(0, 4000) + '...' : t;
   };
   scrub.add = (s) => {
@@ -273,7 +273,7 @@ export async function runCapture(opts, { log = console.log, scrub }) {
   const staff = site === 'admin' ? assertSyntheticLogin('staff', { email: process.env.DESIGN_CAPTURE_STAFF_EMAIL || env.logins?.staff?.email, password: process.env.DESIGN_CAPTURE_STAFF_PASSWORD || env.logins?.staff?.password }) : null;
   for (const l of [owner, staff]) if (l) scrub.add(l.password);
   const pk = env.publishable_key;
-  const fence = new Set([...[...allow].filter((o) => !(MAIN_STACK_PORTS.has(new URL(o).port) && isLoopback(o))), ...(env.media_origin ? [parseOrigin(env.media_origin)] : [])]);
+  const fence = new Set([...[...allow].filter((o) => !(MAIN_STACK_PORTS.has(new URL(o).port) && isLoopback(o))), ...(env.media_origin ? [assertSandboxOrigin('media origin', env.media_origin, allow)] : [])]);
 
   const out = resolve(opts.out);
   mkdirSync(out, { recursive: true });
@@ -286,7 +286,8 @@ export async function runCapture(opts, { log = console.log, scrub }) {
     const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1, locale: 'zh-TW', timezoneId: 'Asia/Taipei', reducedMotion: 'reduce', serviceWorkers: 'block' });
     ctx.setDefaultTimeout(30000);
     // route() does not see WebSockets: refuse every one (the page under test is branch code and holds the session)
-    if (typeof ctx.routeWebSocket === 'function') await ctx.routeWebSocket(/.*/, (ws) => { blocked++; ws.close(); });
+    if (typeof ctx.routeWebSocket !== 'function') throw new Refusal('this Playwright has no routeWebSocket (needs 1.48+): the browser fence cannot block WebSockets, refused');
+    await ctx.routeWebSocket(/.*/, (ws) => { blocked++; ws.close(); });
     await ctx.route('**/*', (route) => {
       const u = route.request().url();
       if (/^(data|blob|about):/.test(u)) return route.continue();
@@ -462,7 +463,7 @@ export async function runUpload(opts, { log = console.log, scrub, fetchImpl = fe
   const manifestB64 = captureManifestHeader({ site: m.site, origin: m.origin, capturedAt: new Date(m.captured_at) });
   let done = 0;
   for (const s of plan.todo) {
-    const r = await uploadOne({ fetchImpl, sleep, api, shop: opts.shop, request: opts.request, key, shot: s, bytes: readShot(s), manifestB64, log });
+    const r = await uploadOne({ fetchImpl, sleep, api, shop: opts.shop, request: opts.request, key, shot: s, bytes: (() => { const b = readShot(s); if (createHash('sha256').update(b).digest('hex') !== s.sha256) throw new Refusal(`${s.file} changed during the upload (sha256 mismatch)`); return b; })(), manifestB64, log });
     const k = slotKey(s);
     ledger.slots[k] = { sha256: r.ok ? s.sha256 : ledger.slots[k]?.sha256, attempts: (ledger.slots[k]?.attempts || 0) + 1 };
     writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
