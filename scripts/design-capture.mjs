@@ -13,19 +13,22 @@
 
    <file> is the output of `make sandbox-env` in the platform repo (JSON: origins, synthetic demo logins, publishable key).
    Safety rules (docs/design-service-contract.md section 6, platform docs/deploy/sandbox-stack.md):
-     * Every origin the script talks to (admin, API, storefront) must be in the sandbox allowlist (design_sandbox_origins /
+     * `capture`: every origin the script talks to (admin, API, storefront) must be in the sandbox allowlist (design_sandbox_origins /
        allowed_api_origins of the file, plus DESIGN_CAPTURE_ALLOWED_ORIGINS). No allowlist = refuse. Not on it = exit 2, nothing started.
      * The browser itself is fenced: a request to any origin outside the allowlist (and the sandbox media origin) is aborted.
      * Logins must be synthetic (@example.com). The owner's real credentials are never read; there is no flag to pass them.
      * The service key (dsk_...) comes ONLY from the environment (DESIGN_SERVICE_KEY), never from argv, and is never printed;
        every message goes through a scrubber that removes known secret values.
      * Playwright is borrowed (not a dependency): DESIGN_CAPTURE_PLAYWRIGHT_DIR, else `playwright` from here, else ../ecommerce/e2e.
+   `upload` talks to the platform design-service API named by --api (https, or loopback http): that origin is NOT checked against the sandbox
+   allowlist (the platform may be the real one; the platform refuses live-data captures itself). Redirects are refused and every request has a timeout.
+   The browser fence covers requests and WebSockets seen by Playwright; it is not a network-level egress control.
    Exit codes: 0 ok | 1 failure | 2 refused / usage | 3 upload must be abandoned (caps, quota, live-data refusal, no storage) |
                4 upload gave up after retries (network / 5xx / 429) | 5 head moved: recapture "after" and upload again.
    Dependencies: Node 18+. */
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -36,6 +39,8 @@ export const VIEWPORTS = { 390: 844, 1280: 860 };
 export const MAX_HEIGHT = 10000;
 export const SLOT_CAP = 80;
 export const ATTEMPT_CAP = 240;
+export const MAX_PNG_BYTES = 20 * 1024 * 1024;
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 export const FIXED_TIME = '2026-06-15T04:00:00.000Z';
 const MAIN_STACK_PORTS = new Set(['8080', '3001', '4010', '8081']); // the owner's main stack and mock servers: never a capture target
 
@@ -74,13 +79,19 @@ export function assertSandboxOrigin(label, raw, allowlist) {
 
 // ---------------------------------------------------------------- secrets
 export function makeScrubber(secrets) {
-  const values = () => [...secrets].filter((s) => typeof s === 'string' && s.length >= 4);
+  const values = () => [...secrets].filter((s) => typeof s === 'string' && s.length >= 2);
   const scrub = (text) => {
     let t = String(text);
     for (const s of values()) t = t.split(s).join('***');
-    return t.replace(/dsk_[A-Za-z0-9_-]{8,}/g, 'dsk_***').replace(/X-Amz-Signature=[0-9a-f]+/gi, 'X-Amz-Signature=***').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g, 'Bearer ***');
+    t = t.replace(/dsk_[A-Za-z0-9_-]{8,}/g, 'dsk_***').replace(/X-Amz-Signature=[0-9a-f]+/gi, 'X-Amz-Signature=***').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/g, 'Bearer ***');
+    // untrusted text (page text, server codes) must not carry control characters or unbounded length into the terminal
+    t = t.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '?');
+    return t.length > 4000 ? t.slice(0, 4000) + '...' : t;
   };
-  scrub.add = (s) => secrets.add(s);
+  scrub.add = (s) => {
+    if (typeof s !== 'string' || !s) return;
+    secrets.add(s); secrets.add(encodeURIComponent(s)); secrets.add(JSON.stringify(s).slice(1, -1));
+  };
   return scrub;
 }
 export function assertSyntheticLogin(label, login) {
@@ -158,9 +169,9 @@ export async function uploadOne({ fetchImpl = fetch, sleep = (ms) => new Promise
   for (let attempt = 0; ; attempt++) {
     let res, code = '', body = null;
     try {
-      res = await fetchImpl(url, { method: 'PUT', headers, body: bytes });
+      res = await fetchImpl(url, { method: 'PUT', headers, body: bytes, redirect: 'error', signal: AbortSignal.timeout(60000) });
       const text = await res.text();
-      try { body = JSON.parse(text); code = body?.error?.code || ''; } catch { body = null; }
+      try { body = JSON.parse(text); code = String(body?.error?.code || ''); if (!/^[a-z_]{1,40}$/.test(code)) code = code ? 'unknown_code' : ''; } catch { body = null; }
     } catch { res = { status: 0 }; }
     const c = res.status === 0 ? { action: 'retry' } : classifyUpload(res.status, code);
     if (c.action === 'ok') return { ok: true, status: res.status, attempt: body?.attempt };
@@ -168,7 +179,7 @@ export async function uploadOne({ fetchImpl = fetch, sleep = (ms) => new Promise
     if (c.action === 'retry') {
       if (attempt >= BACKOFF_MS.length) return { ok: false, action: 'gaveup', status: res.status };
       const ra = Number(res.headers?.get?.('retry-after'));
-      await sleep(Number.isFinite(ra) && ra > 0 ? ra * 1000 : BACKOFF_MS[attempt] * (0.75 + Math.random() * 0.5));
+      await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra, 60) * 1000 : BACKOFF_MS[attempt] * (0.75 + Math.random() * 0.5));
       continue;
     }
     return { ok: false, action: c.action === 'hash' ? 'abandon' : c.action, status: res.status, why: c.why || `invalid_screenshot (do not retry)` };
@@ -193,7 +204,8 @@ export function parseArgs(argv) {
 export function loadSandboxEnv(file) {
   const text = readFileSync(resolve(file), 'utf8');
   const start = text.indexOf('{');
-  const env = JSON.parse(text.slice(start));
+  let env;
+  try { env = JSON.parse(text.slice(start)); } catch { throw new Refusal('the sandbox env file is not valid JSON'); }
   if (env.sandbox !== true || env.dataset !== 'sandbox-v1') throw new Refusal('the env file is not a sandbox env (sandbox:true, dataset sandbox-v1)');
   return env;
 }
@@ -238,7 +250,7 @@ async function shoot(page, file, { fixed = true } = {}) {
 }
 
 async function ownerApiToken({ api, adminOrigin, login }) {
-  const r = await fetch(`${api}/api/v1/admin/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: adminOrigin }, body: JSON.stringify({ email: login.email, password: login.password }) });
+  const r = await fetch(`${api}/api/v1/admin/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: adminOrigin }, body: JSON.stringify({ email: login.email, password: login.password }), redirect: 'error', signal: AbortSignal.timeout(30000) });
   const j = await r.json().catch(() => ({}));
   if (r.status !== 200 || !j.access_token) throw new Error(`sandbox owner login failed (HTTP ${r.status})`);
   return j.access_token;
@@ -261,7 +273,7 @@ export async function runCapture(opts, { log = console.log, scrub }) {
   const staff = site === 'admin' ? assertSyntheticLogin('staff', { email: process.env.DESIGN_CAPTURE_STAFF_EMAIL || env.logins?.staff?.email, password: process.env.DESIGN_CAPTURE_STAFF_PASSWORD || env.logins?.staff?.password }) : null;
   for (const l of [owner, staff]) if (l) scrub.add(l.password);
   const pk = env.publishable_key;
-  const fence = new Set([...allow, ...(env.media_origin ? [parseOrigin(env.media_origin)] : [])]);
+  const fence = new Set([...[...allow].filter((o) => !(MAIN_STACK_PORTS.has(new URL(o).port) && isLoopback(o))), ...(env.media_origin ? [parseOrigin(env.media_origin)] : [])]);
 
   const out = resolve(opts.out);
   mkdirSync(out, { recursive: true });
@@ -273,6 +285,8 @@ export async function runCapture(opts, { log = console.log, scrub }) {
   const newContext = async (vw, vh) => {
     const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1, locale: 'zh-TW', timezoneId: 'Asia/Taipei', reducedMotion: 'reduce', serviceWorkers: 'block' });
     ctx.setDefaultTimeout(30000);
+    // route() does not see WebSockets: refuse every one (the page under test is branch code and holds the session)
+    if (typeof ctx.routeWebSocket === 'function') await ctx.routeWebSocket(/.*/, (ws) => { blocked++; ws.close(); });
     await ctx.route('**/*', (route) => {
       const u = route.request().url();
       if (/^(data|blob|about):/.test(u)) return route.continue();
@@ -304,7 +318,8 @@ export async function runCapture(opts, { log = console.log, scrub }) {
   try {
     if (site === 'admin') {
       const ownerToken = await ownerApiToken({ api, adminOrigin, login: owner });
-      const get = async (p) => (await (await fetch(`${api}/api/v1${p}`, { headers: { Authorization: `Bearer ${ownerToken}` } })).json());
+      scrub.add(ownerToken);
+      const get = async (p) => (await (await fetch(`${api}/api/v1${p}`, { headers: { Authorization: `Bearer ${ownerToken}` }, redirect: "error", signal: AbortSignal.timeout(30000) })).json());
       const orders = (await get(`/admin/shops/${shop}/orders?page=1&page_size=5`)).orders || [];
       const prods = (await get(`/admin/shops/${shop}/products?page=1&page_size=5`)).products || [];
       const paths = { home: '/', orders: '/orders', 'order-detail': orders[0] ? `/orders/${orders[0].id}` : null, products: '/products', 'product-edit': prods[0] ? `/products/${prods[0].id}` : null, members: '/members', reports: '/reports' };
@@ -343,7 +358,7 @@ export async function runCapture(opts, { log = console.log, scrub }) {
         await ctx.close();
       }
     } else {
-      const products = (await (await fetch(`${api}/api/v1/shop/products?page=1&page_size=20`, { headers: { 'X-Publishable-Key': pk } })).json()).products || [];
+      const products = (await (await fetch(`${api}/api/v1/shop/products?page=1&page_size=20`, { headers: { "X-Publishable-Key": pk }, redirect: "error", signal: AbortSignal.timeout(30000) })).json()).products || [];
       const prod = products.find((p) => (p.skus || []).some((s) => s.is_active !== false && !(typeof s.stock_qty === 'number' && s.stock_qty <= 0)));
       for (const [vw, vh] of Object.entries(VIEWPORTS).map(([w, h]) => [Number(w), h])) {
         const ctx = await newContext(vw, vh), page = await ctx.newPage(); await withClock(page);
@@ -411,29 +426,51 @@ export async function runUpload(opts, { log = console.log, scrub, fetchImpl = fe
   const api = parseOrigin(opts.api);
   if (api.startsWith('http:') && !isLoopback(api)) throw new Refusal('the platform API must be https (or loopback http for a local stack)');
   const dir = resolve(opts.dir);
-  const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+  let m;
+  try { m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')); } catch { throw new Refusal('manifest.json is missing or not valid JSON'); }
   if (m.tool !== TOOL || m.dataset !== 'sandbox-v1' || m.api_origin_class !== 'sandbox') throw new Refusal('manifest.json is not a sandbox design-capture manifest: refused');
   if (m.site === 'admin' && !m.origin) throw new Refusal('an admin manifest must carry the capture origin');
+  if (m.origin !== undefined && m.origin !== null) { if (typeof m.origin !== 'string' || m.origin.length > 200) throw new Refusal('manifest origin is malformed'); m.origin = parseOrigin(m.origin); }
+  if (!Array.isArray(m.shots) || m.shots.length === 0 || m.shots.length > 1000) throw new Refusal('manifest.json has no usable shots list');
+  if (Number.isNaN(new Date(m.captured_at).getTime())) throw new Refusal('manifest captured_at is not a date');
+  const seen = new Set();
+  const readShot = (s) => {
+    const f = join(dir, basename(s.file));
+    const st = lstatSync(f);
+    if (!st.isFile() || st.isSymbolicLink()) throw new Refusal(`${s.file} is not a regular file: refused`);
+    if (st.size > MAX_PNG_BYTES) throw new Refusal(`${s.file} is larger than ${MAX_PNG_BYTES} bytes: refused`);
+    const b = readFileSync(f);
+    if (b.length < 24 || !b.subarray(0, 8).equals(PNG_SIG)) throw new Refusal(`${s.file} is not a PNG: refused`);
+    return b;
+  };
   const shots = m.shots.map((s) => {
+    if (!s || typeof s.file !== 'string') throw new Refusal('manifest entry without a file name');
     const p = parseShotName(s.file);
     if (!p || p.phase !== s.phase || p.role !== s.role || p.viewport !== s.viewport || p.view_key !== s.view_key || !KEY_RE.test(s.view_key)) throw new Refusal(`manifest entry ${s.file} does not match its file name`);
-    const bytes = readFileSync(join(dir, basename(s.file)));
+    if (seen.has(s.file)) throw new Refusal(`duplicate manifest entry ${s.file}`);
+    seen.add(s.file);
+    const bytes = readShot(s);
     if (createHash('sha256').update(bytes).digest('hex') !== s.sha256) throw new Refusal(`${s.file} changed after capture (sha256 mismatch)`);
     return s;
   });
   const ledgerFile = join(dir, '.upload-ledger.json');
   let ledger = { request: opts.request, slots: {} };
   if (existsSync(ledgerFile)) { ledger = JSON.parse(readFileSync(ledgerFile, 'utf8')); if (ledger.request !== opts.request) ledger = { request: opts.request, slots: {} }; }
-  const plan = planUpload(shots, ledger, { slotCap: Number(opts['slot-cap'] || SLOT_CAP), attemptCap: Number(opts['attempt-cap'] || ATTEMPT_CAP) });
+  const cap = (name, max) => { if (opts[name] === undefined) return max; const n = Number(opts[name]); if (!Number.isInteger(n) || n < 1 || n > max) throw new Refusal(`--${name} must be an integer from 1 to ${max}`); return n; };
+  const plan = planUpload(shots, ledger, { slotCap: cap('slot-cap', SLOT_CAP), attemptCap: cap('attempt-cap', ATTEMPT_CAP) });
   log(`uploading ${plan.todo.length} screenshot(s), ${plan.skipped} already stored`);
   const manifestB64 = captureManifestHeader({ site: m.site, origin: m.origin, capturedAt: new Date(m.captured_at) });
   let done = 0;
   for (const s of plan.todo) {
-    const r = await uploadOne({ fetchImpl, sleep, api, shop: opts.shop, request: opts.request, key, shot: s, bytes: readFileSync(join(dir, basename(s.file))), manifestB64, log });
+    const r = await uploadOne({ fetchImpl, sleep, api, shop: opts.shop, request: opts.request, key, shot: s, bytes: readShot(s), manifestB64, log });
     const k = slotKey(s);
     ledger.slots[k] = { sha256: r.ok ? s.sha256 : ledger.slots[k]?.sha256, attempts: (ledger.slots[k]?.attempts || 0) + 1 };
     writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
     if (!r.ok) {
+      if (r.action === 'recapture') {
+        for (const k2 of Object.keys(ledger.slots)) if (k2.startsWith('after/')) ledger.slots[k2].sha256 = undefined;
+        writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
+      }
       if (r.action === 'recapture') throw new Refusal(`${s.file}: ${r.why}: recapture "after" at the new head, then upload again`, 5);
       if (r.action === 'gaveup') throw new Refusal(`${s.file}: gave up after ${BACKOFF_MS.length} retries (HTTP ${r.status}); the ledger remembers what is stored`, 4);
       throw new Refusal(`${s.file}: ${r.why}: abandon the request (failed(screenshot_upload_failed))`, 3);
