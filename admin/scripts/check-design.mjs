@@ -36,6 +36,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { scanCode, scanDataJs, scanCss, scanAsset, scopeViolations } from "./lib/design-scan.mjs";
 import { realSurface } from "./lib/ctx-surface.mjs";
+import { scanHtml } from "./lib/html-scan.mjs";
 import { ROUTE_IDS, ICON_NAMES, LIMITS, validateCopy, defaultsProblems, validateRoutes, ASSET_EXTENSIONS } from "../lib/design-schema.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,27 +143,13 @@ function tagAttrs(raw) {
   return m;
 }
 /**
- * The inline <script> elements of an HTML text: [{ attrs: Map, text, unterminated }]. HTML comments are removed first, the way the browser ends them (D23):
- * <!--> and <!---> are empty comments, and a comment ends at --> or --!>. External scripts (src attribute) are not inline. A start tag with no closing ">"
- * or with no </script after it is returned with unterminated: true (fail closed: indexHtmlProblems refuses it and it never counts as the import map).
+ * The inline <script> elements of an HTML text: [{ attrs: Map, text, unterminated }]. The text is tokenized the way a browser does it (D24, lib/html-scan.mjs:
+ * comments end at --> or --!>, <!--> and <!---> are empty comments, and <!-- inside <style>, <title>, <textarea>, <noscript> or a <script src> is NOT a comment).
+ * External scripts (src attribute) are not inline. A script start tag with no closing ">" or with no </script after it is returned with unterminated: true
+ * (fail closed: indexHtmlProblems refuses it and it never counts as the import map).
  */
 export function inlineScripts(html) {
-  const live = html.replace(/<!--(?:-?>|[\s\S]*?(?:-->|--!>))/g, "");
-  const out = [];
-  const startRe = /<script(?=[\s\/>])/gi;
-  let m;
-  while ((m = startRe.exec(live))) {
-    const open = m.index + 7;
-    const tag = /^((?:"[^"]*"|'[^']*'|[^>"'])*)>/.exec(live.slice(open));
-    if (!tag) { out.push({ attrs: new Map(), text: "", unterminated: true }); break; }
-    const bodyStart = open + tag[0].length;
-    const attrs = tagAttrs(tag[1]);
-    const end = /<\/script(?=[\s\/>])[^>]*>/i.exec(live.slice(bodyStart));
-    if (!end) { if (!attrs.has("src")) out.push({ attrs, text: live.slice(bodyStart), unterminated: true }); break; }
-    if (!attrs.has("src")) out.push({ attrs, text: live.slice(bodyStart, bodyStart + end.index), unterminated: false });
-    startRe.lastIndex = bodyStart + end.index + end[0].length;
-  }
-  return out;
+  return scanHtml(html).scripts.filter((s) => !s.attrs.has("src")).map(({ attrs, text, unterminated }) => ({ attrs, text, unterminated }));
 }
 const isImportMap = (s) => !s.unterminated && (s.attrs.get("type") ?? "").trim().toLowerCase() === "importmap";
 /** The sha256 (base64) of the exact text of the import map in index.html, or null when there is not exactly one import map. */
@@ -177,6 +164,8 @@ export function indexHtmlProblems(html) {
   const maps = inl.filter(isImportMap);
   if (maps.length !== 1) bad.push(`index.html must contain exactly ONE inline <script type="importmap"> (found ${maps.length})`);
   if (inl.length !== maps.length) bad.push(`index.html must contain no inline script other than the import map (found ${inl.length - maps.length})`);
+  const amb = [...new Set(scanHtml(html).ambiguous)];
+  if (amb.length) bad.push(`index.html contains <${amb.join(">, <")}>: how a browser tokenizes the text after it is not modelled by the scan, so it cannot be certain no script is hidden there; refused, fail closed (move it out of index.html)`);
   if (inl.some((x) => x.unterminated)) bad.push("index.html has a <script> that is never closed (no closing > or no </script>): refused, fail closed");
   return bad;
 }

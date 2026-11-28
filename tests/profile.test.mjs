@@ -12,7 +12,7 @@ const f = (p) => readFileSync(path.join(TEMPLATE, p), 'utf8').replace(/\r\n/g, '
 test('D21 is recorded (newest first) with the owner approval, the validation, the sealed API, the light-DOM decision, the entry points and what the design layer gets', () => {
   const lines = f('docs/DECISIONS.md').split('\n');
   const ids = lines.map((l) => /^### (D\d+)\./.exec(l)).filter(Boolean).map((m) => m[1]);
-  assert.equal(ids[0], 'D23'); assert.equal(ids[1], 'D22'); assert.equal(ids[2], 'D21'); assert.equal(ids[3], 'D20');
+  assert.equal(ids[0], 'D24'); assert.equal(ids[1], 'D23'); assert.equal(ids[2], 'D22'); assert.equal(ids[3], 'D21'); assert.equal(ids[4], 'D20');
   const start = lines.findIndex((l) => l.startsWith('### D21.'));
   let end = lines.findIndex((l, i) => i > start && /^##/.test(l)); if (end < 0) end = lines.length;
   const body = lines.slice(start + 1, end).join('\n');

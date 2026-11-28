@@ -80,6 +80,8 @@ export const snap = (root, files) => Object.fromEntries(files.map((f) => [f, exi
 export function copyHeaderFiles(dir, { apiOrigin = 'https://api.example.com', imageOrigin = 'https://img.example.com' } = {}) {
   mkdirSync(path.join(dir, 'scripts'), { recursive: true });
   for (const f of ['scripts/render-headers.mjs', 'scripts/headers.core.txt']) copyFileSync(path.join(TEMPLATE, f), path.join(dir, f));
+  mkdirSync(path.join(dir, 'scripts/lib'), { recursive: true });
+  copyFileSync(path.join(TEMPLATE, 'scripts/lib/html-scan.mjs'), path.join(dir, 'scripts/lib/html-scan.mjs')); // D24: check-layers imports the HTML tokenizer
   writeFileSync(path.join(dir, 'merchant.headers.json'), JSON.stringify({ apiOrigin, imageOrigin }, null, 2) + '\n');
   const r = node(['scripts/render-headers.mjs'], dir);
   if (r.status !== 0) throw new Error('render-headers failed: ' + r.out);

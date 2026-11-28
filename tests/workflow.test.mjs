@@ -44,7 +44,7 @@ test('the browser-tests job cannot be switched off by deleting ci-browser.mjs wi
   assert.ok(y.includes('-f tests/e2e/ci-browser.mjs'), 'the job detects the runner by this path');
   assert.ok(y.includes('run: node tests/e2e/ci-browser.mjs'), 'and runs it');
   const r = readFileSync(path.join(TEMPLATE, 'tests/e2e/ci-browser.mjs'), 'utf8');
-  for (const suite of ['preview-banner', 'd12-runtime', 'import-map', 'hardening', 'profile', 'design-history', 'design-review', 'content-storefront']) assert.ok(r.includes(suite), 'ci-browser.mjs runs ' + suite);
+  for (const suite of ['preview-banner', 'd12-runtime', 'import-map', 'hardening', 'profile', 'design-history', 'design-review', 'content-storefront', 'html-scan-differential']) assert.ok(r.includes(suite), 'ci-browser.mjs runs ' + suite);
 });
 
 test('storefront design branch: design edits pass; locked, config, other-site and root edits fail', () => {
