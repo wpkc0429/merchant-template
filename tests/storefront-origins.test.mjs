@@ -452,7 +452,7 @@ test('storefront scan (D23): destructuring or aliasing open / location / history
     "var o = { open: 1, location: 2, history: 3 }; o.open = 4; var l = o.location; var hh = o['history'];",
     "var state = { location: 'x' }; var loc = state.location; var hist = state.history;",
     "var location2 = 1, history2 = 2, openState = 3; var r = history2;",
-    "function f(location) { var l = location; return l; } var history = []; var hh = history;",
+    "function f(location) { var l = location; return l; } const history = []; var hh = history;",
     "var w = window.innerWidth, hs = window.history.length > 1;"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
@@ -502,7 +502,23 @@ test('storefront scan (D24): a local top / self / parent / location / history ex
     "try { run(); } catch (parent) { log(parent); } var p = parent;",
     "const run = function top(a) { return a; }; const { open: o } = top;",
     // extends mix(top) { is not a method definition with a parameter named top
-    "class A extends mix(top) { } const { open: o } = top;"
+    "class A extends mix(top) { } const { open: o } = top;",
+    // review M1: an anonymous function or a method named like a keyword is still a function: its var does not leak out
+    "(function () { var top = 1; return top; })(); const { open: o } = top;",
+    "x.on('a', function () { var self = this; return self; }); const { open: o } = self;",
+    "x.delete(function () { var parent = 1; return parent; }); var p = parent;",
+    "var o2 = { catch(e) { var location = e; return location; } }; var l = location;",
+    // review M2: a call followed by a block is not a method definition: its arguments are not parameters
+    "foo(top)\n{ const { open: o } = top; }",
+    "use(self)\n{ var l = self; }",
+    "foo(parent)\n{ var p = parent; }",
+    "foo(location)\n{ var l = location; }",
+    // review L1: a top-level var / function does not replace the browser's top, location, self ... in a classic script
+    "var top = 1; const { open: o } = top;",
+    "var parent; var p = parent;",
+    "var location = 1; var l = location;",
+    "function self() {} var { location: l } = self;",
+    "if (x) { var history = []; } var h = history;"
   ];
   for (const code of bad) { const r = withApp(d, code); assert.equal(r.status, 1, code + '\n' + r.out); assert.match(r.out, /destructuring|aliasing|computed access|window\.open|bare open/, code + r.out); }
   const good = [
@@ -520,8 +536,13 @@ test('storefront scan (D24): a local top / self / parent / location / history ex
     "try { run(); } catch (parent) { const p = parent; log(p); }",
     "function f() { if (x) { var self = 1; } const s = self; return s; }",
     "const top = layout.top; const t = top; function later() { const t2 = top; return t2; }",
-    "var parent = document.body, self = 1; const p = parent; const s = self;",
-    "function f(location) { var l = location; return l; } var history = []; var hh = history;"
+    "const parent = document.body, self = 1; const p = parent; const s = self;",
+    "function f(location) { var l = location; return l; } const history = []; var hh = history;",
+    // review M2: real method definitions with such parameter names
+    "var o3 = { m(parent) { const p = parent; return p; }, n(location) { var l = location; return l; } };",
+    "class K2 { constructor(top) { this.t = top; } get(self) { var s = self; return s; } async load(history) { var h = history; return h; } }",
+    "(function () { var top = 1; const t = top; return t; })();",
+    "x.on('a', function () { var self = this; const s = self; return s; });"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
 });
@@ -540,6 +561,9 @@ test('storefront scan (D24): mutation tests - widening the declaration scopes ag
     "var obj = { m(top) { return top; } }; const { open: o } = top;"
   ];
   const mutations = [
+    ['an anonymous function is not a function body again', 'return po !== undefined && !BLOCK_HEADS.has(wordBefore(po));', 'return po !== undefined && !CONTROL_WORDS.has(wordBefore(po));', ["(function () { var top = 1; return top; })(); const { open: o } = top;", "x.on('a', function () { var self = this; return self; }); const { open: o } = self;"], 'hoisted && from === 0 && to === len && GLOBAL_NAMES.has(name)', 'false'],
+    ['a call followed by a block is a method again', "if (/^[ \\t]*\\{/.exec(masked.slice(close + 1, close + 40)) === null) continue;", '', ["foo(top)\n{ const { open: o } = top; }", "use(self)\n{ var l = self; }"]],
+    ['top-level var exempts the file again', 'hoisted && from === 0 && to === len && GLOBAL_NAMES.has(name)', 'false', ["var top = 1; const { open: o } = top;", "var parent; var p = parent;"]],
     ['whole file again', 'out.some((d) => d.name === name && d.from <= pos && pos <= d.to)', 'out.some((d) => d.name === name)', residual],
     ['method parameters visible everywhere', 'add(params(po), [po, end]);\n  }\n  // 4.', 'add(params(po), whole);\n  }\n  // 4.', ["var obj = { m(top) { return top; } }; const { open: o } = top;"]],
     ['catch binding visible everywhere', 'add(params(po), [po, stmtEnd(close + 1)]);', 'add(params(po), whole);', ["try { run(); } catch (parent) { log(parent); } var p = parent;"]],
@@ -547,13 +571,13 @@ test('storefront scan (D24): mutation tests - widening the declaration scopes ag
     ['for head declarations visible in the whole file', "scope = [first[0], stmtEnd(first[1] + 1)];\n    let k", 'scope = whole;\n    let k', ["for (const top of items) { use(top); } const { open: o } = top;"]]
   ].filter((m) => m[3].length);
   try {
-    for (const [name, from, to, cases] of mutations) {
+    for (const [name, from, to, cases, alsoFrom, alsoTo] of mutations) {
       assert.ok(orig.includes(from), name + ': mutation anchor present');
-      write(d, file, orig.replace(from, to));
+      write(d, file, alsoFrom ? orig.replace(from, to).replace(alsoFrom, alsoTo) : orig.replace(from, to)); // a second change where another rule (the top-level var rule) would still refuse
       for (const code of cases) { const r = withApp(d, code); assert.equal(r.status, 0, `${name}: the mutated guard must let this through, proving the test needs the rule: ${code}\n${r.out}`); }
     }
   } finally { write(d, file, orig); }
-  for (const code of residual) assert.equal(withApp(d, code).status, 1, 'restored guard refuses ' + code);
+  for (const code of [...residual, "(function () { var top = 1; return top; })(); const { open: o } = top;", "foo(top)\n{ const { open: o } = top; }", "var top = 1; const { open: o } = top;"]) assert.equal(withApp(d, code).status, 1, 'restored guard refuses ' + code);
 });
 
 test('storefront scan (D20): copy text, comments, data keys and look-alike identifiers are NOT violations; the template design layer has zero', () => {
