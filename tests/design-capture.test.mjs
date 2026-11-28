@@ -287,7 +287,7 @@ test('upload: a redirect is not followed (the PNG and headers never reach anothe
   const c = await fakePlatform((n, res) => { if (n === 1) { res.statusCode = 429; res.setHeader('Retry-After', '1000000'); res.end('{}'); } else { res.statusCode = 201; res.end('{}'); } });
   try {
     await withKey(async () => {
-      await assert.rejects(up(captureDir(1), b.api), (e) => e.exitCode === 4);
+      await assert.rejects(up(captureDir(1), b.api), (e) => e.exitCode === 3);
       assert.equal(target.seen.length, 0);
       const sleeps = []; await up(captureDir(1), c.api, { sleep: async (ms) => { sleeps.push(ms); } });
       assert.deepEqual(sleeps, [60000]);
@@ -314,4 +314,17 @@ test('media origin: sandbox minio on loopback is fenced in without being on the 
   assert.equal(dc.sandboxMediaOrigin('http://127.0.0.1:19000'), 'http://127.0.0.1:19000');
   refuses(() => dc.sandboxMediaOrigin('https://cdn.real.com'), /loopback/);
   refuses(() => dc.sandboxMediaOrigin('http://127.0.0.1:8080'), /main-stack/);
+});
+
+test('upload: a redirect answer is abandoned at once (not retried), and an oversized body is read only up to the cap', async () => {
+  let hits = 0;
+  const srv = http.createServer((req, res) => { hits++; res.writeHead(302, { Location: 'http://127.0.0.1:1/x' }); res.end(); });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const shot = { phase: 'before', role: 'anon', viewport: 390, view_key: 'home', sha256: 'x', file: 'before-anon-390-home.png' };
+    const r = await dc.uploadOne({ api: `http://127.0.0.1:${srv.address().port}`, shop: '7', request: REQ, key: KEY, shot, bytes: Buffer.from('x'), manifestB64: 'e30=', sleep: async () => {} });
+    assert.equal(r.ok, false); assert.equal(r.action, 'abandon'); assert.equal(hits, 1);
+  } finally { srv.close(); }
+  const big = new Response('a'.repeat(300000));
+  assert.equal((await dc.readCappedText(big, 1000)).length, 1000);
 });
