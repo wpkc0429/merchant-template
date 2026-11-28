@@ -98,7 +98,7 @@ function canonicalSource(src, mask = 0) {
   const lastSig = () => { for (let q = out.length - 1; q >= 0; q--) { const k = out[q].search(/\S\s*$/); if (k >= 0) return out[q][k]; } return ''; };
   const n = src.length, out = [], braces = [], parens = [];
   const LT = (c) => c === '\n' || c === '\r' || c === '\u2028' || c === '\u2029';
-  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof']);
+  const KW = new Set(['return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do', 'yield', 'await', 'instanceof', 'extends']);
   const STMT = new Set(['if', 'while', 'for', 'with']);
   const IDP = /[\p{ID_Continue}$\u200c\u200d]/u;
   let i = 0, regexOk = true, word = '', afterDot = false;
@@ -628,6 +628,16 @@ function declaredNames(masked) {
   // Walk BACKWARDS from the member over the same nesting level: balanced groups are jumped, a function body ('...) {...}' or '=> {...}'), '{' (the container's own
   // opener), ';' and ',' end the walk (a member), the word 'extends' means heritage. Anything the walk cannot resolve (an unmatched closer, more than 6000 characters)
   // counts as heritage: fail closed.
+  // a ')' at position c closes the parameter list of a MEMBER (a name or a computed key in front of the parenthesis), not of a function expression
+  // (`function (a) {}`, `function f(a) {}`, `function* (a) {}`, `async function (a) {}`, `new function () {}`), which may sit inside a heritage
+  const methodHead = (c) => {
+    const po = openOf.get(c); if (po === undefined) return false;
+    const before = masked.slice(Math.max(0, po - 400), po).trimEnd();
+    if (before.endsWith(']')) return true;
+    const w = /([\w$]+)$/.exec(before); if (!w) return false;
+    if (w[1] === 'function') return false;
+    return !/(?<![\w$.])function\s*\*?\s*$/.test(before.slice(0, before.length - w[1].length));
+  };
   const inHeritage = (idx) => {
     let k = idx - 1;
     for (let steps = 0; k >= 0; steps++) {
@@ -637,8 +647,8 @@ function declaredNames(masked) {
       if (c === ')' || c === ']') { const o = openOf.get(k); if (o === undefined) return true; k = o - 1; continue; }
       if (c === '}') {
         const o = openOf.get(k); if (o === undefined) return true;
-        const pre = masked.slice(Math.max(0, o - 400), o).trimEnd();
-        if (pre.endsWith(')') || pre.endsWith('=>')) return false;
+        let q = o - 1; while (q >= 0 && /\s/.test(masked[q])) q--;
+        if (masked[q] === ')' && methodHead(q)) return false;   // the body of the previous member
         k = o - 1; continue;
       }
       if (c === '{' || c === ';' || c === ',') return false;

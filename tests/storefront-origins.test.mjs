@@ -594,6 +594,7 @@ test('storefront scan (D26): methods named like a keyword and computed-key metho
     "var o = { [k]\n(top) { const t = top; return t; } };",
     "class A extends B { [k](top) { const { open: o } = top; return o; } delete(top) { const t = top; return t; } }",
     "class A extends B {\n  x = 1;\n  [k](top) { const { open: o } = top; return o; }\n}",
+    "class K {\n  m() { return 1; }\n  [a](top) { const t = top; return t; }\n  get g() { return 1; }\n  delete(self) { const s = self; return s; }\n}",
     "class K {\n  [a](top) { const t = top; return t; }\n  [b](self) { const s = self; return s; }\n}"
   ];
   for (const code of good) { const r = withApp(d, code); assert.equal(r.status, 0, code + '\n' + r.out); }
@@ -637,6 +638,13 @@ test('storefront scan (D26): methods named like a keyword and computed-key metho
     "class A extends (a,\n{}.x)\n[k](self) { x = self; }",
     "var C = class extends (class { x = 1; })\n[k](top) { x = top; }",
     "class A extends a /*xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx*/\n[k](top) { x = top; }",
+    "class A extends function(){}\n[k](top) { x = top; }",
+    "class A extends async function(){}\n[k](self) { x = self; }",
+    "x = class extends function f(a){ return 1 }.call\n[k]({top}) { x = top; }",
+    "class A extends function*(){}\n[k](top) { x = top; }",
+    "class A extends /a;/\n[k](top) { x = top; }",
+    "class A extends /{/g\n[k](top) { x = top; }",
+    "class A extends /a,/.x\n[k](top) { x = top; }",
     "class O { f = class extends a\n[k](top) { x = top; } }",
     "function w() { class A extends a\n[k](top) { x = top; } }",
     "var r = o[k](top); const { open: q } = top;",
