@@ -28,7 +28,7 @@
    Dependencies: Node 18+. */
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, statSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -157,6 +157,7 @@ export function planUpload(shots, ledger, { slotCap = SLOT_CAP, attemptCap = ATT
 /** What to do with a response (docs/design-service-contract.md section 4). */
 export function classifyUpload(status, code) {
   if (status === 201 || status === 200) return { action: 'ok' };
+  if (status >= 300 && status < 400) return { action: 'abandon', why: `HTTP ${status}: redirect refused (the API must answer directly)` };
   if (status === 429 || status === 502 || status >= 500 && status !== 503) return { action: 'retry' };
   if (status === 503 && code === 'design_storage_not_configured') return { action: 'abandon', why: 'the platform has no screenshot storage' };
   if (status === 503) return { action: 'retry' };
@@ -170,6 +171,16 @@ export function classifyUpload(status, code) {
 }
 export const BACKOFF_MS = [1000, 2000, 4000, 8000, 16000];
 
+/** Reads at most `max` bytes of a response body as text (a hostile or broken server must not make the tool buffer without bound). */
+export async function readCappedText(res, max = 64 * 1024) {
+  if (!res.body || typeof res.body.getReader !== 'function') return String(await res.text()).slice(0, max);
+  const reader = res.body.getReader(); const chunks = []; let n = 0;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); n += value.length; if (n > max) break; }
+  } finally { try { await reader.cancel(); } catch { /* already closed */ } }
+  return Buffer.concat(chunks).subarray(0, max).toString('utf8');
+}
+
 export async function uploadOne({ fetchImpl = fetch, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), api, shop, request, key, shot, bytes, manifestB64, log = () => {} }) {
   const url = `${api}/api/v1/design-service/shops/${shop}/requests/${request}/screenshots/${shot.phase}/${shot.role}/${shot.viewport}/${shot.view_key}`;
   const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'image/png', 'X-Capture-Manifest': manifestB64, 'X-Content-SHA256': shot.sha256 };
@@ -178,8 +189,8 @@ export async function uploadOne({ fetchImpl = fetch, sleep = (ms) => new Promise
   for (let attempt = 0; ; attempt++) {
     let res, code = '', body = null;
     try {
-      res = await fetchImpl(url, { method: 'PUT', headers, body: bytes, redirect: 'error', signal: AbortSignal.timeout(60000) });
-      const text = await res.text();
+      res = await fetchImpl(url, { method: 'PUT', headers, body: bytes, redirect: 'manual', signal: AbortSignal.timeout(60000) });
+      const text = res.status >= 300 && res.status < 400 ? '' : await readCappedText(res);
       try { body = JSON.parse(text); code = String(body?.error?.code || ''); if (!/^[a-z_]{1,40}$/.test(code)) code = code ? 'unknown_code' : ''; } catch { body = null; }
     } catch { res = { status: 0 }; }
     const c = res.status === 0 ? { action: 'retry' } : classifyUpload(res.status, code);
@@ -437,8 +448,9 @@ export async function runUpload(opts, { log = console.log, scrub, fetchImpl = fe
   if (api.startsWith('http:') && !isLoopback(api)) throw new Refusal('the platform API must be https (or loopback http for a local stack)');
   const dir = resolve(opts.dir);
   let m;
-  try { m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')); } catch { throw new Refusal('manifest.json is missing or not valid JSON'); }
+  try { const mf = join(dir, 'manifest.json'); if (statSync(mf).size > 4 * 1024 * 1024) throw new Error('too large'); m = JSON.parse(readFileSync(mf, 'utf8')); } catch { throw new Refusal('manifest.json is missing or not valid JSON'); }
   if (m.tool !== TOOL || m.dataset !== 'sandbox-v1' || m.api_origin_class !== 'sandbox') throw new Refusal('manifest.json is not a sandbox design-capture manifest: refused');
+  if (m.site !== 'admin' && m.site !== 'storefront') throw new Refusal('manifest site must be admin or storefront');
   if (m.site === 'admin' && !m.origin) throw new Refusal('an admin manifest must carry the capture origin');
   if (m.origin !== undefined && m.origin !== null) { if (typeof m.origin !== 'string' || m.origin.length > 200) throw new Refusal('manifest origin is malformed'); m.origin = parseOrigin(m.origin); }
   if (!Array.isArray(m.shots) || m.shots.length === 0 || m.shots.length > 1000) throw new Refusal('manifest.json has no usable shots list');
