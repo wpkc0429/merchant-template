@@ -77,6 +77,15 @@ export function assertSandboxOrigin(label, raw, allowlist) {
   return o;
 }
 
+/** The sandbox media origin (minio) is deliberately NOT in design_sandbox_origins (make sandbox-env), so it is fenced in on its own:
+    loopback only (the sandbox stack), never a main-stack port. */
+export function sandboxMediaOrigin(raw) {
+  const o = parseOrigin(raw);
+  if (!isLoopback(o)) throw new Refusal(`media origin ${o} must be loopback: refused`);
+  if (MAIN_STACK_PORTS.has(new URL(o).port)) throw new Refusal(`media origin ${o} is a main-stack port: refused`);
+  return o;
+}
+
 // ---------------------------------------------------------------- secrets
 export function makeScrubber(secrets) {
   const values = () => [...secrets].filter((s) => typeof s === 'string' && s.length >= 2).sort((a, b) => b.length - a.length);
@@ -273,7 +282,7 @@ export async function runCapture(opts, { log = console.log, scrub }) {
   const staff = site === 'admin' ? assertSyntheticLogin('staff', { email: process.env.DESIGN_CAPTURE_STAFF_EMAIL || env.logins?.staff?.email, password: process.env.DESIGN_CAPTURE_STAFF_PASSWORD || env.logins?.staff?.password }) : null;
   for (const l of [owner, staff]) if (l) scrub.add(l.password);
   const pk = env.publishable_key;
-  const fence = new Set([...[...allow].filter((o) => !(MAIN_STACK_PORTS.has(new URL(o).port) && isLoopback(o))), ...(env.media_origin ? [assertSandboxOrigin('media origin', env.media_origin, allow)] : [])]);
+  const fence = new Set([...[...allow].filter((o) => !(MAIN_STACK_PORTS.has(new URL(o).port) && isLoopback(o))), ...(env.media_origin ? [sandboxMediaOrigin(env.media_origin)] : [])]);
 
   const out = resolve(opts.out);
   mkdirSync(out, { recursive: true });
